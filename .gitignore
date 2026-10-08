@@ -2,3 +2,5 @@ logs-mini-ctx-claude/
 state/
 __pycache__/
 proxy.log
+debug.log
+latest
