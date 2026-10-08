@@ -112,6 +112,9 @@ Scripts:
 - `scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's
   logged parts with the current part-type rules. The proxy labels a part once,
   when it first logs it, so run this after changing the rules in `src/log.ts`.
+- `scripts/reruns.py [conversation dir]` lists tool calls the model ran again
+  with the same input, split by whether the earlier result had been culled
+  from what the model saw: what trimming too much costs.
 
 Tokens are estimated from a per-conversation fit: inputTokens = base + rate·bytes.
 
