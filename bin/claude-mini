@@ -1,19 +1,9 @@
 #!/bin/bash
 # Runs claude through the mini-context proxy, starting the proxy first if
-# nothing is listening on its port. The proxy is left running for later
-# sessions; its output goes to proxy.log. Arguments are passed to claude.
+# nothing is listening on its port (bin/start-proxy). Arguments are passed to
+# claude.
 set -euo pipefail
 
-repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-port=${MINI_CTX_PORT:-8787}
-up() { nc -z 127.0.0.1 "$port" 2>/dev/null; }
-
-if ! up; then
-  nohup node "$repo/src/server.ts" --port "$port" \
-    --strip-tool-calls-wait-turns 1 --strip-reasoning-wait-turns 1 --log-step-events \
-    >>"$repo/proxy.log" 2>&1 &
-  for _ in $(seq 50); do up && break; sleep 0.1; done
-  up || { echo "claude-mini: the proxy did not start; see $repo/proxy.log" >&2; exit 1; }
-fi
-
-ANTHROPIC_BASE_URL=http://127.0.0.1:$port exec claude "$@"
+bin=$(dirname "$(readlink -f "$0")")
+"$bin/start-proxy"
+ANTHROPIC_BASE_URL=http://127.0.0.1:${MINI_CTX_PORT:-8787} exec claude "$@"

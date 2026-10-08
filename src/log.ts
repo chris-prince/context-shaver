@@ -3,7 +3,9 @@
 // saved once (parts/<hash>.json) with its bytes split by kind
 // (parts/<hash>.kinds.json). A request line lists its messages by hash, so the
 // full and the trimmed version of a message are both on disk, joined by their
-// lineage. The system prompt and tool definitions are not logged.
+// lineage. The top-level `system` field and the tool definitions are not logged;
+// system-role messages in the conversation, such as the environment block
+// Claude Code sends at the start, are.
 
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'

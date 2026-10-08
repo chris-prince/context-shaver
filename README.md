@@ -23,7 +23,15 @@ bin/claude-mini [claude args ...]
 or `MINI_CTX_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy.log`. It starts the proxy with both wait turns at 1 and logging on; edit
-the script to change them.
+`bin/start-proxy` to change them.
+
+To pick up changes to the proxy's code, restart it:
+
+```bash
+bin/start-proxy --restart
+```
+
+Sessions running through it carry on with their next request.
 
 Claude Code cannot reach the API while the proxy is down, so a session started
 this way fails if the proxy is stopped.

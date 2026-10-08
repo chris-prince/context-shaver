@@ -14,12 +14,17 @@ and tools, and `rate` turns a message's bytes by kind into tokens.
 By age: base, then the message content grouped by how many calendar days (local
 time) before the request each message first appeared -- oldest first, then
 "today" -- and the frontier, the reasoning and tool calls and results still sent
-whole. A trimmed message ages as the message it replaced: the two share a
+whole past where the request's frontier ends (its `frontierEnd`, a message
+index each for tools and reasoning). Behind that end, what is still whole is
+trimmed as far as it will be, so it persists: a Bash call, whose input is never
+stubbed, or a result too short to stub. Requests logged before `frontierEnd`
+count all of it as frontier. A trimmed message ages as the message it replaced: the two share a
 lineage (role and tool id), and the earliest first appearance among the hashes
 carrying it wins.
 
 By part type: the same kinds, the frontier left out, since it is what the next
-trims remove.
+trims remove. What persists whole behind the frontier shows as toolCallsKept,
+toolResultsKept and reasoningKept.
 
 Usage:
     scripts/analyze-context.py                 # newest session, latest request
@@ -37,8 +42,9 @@ import os
 import sys
 from collections import defaultdict
 
-FRONTIER = ("reasoning", "toolCalls", "toolResults")
-TYPE_ORDER = ["base", "user", "assistant", "toolCallsStubbed", "toolResultsStubbed", "other"]
+# The kinds the frontier holds back, each with the frontier that trims it.
+FRONTIER = {"reasoning": "reasoning", "toolCalls": "tools", "toolResults": "tools"}
+TYPE_ORDER = ["base", "user", "assistant", "toolCallsKept", "toolCallsStubbed", "toolResultsKept", "toolResultsStubbed", "reasoningKept", "other"]
 
 
 def requests(session_dir: str) -> list[dict]:
@@ -142,13 +148,16 @@ def main() -> int:
     ref = local_date(request["time"])
     by_day: dict[int, float] = defaultdict(float)
     by_type: dict[str, float] = defaultdict(float)
-    for p in request["parts"]:
+    ends = request.get("frontierEnd")
+    for i, p in enumerate(request["parts"]):
         h = p["hash"]
         kinds = side[h].get("kinds") or {p["part"]: p["bytes"]}
         key = side[h].get("lineage")
         day = local_date(born_by_lineage.get(key, seen[h]) if key else seen[h])
         for kind, n in kinds.items():
             tokens = n * rate
+            if kind in FRONTIER and ends and i < ends[FRONTIER[kind]]:
+                kind += "Kept"
             by_type[kind] += tokens
             if kind not in FRONTIER:
                 by_day[(ref - day).days] += tokens
@@ -177,7 +186,7 @@ def main() -> int:
     print("\nTokens by part type (frontier left out)")
     for key in TYPE_ORDER:
         value = base if key == "base" else by_type.get(key, 0.0)
-        if key == "other" and not value:
+        if key in ("reasoningKept", "other") and not value:
             continue
         print(row(key, value, persist))
     print(row("TOTAL", persist, persist, show_percent=False))

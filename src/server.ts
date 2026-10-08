@@ -14,7 +14,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeLine, writeParts } from './log.ts'
-import { candidate, decide, strip, turnsOf, type ApiMsg, type Decision, type Frontier, type Options } from './trim.ts'
+import { candidate, decide, frontierEnd, strip, turnsOf, type ApiMsg, type Decision, type Frontier, type Options } from './trim.ts'
 
 const { values: a } = parseArgs({
   allowNegative: true,
@@ -108,7 +108,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
         context,
       })
     }
-    p.logLine = { event: 'request', time, model: body.model, parts: writeParts(p.logDir, sent.msgs) }
+    p.logLine = { event: 'request', time, model: body.model, frontierEnd: frontierEnd(msgs, frontier), parts: writeParts(p.logDir, sent.msgs) }
   }
   return p
 }

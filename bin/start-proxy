@@ -1,0 +1,24 @@
+#!/bin/bash
+# Starts the mini-context proxy if nothing is listening on its port, and leaves
+# it running; its output goes to proxy.log. With --restart, stops whatever is
+# listening there first, so the proxy picks up code changes. Sessions running
+# through it resume with their next request, once it is back up.
+set -euo pipefail
+
+repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+port=${MINI_CTX_PORT:-8787}
+up() { nc -z 127.0.0.1 "$port" 2>/dev/null; }
+
+if [[ ${1:-} == --restart ]] && up; then
+  kill $(lsof -ti "tcp:$port" -sTCP:LISTEN)
+  for _ in $(seq 50); do up || break; sleep 0.1; done
+  ! up || { echo "start-proxy: the proxy on port $port did not stop" >&2; exit 1; }
+fi
+
+if ! up; then
+  nohup node "$repo/src/server.ts" --port "$port" \
+    --strip-tool-calls-wait-turns 1 --strip-reasoning-wait-turns 1 --log-step-events \
+    >>"$repo/proxy.log" 2>&1 &
+  for _ in $(seq 50); do up && break; sleep 0.1; done
+  up || { echo "start-proxy: the proxy did not start; see $repo/proxy.log" >&2; exit 1; }
+fi

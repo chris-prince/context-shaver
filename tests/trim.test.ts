@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { candidate, decide, inputStub, isPrompt, strip, TOOL_RESULT_STUB, turnsOf, type ApiMsg, type Options } from '../src/trim.ts'
+import { candidate, decide, frontierEnd, inputStub, isPrompt, strip, TOOL_RESULT_STUB, turnsOf, type ApiMsg, type Options } from '../src/trim.ts'
 
 const opts: Options = { stripToolCalls: true, stripReasoning: true, stripToolCallsWaitTurns: 0, stripReasoningWaitTurns: 0 }
 const long = 'x'.repeat(5000)
@@ -26,6 +26,12 @@ test('prompts: user text, not tool results or reminders', () => {
   assert.equal(isPrompt({ role: 'user', content: '<system-reminder>x</system-reminder>' }), false)
   assert.equal(isPrompt({ role: 'user', content: '[Request interrupted by user]' }), false)
   assert.deepEqual(turnsOf(msgs).completed, 2)
+})
+
+test('the frontier ends where the turn after it starts', () => {
+  // Turns of 5 messages; 2 completed. The frontier is held to them.
+  assert.deepEqual(frontierEnd(msgs, { tools: 1, reasoning: 0 }), { tools: 5, reasoning: 0 })
+  assert.deepEqual(frontierEnd(msgs, { tools: 5, reasoning: 2 }), { tools: 10, reasoning: 10 })
 })
 
 test('strips completed turns up to the frontier, never the current one', () => {

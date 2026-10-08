@@ -50,6 +50,18 @@ export function turnsOf(msgs: readonly ApiMsg[]): { turnOf: number[]; completed:
   return { turnOf, completed: Math.max(0, t - 1) }
 }
 
+// Where the frontier ends in the messages, for tool calls and for reasoning:
+// the index of the first message past it. Behind it, content is trimmed as far
+// as it will be, so what is still whole there stays.
+export function frontierEnd(msgs: readonly ApiMsg[], f: Frontier): Frontier {
+  const { turnOf, completed } = turnsOf(msgs)
+  const end = (n: number) => {
+    const k = Math.min(n, completed)
+    return k ? turnOf.findIndex((t) => t > k) : 0
+  }
+  return { tools: end(f.tools), reasoning: end(f.reasoning) }
+}
+
 // Where the frontier goes if the conversation is trimmed now: every completed
 // turn outside the waits, and never backwards.
 export function candidate(msgs: readonly ApiMsg[], f: Frontier, o: Options): Frontier {
