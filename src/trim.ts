@@ -19,15 +19,50 @@ export type Options = {
 
 export type Frontier = { tools: number; reasoning: number }
 
-export const TOOL_RESULT_STUB_PREFIX = '[Output from an earlier turn removed to save context'
-export const TOOL_RESULT_STUB = `${TOOL_RESULT_STUB_PREFIX}. Run the tool again if you need it.]`
-export const inputStub = (n: number) => `[${n} characters removed from an earlier turn to save context]`
-const INPUT_STUB = /^\[\d+ characters removed from an earlier turn to save context\]$/
+// What stands in for trimmed content, a tool result or a long input: how many
+// UTF-8 bytes of it were cut.
+export const stub = (n: number) => `[CULLED ${n} B FROM CTX]`
+export const STUB = /^\[CULLED \d+ B FROM CTX\]$/
+export const bytes = (v: unknown) => Buffer.byteLength(typeof v === 'string' ? v : (JSON.stringify(v) ?? ''))
 
 // The inputs stubbed when longer than the stub: an edit's old and new text and
-// a write's content. The path stays, and the file has the text. Other inputs
-// (Bash commands among them) are kept whole.
+// a write's content. The path stays, and the file has the text. A Bash command
+// keeps its lines but has each here-document's body stubbed (stubHeredocs);
+// other inputs are kept whole.
 const STUBBED_INPUTS: Record<string, string[]> = { Edit: ['old_string', 'new_string'], Write: ['content'] }
+
+// A here-document operator, `<<WORD` or `<<-WORD`, its word bare or quoted, but
+// not a here-string (`<<<`). Its body runs from the next line to the line that
+// is the word alone (after leading tabs, with `<<-`).
+const HEREDOC = /(?<!<)<<(-?)[ \t]*(['"]?)([\w.-]+)\2/g
+// A here-document whose body is a stub.
+const STUBBED_HEREDOC = /(?<!<)<<-?[ \t]*(['"]?)([\w.-]+)\1[^\n]*\n\[CULLED \d+ B FROM CTX\]\n\t*\2$/m
+
+// A command with each here-document body longer than its stub stubbed. Several
+// operators on a line take their bodies in order; an unterminated one, or a
+// `<<` that is no operator (inside a quoted string), finds no end line and is
+// left alone.
+export function stubHeredocs(command: string): string {
+  const lines = command.split('\n')
+  const out: string[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i++]
+    out.push(line)
+    for (const [, dash, , word] of line.matchAll(HEREDOC)) {
+      const end = lines.findIndex((l, j) => j >= i && (dash ? l.replace(/^\t+/, '') : l) === word)
+      if (end < 0) break
+      const body = lines.slice(i, end).join('\n')
+      const n = bytes(body)
+      out.push(...(STUB.test(body) || n <= stub(n).length ? lines.slice(i, end) : [stub(n)]), lines[end])
+      i = end + 1
+    }
+  }
+  return out.join('\n')
+}
+
+// Whether an input value carries a stub: is one, or has a here-document that is.
+export const isStubbed = (v: unknown) => typeof v === 'string' && (STUB.test(v) || STUBBED_HEREDOC.test(v))
 
 // User text that is not a prompt: command rows, the interrupt marker, and
 // context Claude Code adds in <system-reminder> tags.
@@ -82,10 +117,14 @@ export type Stripped = {
 function stubbedInput(name: string, input: Record<string, unknown>): Record<string, unknown> | undefined {
   const long = (STUBBED_INPUTS[name] ?? []).filter((k) => {
     const v = input[k]
-    return typeof v === 'string' && !INPUT_STUB.test(v) && v.length > inputStub(v.length).length
+    return typeof v === 'string' && !STUB.test(v) && bytes(v) > stub(bytes(v)).length
   })
-  if (!long.length) return undefined
-  return { ...input, ...Object.fromEntries(long.map((k) => [k, inputStub((input[k] as string).length)])) }
+  const out = { ...input, ...Object.fromEntries(long.map((k) => [k, stub(bytes(input[k]))])) }
+  if (name === 'Bash' && typeof input.command === 'string') {
+    const command = stubHeredocs(input.command)
+    if (command !== input.command) return { ...out, command }
+  }
+  return long.length ? out : undefined
 }
 
 // The messages trimmed up to the frontier. The frontier is held to the
@@ -119,9 +158,10 @@ export function strip(msgs: readonly ApiMsg[], f: Frontier): Stripped {
     }
     if (m.role === 'user' && t <= tools) {
       content = content.map((b) => {
-        if (b.type !== 'tool_result' || JSON.stringify(b.content ?? '').length <= TOOL_RESULT_STUB.length + 2) return b
+        const n = bytes(b.content ?? '')
+        if (b.type !== 'tool_result' || n <= stub(n).length || STUB.test(String(b.content))) return b
         out.results++
-        return { ...b, content: TOOL_RESULT_STUB }
+        return { ...b, content: stub(n) }
       })
     }
     out.msgs.push(content === m.content ? m : { ...m, content })

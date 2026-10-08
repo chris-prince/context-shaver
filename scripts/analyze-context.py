@@ -9,22 +9,25 @@ kind (src/log.ts).
 The log holds the messages but not the system prompt or tool definitions, so a
 request's tokens are fitted across the session as base + rate x message bytes,
 by least squares over the session's requests: `base` is the unseen system prompt
-and tools, and `rate` turns a message's bytes by kind into tokens.
+and tools, and `rate` turns a message's bytes by kind into tokens. Logged bytes
+of kind `system` -- what Claude Code injects before the first response,
+CLAUDE.md and the environment block among it -- are base too. What it injects
+later shows as `harness`.
 
 By age: base, then the message content grouped by how many calendar days (local
 time) before the request each message first appeared -- oldest first, then
 "today" -- and the frontier, the reasoning and tool calls and results still sent
 whole past where the request's frontier ends (its `frontierEnd`, a message
 index each for tools and reasoning). Behind that end, what is still whole is
-trimmed as far as it will be, so it persists: a Bash call, whose input is never
-stubbed, or a result too short to stub. Requests logged before `frontierEnd`
+trimmed as far as it will be, so it persists: a call with no input to stub, or
+a result too short to stub. Requests logged before `frontierEnd`
 count all of it as frontier. A trimmed message ages as the message it replaced: the two share a
 lineage (role and tool id), and the earliest first appearance among the hashes
 carrying it wins.
 
 By part type: the same kinds, the frontier left out, since it is what the next
-trims remove. What persists whole behind the frontier shows as toolCallsKept,
-toolResultsKept and reasoningKept.
+trims remove. What persists whole behind the frontier shows under its own kind:
+toolCalls, toolResults and reasoning.
 
 Usage:
     scripts/analyze-context.py                 # newest session, latest request
@@ -44,7 +47,7 @@ from collections import defaultdict
 
 # The kinds the frontier holds back, each with the frontier that trims it.
 FRONTIER = {"reasoning": "reasoning", "toolCalls": "tools", "toolResults": "tools"}
-TYPE_ORDER = ["base", "user", "assistant", "toolCallsKept", "toolCallsStubbed", "toolResultsKept", "toolResultsStubbed", "reasoningKept", "other"]
+TYPE_ORDER = ["base", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "reasoning", "other"]
 
 
 def requests(session_dir: str) -> list[dict]:
@@ -148,6 +151,7 @@ def main() -> int:
     ref = local_date(request["time"])
     by_day: dict[int, float] = defaultdict(float)
     by_type: dict[str, float] = defaultdict(float)
+    frontier = 0.0
     ends = request.get("frontierEnd")
     for i, p in enumerate(request["parts"]):
         h = p["hash"]
@@ -155,17 +159,18 @@ def main() -> int:
         key = side[h].get("lineage")
         day = local_date(born_by_lineage.get(key, seen[h]) if key else seen[h])
         for kind, n in kinds.items():
+            if kind == "system":
+                continue  # base, which the request's tokens leave below
             tokens = n * rate
-            if kind in FRONTIER and ends and i < ends[FRONTIER[kind]]:
-                kind += "Kept"
+            if kind in FRONTIER and not (ends and i < ends[FRONTIER[kind]]):
+                frontier += tokens
+                continue
             by_type[kind] += tokens
-            if kind not in FRONTIER:
-                by_day[(ref - day).days] += tokens
+            by_day[(ref - day).days] += tokens
 
     total = float(request["inputTokens"])
-    frontier = sum(by_type.get(k, 0.0) for k in FRONTIER)
     # The fit is approximate; the base is what the request's own tokens leave.
-    base = total - sum(by_type.values())
+    base = total - frontier - sum(by_type.values())
     persist = total - frontier
 
     print(f"Date: {ref}")
@@ -186,7 +191,7 @@ def main() -> int:
     print("\nTokens by part type (frontier left out)")
     for key in TYPE_ORDER:
         value = base if key == "base" else by_type.get(key, 0.0)
-        if key in ("reasoningKept", "other") and not value:
+        if key in ("reasoning", "other") and not value:
             continue
         print(row(key, value, persist))
     print(row("TOTAL", persist, persist, show_percent=False))

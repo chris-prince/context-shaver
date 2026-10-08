@@ -3,9 +3,10 @@
 A local proxy between Claude Code and the Anthropic API. On each request it
 forwards, it trims these from completed turns:
 
-- old tool results, replaced with a stub;
-- long Edit/Write inputs (`old_string`, `new_string`, `content`), replaced with a
-  stub that gives the length;
+- old tool results, replaced with a stub that gives their size,
+  `[CULLED 1234 B FROM CTX]`;
+- long Edit/Write inputs (`old_string`, `new_string`, `content`), replaced with
+  the same stub;
 - reasoning (thinking blocks).
 
 Only what is sent changes. The stored session and the TUI are untouched, and

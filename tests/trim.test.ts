@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { candidate, decide, frontierEnd, inputStub, isPrompt, strip, TOOL_RESULT_STUB, turnsOf, type ApiMsg, type Options } from '../src/trim.ts'
+import { candidate, decide, frontierEnd, isPrompt, isStubbed, strip, stub, stubHeredocs, turnsOf, type ApiMsg, type Options } from '../src/trim.ts'
 
 const opts: Options = { stripToolCalls: true, stripReasoning: true, stripToolCallsWaitTurns: 0, stripReasoningWaitTurns: 0 }
 const long = 'x'.repeat(5000)
@@ -40,10 +40,35 @@ test('strips completed turns up to the frontier, never the current one', () => {
   assert.equal(s.inputs, 1)
   assert.equal(s.thinking, 4)
   const r = s.msgs[2].content as any[]
-  assert.equal(r[0].content, TOOL_RESULT_STUB)
+  assert.equal(r[0].content, stub(5000))
   assert.deepEqual(r[0].cache_control, { type: 'ephemeral' })
-  assert.equal((s.msgs[1].content as any[])[0].input.content, inputStub(5000))
+  assert.equal((s.msgs[1].content as any[])[0].input.content, stub(5000))
   assert.deepEqual(s.msgs.slice(10), msgs.slice(10))
+})
+
+test('here-document bodies are stubbed, each to its own end line', () => {
+  const body = 'line\n'.repeat(20).trimEnd()
+  const n = Buffer.byteLength(body)
+  assert.equal(stubHeredocs(`cat > a <<'EOF'\n${body}\nEOF\nls`), `cat > a <<'EOF'\n${stub(n)}\nEOF\nls`)
+  assert.equal(stubHeredocs(`python3 - <<"PY" && x\n${body}\nPY`), `python3 - <<"PY" && x\n${stub(n)}\nPY`)
+  assert.equal(stubHeredocs(`cat <<-END\n${body}\n\t\tEND`), `cat <<-END\n${stub(n)}\n\t\tEND`)
+  // Two on one line take their bodies in order.
+  assert.equal(stubHeredocs(`f <<A <<B\n${body}\nA\n${body}\nB`), `f <<A <<B\n${stub(n)}\nA\n${stub(n)}\nB`)
+  // Only its own word ends a body.
+  assert.equal(stubHeredocs(`cat <<A\nEOF\n${body}\nA`), `cat <<A\n${stub(n + 4)}\nA`)
+  // A here-string, a short body and an unterminated one are left alone.
+  for (const c of [`cat <<< "${body}"`, `cat <<EOF\nhi\nEOF`, `cat <<EOF\n${body}`]) assert.equal(stubHeredocs(c), c)
+  assert.equal(isStubbed(stubHeredocs(`cat <<EOF\n${body}\nEOF`)), true)
+  assert.equal(isStubbed(`echo '${stub(5)}'`), false)
+  assert.equal(stubHeredocs(stubHeredocs(`cat <<EOF\n${body}\nEOF`)), stubHeredocs(`cat <<EOF\n${body}\nEOF`))
+})
+
+test('a Bash call has its here-documents stubbed', () => {
+  const heredoc = `cat > b <<EOF\n${long}\nEOF`
+  const m = [...turn(1, 'Bash', { command: heredoc }), ...turn(2, 'Bash', { command: 'ls' })]
+  const s = strip(m, { tools: 1, reasoning: 0 })
+  assert.equal(s.inputs, 1)
+  assert.equal((s.msgs[1].content as any[])[1].input.command, `cat > b <<EOF\n${stub(5000)}\nEOF`)
 })
 
 test('tools and reasoning have their own frontiers', () => {
