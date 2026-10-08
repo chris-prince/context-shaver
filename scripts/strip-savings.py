@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Total what trimming saved and cost, per session, from the plugin's logs.
+"""Total what trimming saved and cost, per session, from the proxy's logs.
 
-Reads logs-mini-ctx-claude/<session>/step_events.jsonl under each project dir
-(default the current one): its `request` lines (usage) and `compaction` lines
-(each decision, with savedChars and rewriteChars). Characters become tokens at
+Reads logs-mini-ctx-claude/<conversation>/step_events.jsonl under each dir
+given (default the current one, the proxy's default --dir when run from the
+repo): its `request` lines (usage) and `compaction` lines (each decision, with
+savedChars and rewriteChars). Characters become tokens at
 the session's fitted rate, as in analyze-context.py.
 
   savings  Each request after an advance no longer sends what it saved: the
@@ -20,7 +21,7 @@ Prices are per million input tokens: Haiku $1, Sonnet $3, Opus $5 (default $5).
 A cache read is 0.1x, a 1-hour cache write 2x, output 5x.
 
 Usage:
-    scripts/strip-savings.py [project dir ...]
+    scripts/strip-savings.py [dir ...]
 """
 
 from __future__ import annotations

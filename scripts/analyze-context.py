@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Break down a request's context by age, then by part type.
 
-Reads the plugin's logs under logs-mini-ctx-claude/<session>/: the `request`
+Reads the proxy's logs under logs-mini-ctx-claude/<conversation>/: the `request`
 lines of step_events.jsonl, each listing the request's messages by hash, and
 beside each message its parts/<hash>.kinds.json, the message's bytes split by
-kind (hooks/log.ts).
+kind (src/log.ts).
 
-A plugin sees the messages but not the system prompt or tool definitions, so a
+The log holds the messages but not the system prompt or tool definitions, so a
 request's tokens are fitted across the session as base + rate x message bytes,
 by least squares over the session's requests: `base` is the unseen system prompt
 and tools, and `rate` turns a message's bytes by kind into tokens.

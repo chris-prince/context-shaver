@@ -1,104 +1,74 @@
-import type { SessionMessage } from 'claude-code'
-import { expect, test } from 'claude-code/testing'
-import { applyToRequest, decide, inputStub, plan, TOOL_RESULT_STUB, type ApiMsg, type Options } from '../hooks/trim'
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { candidate, decide, inputStub, isPrompt, strip, TOOL_RESULT_STUB, turnsOf, type ApiMsg, type Options } from '../src/trim.ts'
 
 const opts: Options = { stripToolCalls: true, stripReasoning: true, stripToolCallsWaitTurns: 0, stripReasoningWaitTurns: 0 }
 const long = 'x'.repeat(5000)
 
-// Two turns, each: prompt, thinking, a tool call, its result, thinking, answer.
-// Every row carries a handle, as session.compact hands them.
-function turn(n: number, tool: string, input: Record<string, unknown>): SessionMessage[] {
+// A turn as Claude Code sends it: prompt, a response with thinking and a tool
+// call, its result, a response with thinking and an answer, and a
+// mid-conversation system message.
+function turn(n: number, tool: string, input: Record<string, unknown>): ApiMsg[] {
   const id = `toolu_${n}`
   return [
-    { role: 'user', text: `prompt ${n}`, toolUses: [], handle: `u${n}` },
-    { role: 'assistant', text: '', toolUses: [], handle: `t${n}a` },
-    { role: 'assistant', text: '', toolUses: [{ tool_use_id: id, tool, input, text: long }], handle: `c${n}` },
-    { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: id, text: long, isError: false } as any], handle: `r${n}` },
-    { role: 'assistant', text: '', toolUses: [], handle: `t${n}b` },
-    { role: 'assistant', text: `answer ${n}`, toolUses: [], handle: `a${n}` },
+    { role: 'user', content: n === 1 ? [{ type: 'text', text: '<system-reminder>\ncontext\n</system-reminder>' }, { type: 'text', text: `prompt ${n}` }] : `prompt ${n}` },
+    { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm', signature: 'sig' }, { type: 'tool_use', id, name: tool, input }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: long, cache_control: { type: 'ephemeral' } }] },
+    { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm', signature: 'sig' }, { type: 'text', text: `answer ${n}` }] },
+    { role: 'system', content: 'reminder' },
   ]
 }
-const rows = [...turn(1, 'Write', { file_path: 'a.txt', content: long }), ...turn(2, 'Bash', { command: 'seq 1 3000' })]
+const msgs = [...turn(1, 'Write', { file_path: 'a.txt', content: long }), ...turn(2, 'Bash', { command: 'seq 1 3000' }), ...turn(3, 'Bash', { command: 'ls' })]
 
-// The same two turns as the request carries them.
-function apiTurn(n: number, tool: string, input: Record<string, unknown>): ApiMsg[] {
-  const id = `toolu_${n}`
-  return [
-    { role: 'user', content: [{ type: 'text', text: `prompt ${n}` }] },
-    { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig' }, { type: 'tool_use', id, name: tool, input }] },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: long }] },
-    { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig' }, { type: 'text', text: `answer ${n}` }] },
-  ]
-}
-const api = [...apiTurn(1, 'Write', { file_path: 'a.txt', content: long }), ...apiTurn(2, 'Bash', { command: 'seq 1 3000' })]
-
-test('stubs results and long Write content, drops thinking, keeps the rest', () => {
-  const p = plan(rows, opts)
-  expect(p.turns).toBe(2)
-  expect(p.thinkingRows).toBe(4)
-  expect([...p.results]).toEqual(['toolu_1', 'toolu_2'])
-  expect([...p.inputs.keys()]).toEqual(['toolu_1'])
-  const write = p.rows.find((m) => m.toolUses[0]?.tool === 'Write')!
-  expect(write.handle).toBe(undefined)
-  expect(write.toolUses[0]!.input).toEqual({ file_path: 'a.txt', content: inputStub(5000) })
-  const bash = p.rows.find((m) => m.toolUses[0]?.tool === 'Bash')!
-  expect(bash.handle).toBe('c2') // nothing to stub in a short command
-  expect(p.rows.filter((m) => m.toolResults?.length).every((m) => !m.handle && m.toolResults![0]!.text === TOOL_RESULT_STUB)).toBe(true)
-  expect(p.rows.filter((m) => m.role === 'user' && !m.toolResults?.length).map((m) => m.handle)).toEqual(['u1', 'u2'])
+test('prompts: user text, not tool results or reminders', () => {
+  assert.equal(isPrompt(msgs[0]), true)
+  assert.equal(isPrompt(msgs[2]), false)
+  assert.equal(isPrompt({ role: 'user', content: '<system-reminder>x</system-reminder>' }), false)
+  assert.equal(isPrompt({ role: 'user', content: '[Request interrupted by user]' }), false)
+  assert.deepEqual(turnsOf(msgs).completed, 2)
 })
 
-test('a second plan changes nothing', () => {
-  const once = plan(rows, opts).rows.map((m, i) => ({ ...m, handle: m.handle ?? `new${i}` }))
-  const twice = plan(once, opts)
-  expect(twice.rows).toEqual(once)
-  expect(twice.results.size + twice.inputs.size + twice.thinkingRows).toBe(0)
+test('strips completed turns up to the frontier, never the current one', () => {
+  const s = strip(msgs, { tools: 5, reasoning: 5 }) // held to the 2 completed turns
+  assert.equal(s.results, 2)
+  assert.equal(s.inputs, 1)
+  assert.equal(s.thinking, 4)
+  const r = s.msgs[2].content as any[]
+  assert.equal(r[0].content, TOOL_RESULT_STUB)
+  assert.deepEqual(r[0].cache_control, { type: 'ephemeral' })
+  assert.equal((s.msgs[1].content as any[])[0].input.content, inputStub(5000))
+  assert.deepEqual(s.msgs.slice(10), msgs.slice(10))
 })
 
-test('wait turns hold back the latest completed turns', () => {
-  const p = plan(rows, { ...opts, stripToolCallsWaitTurns: 1, stripReasoningWaitTurns: 2 })
-  expect([...p.results]).toEqual(['toolu_1'])
-  expect(p.thinkingRows).toBe(0)
+test('tools and reasoning have their own frontiers', () => {
+  const s = strip(msgs, { tools: 1, reasoning: 0 })
+  assert.equal(s.results, 1)
+  assert.equal(s.thinking, 0)
+  assert.equal((s.msgs[1].content as any[])[0].type, 'thinking')
 })
 
-test('the request loses thinking where the plan rebuilds a call or strips reasoning', () => {
-  const keepReasoning = { ...opts, stripReasoning: false }
-  const p = plan(rows, keepReasoning)
-  const after = applyToRequest(api, p, keepReasoning)
-  expect(after.turns).toBe(2)
-  const thinking = after.msgs.map((m) => m.content.some((b) => b.type === 'thinking'))
-  // Turn 1's call was rebuilt (Write content stubbed), so its thinking goes;
-  // turn 2's call was not, so its thinking stays.
-  expect(thinking).toEqual([false, false, false, true, false, true, false, true])
-  expect(after.msgs[2]!.content[0]!.content).toBe(TOOL_RESULT_STUB)
-  expect([after.results, after.inputs, after.thinking]).toEqual([2, 1, 1])
-  // On a request already trimmed, the same plan changes nothing.
-  const again = applyToRequest(after.msgs, p, keepReasoning)
-  expect([again.results, again.inputs, again.thinking]).toEqual([0, 0, 0])
+test('stripping is idempotent', () => {
+  const once = strip(msgs, { tools: 2, reasoning: 2 })
+  const twice = strip(once.msgs, { tools: 2, reasoning: 2 })
+  assert.deepEqual(twice.msgs, once.msgs)
+  assert.equal(twice.results + twice.inputs + twice.thinking, 0)
 })
 
-test('advances when the saving outweighs the rewrite, on a warm cache', () => {
-  const p = plan(rows, opts)
-  const d = decide(api, applyToRequest(api, p, opts).msgs, false)
-  expect(d.advanced).toBe(true)
-  expect(d.savedChars > 14000).toBe(true)
+test('candidate honours waits and never moves back', () => {
+  assert.deepEqual(candidate(msgs, { tools: 0, reasoning: 0 }, opts), { tools: 2, reasoning: 2 })
+  assert.deepEqual(candidate(msgs, { tools: 0, reasoning: 0 }, { ...opts, stripToolCallsWaitTurns: 1, stripReasoning: false }), { tools: 1, reasoning: 0 })
+  assert.deepEqual(candidate(msgs, { tools: 2, reasoning: 2 }, { ...opts, stripToolCallsWaitTurns: 2 }), { tools: 2, reasoning: 2 })
 })
 
-test('declines a small saving ahead of a long tail, unless the cache is cold', () => {
-  const small = 'y'.repeat(400)
-  const tail: ApiMsg = { role: 'user', content: [{ type: 'text', text: 'z'.repeat(20000) }] }
-  const r: SessionMessage[] = [
-    { role: 'user', text: 'p', toolUses: [] },
-    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'a', tool: 'Bash', input: { command: 'ls' } }] },
-    { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 'a', text: small } as any] },
-    { role: 'user', text: 'z'.repeat(20000), toolUses: [] },
-  ]
-  const before: ApiMsg[] = [
-    { role: 'user', content: [{ type: 'text', text: 'p' }] },
-    { role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'ls' } }] },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: small }] },
-    tail,
-  ]
-  const after = applyToRequest(before, plan(r, opts), opts).msgs
-  expect(decide(before, after, false).advanced).toBe(false)
-  expect(decide(before, after, true).advanced).toBe(true)
+test('cold always advances; warm only when savings outweigh the rewrite', () => {
+  const keep = strip(msgs, { tools: 0, reasoning: 0 }).msgs
+  const adv = strip(msgs, { tools: 2, reasoning: 2 }).msgs
+  assert.equal(decide(keep, adv, true).advanced, true)
+  assert.equal(decide(keep, adv, false).advanced, true) // the results are most of the history
+  // Saving a few characters at the start of a long history does not pay.
+  const big: ApiMsg[] = [{ role: 'user', content: 'pp' }, { role: 'user', content: long.repeat(40) }]
+  const tiny: ApiMsg[] = [{ role: 'user', content: 'p' }, big[1]]
+  assert.equal(decide(big, tiny, false).advanced, false)
+  assert.equal(decide(big, tiny, true).advanced, true)
+  assert.equal(decide(msgs, msgs, true).advanced, false)
 })

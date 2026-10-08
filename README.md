@@ -1,105 +1,114 @@
 # mini-context for Claude Code
 
-A Claude Code plugin that keeps the conversation trimmed between turns. From
-completed turns it removes:
+A local proxy between Claude Code and the Anthropic API. On each request it
+forwards, it trims these from completed turns:
 
 - old tool results, replaced with a stub;
 - long Edit/Write inputs (`old_string`, `new_string`, `content`), replaced with a
   stub that gives the length;
 - reasoning (thinking blocks).
 
-It is the Claude Code counterpart of `../mini-context` (OpenCode). Claude Code
-has no view that applies only to what is sent, so the plugin trims by answering
-the engine's compaction with the trimmed transcript instead of a summary.
+Only what is sent changes. The stored session and the TUI are untouched, and
+it trims before every request, mid-turn included. It is the Claude Code
+counterpart of `../mini-context` (OpenCode), whose `context` hook does the same
+inside OpenCode.
 
-## Loading
+## Running
 
 ```bash
-claude --plugin-dir <path to this repo>
+node src/server.ts                     # Node 26 runs the TypeScript directly
+ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
 ```
 
-Options go in a settings file (`--settings <file>` or `.claude/settings.json`):
+To route every session through it, put the URL in `~/.claude/settings.json`:
 
 ```json
-{ "pluginConfigs": { "mini-context": { "options": { "logStepEvents": true } } } }
+{ "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787" } }
 ```
+
+Claude Code cannot reach the API while the proxy is down, so keep it running
+(for example as a launchd agent).
+
+It works with a claude.ai login as well as an API key: the proxy forwards the
+headers as they come.
 
 | Option | Default | |
 | --- | --- | --- |
-| `stripToolCalls` | `true` | Stub tool results and long Edit/Write inputs |
-| `stripReasoning` | `true` | Drop thinking |
-| `stripToolCallsWaitTurns` | `0` | The latest N completed turns keep their tool calls whole |
-| `stripReasoningWaitTurns` | `0` | The latest N completed turns keep their thinking |
-| `logStepEvents` | `false` | Write the log (below) |
-| `cacheTtlSeconds` | `3600` | The cache TTL. Lower it only to test the cold path |
+| `--port` | `8787` | Listens on 127.0.0.1 only |
+| `--upstream` | `https://api.anthropic.com` | |
+| `--dir` | the repo | Where `state/` and `logs-mini-ctx-claude/` go |
+| `--[no-]strip-tool-calls` | on | Stub tool results and long Edit/Write inputs |
+| `--[no-]strip-reasoning` | on | Drop thinking |
+| `--strip-tool-calls-wait-turns` | `0` | The latest N completed turns keep their tool calls whole |
+| `--strip-reasoning-wait-turns` | `0` | The latest N completed turns keep their thinking |
+| `--log-step-events` | off | Write the log (below) |
+| `--cache-ttl-seconds` | `3600` | The cache TTL. Lower it only to test the cold path |
 
-## When it trims
+## What it trims
 
-The policy is the cost rule from `../mini-context` (`hooks/trim.ts`, `decide`).
-Let R be the characters from the first changed message onward, and S the
-characters saved. Advancing costs M·R − (M+1)·S extra cache-read characters on
-the next request, with M = 19, because a 1-hour cache write is 2× and a read is
-0.1×. Advancing pays when that extra is at most K·S, with K = 40.
+Only requests that carry tools are trimmed: the main loop and subagents. Claude
+Code's side requests pass through unchanged. A conversation is keyed by its
+first message, so each subagent is its own.
 
-- **Warm, at the end of each turn:** apply the rule, and if it pays, compact.
-- **Cold, when a prompt arrives:** the cache is cold when the time since the
-  main loop's last request is longer than the TTL. Nothing is cached, so
-  trimming is free and the rule always advances.
+A turn starts at a prompt (user text that is not a tool result, a
+`<system-reminder>` or a command row). The current turn, from the last prompt
+on, is never touched.
 
-  A compaction can run only between turns. It also has to run from inside one
-  of the plugin's hooks: one started from a timer skips all of the plugin's
-  hooks, and the engine writes a summary instead. So the plugin lets the prompt
-  in, ends its turn before the first request is sent, compacts from that
-  turn's `turn.complete` (leaving the empty turn out), then submits the prompt
-  again as the user's.
+Each conversation has a frontier, saved in `state/<key>.json`: the completed
+turns whose tool calls, and whose reasoning, are trimmed. Every request is
+trimmed up to it, so they all send the same prefix and the prompt cache keeps
+reading it. The frontier only moves forward.
 
-  This applies only to a prompt typed at an idle composer, with no attachments,
-  no `@`-mentions and no slash command, because only such a prompt can be sent
-  again unchanged.
+If the API refuses a trimmed request (400), the proxy sends it again as it
+came and logs the refusal to stderr.
 
-The wait turns apply on a cold cache too.
+## When the frontier moves
+
+On each request the proxy prices moving the frontier up to the latest
+completed turns, outside the waits (`src/trim.ts`, `decide`). Let R be the
+characters from the first changed message onward, and S the characters saved.
+Advancing costs M·R − (M+1)·S extra cache-read characters on this request,
+with M = 19, because a 1-hour cache write is 2× and a read is 0.1×. Advancing
+pays when that extra is at most K·S, with K = 40.
+
+The cache is cold when the conversation's last answered request is older than
+the TTL, was for another model, or is unknown. Nothing is cached then, so
+trimming is free and the rule always advances.
 
 ## Logs
 
-When `logStepEvents` is on, logs go to `logs-mini-ctx-claude/<session>/` under
-the working directory:
+With `--log-step-events`, logs go to
+`logs-mini-ctx-claude/<session>-<conversation>/`:
 
 - `step_events.jsonl`, with one line per event:
-  - a `request` line for each main-loop request: usage, and the request's
-    messages by hash;
+  - a `request` line for each answered request: usage, and the request's
+    messages as sent, by hash;
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and counts.
 - `parts/`, where each distinct message is saved once, together with its bytes
-  split by kind. A trimmed message shares a lineage with the original, so both
-  the full version and the edited version are on disk.
-
-The system prompt and tool definitions are not visible to a plugin.
+  split by kind. A trimmed message shares a lineage with the original.
 
 Scripts:
 
-- `scripts/analyze-context.py [session dir] [--request N]` breaks one request's
-  tokens down by age and by part type.
-- `scripts/strip-savings.py [project dir ...]` reports, per session, the savings
+- `scripts/analyze-context.py [conversation dir] [--request N]` breaks one
+  request's tokens down by age and by part type.
+- `scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
 
-Tokens are estimated from a per-session fit: inputTokens = base + rate·bytes.
+Tokens are estimated from a per-conversation fit: inputTokens = base + rate·bytes.
 
 ## Limits
 
-- **Interactive sessions only.** The cold path resubmits through the composer.
-- **A trim is permanent.** It rewrites the stored transcript, not just what is
-  sent.
-- **Stubbing an input loses that response's thinking**, even when
-  `stripReasoning` is off: the engine cannot regroup a rebuilt tool-use row
-  with its thinking.
-- **The TUI reprints the transcript after each compaction**
-  ("Conversation compacted").
-- **The resubmitted cold prompt is labelled** "Prompt from the mini-context
-  plugin".
+- **Claude Code sends some requests twice in parallel** (the same history with
+  a different tail). Both trim alike, but each logs its own decision, so
+  `strip-savings.py` counts those advances twice.
+- **Not tested: whether `/context` and auto-compact see the trimmed size.**
+  The usage the API reports counts what was sent.
+- **Changes to Claude Code's request shape can make it trim less**: it only
+  edits the block types it knows.
 
 ## Tests
 
 ```bash
-claude plugin validate .
-claude plugin test .
+node --test tests/*.test.ts
 ```
