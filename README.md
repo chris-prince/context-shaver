@@ -1,13 +1,13 @@
 # mini-context for Claude Code
 
 A local proxy between Claude Code and the Anthropic API. On each request it
-forwards, it trims these from completed turns:
+forwards, it trims:
 
 - old tool results, replaced with a stub that gives their size,
   `[CULLED 1234 B FROM CTX]`;
-- long Edit/Write inputs (`old_string`, `new_string`, `content`), replaced with
-  the same stub;
-- reasoning (thinking blocks).
+- long Edit/Write inputs (`old_string`, `new_string`, `content`) and Bash
+  here-document bodies, replaced with the same stub;
+- reasoning (thinking blocks) from completed turns.
 
 Only what is sent changes. The stored session and the TUI are untouched, and
 it trims before every request, mid-turn included. It is the Claude Code
@@ -23,8 +23,8 @@ bin/claude-mini [claude args ...]
 `bin/claude-mini` starts the proxy if nothing is listening on its port (8787,
 or `MINI_CTX_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
-`proxy.log`. It starts the proxy with both wait turns at 1 and logging on; edit
-`bin/start-proxy` to change them.
+`proxy.log`. It starts the proxy with a tool wait of 1 step, a reasoning wait
+of 1 turn and logging on; edit `bin/start-proxy` to change them.
 
 To pick up changes to the proxy's code, restart it:
 
@@ -54,7 +54,7 @@ headers as they come.
 | `--dir` | the repo | Where `state/` and `logs-mini-ctx-claude/` go |
 | `--[no-]strip-tool-calls` | on | Stub tool results and long Edit/Write inputs |
 | `--[no-]strip-reasoning` | on | Drop thinking |
-| `--strip-tool-calls-wait-turns` | `0` | The latest N completed turns keep their tool calls whole |
+| `--strip-tool-calls-wait-steps` | `0` | The latest N completed steps keep their tool calls whole |
 | `--strip-reasoning-wait-turns` | `0` | The latest N completed turns keep their thinking |
 | `--log-step-events` | off | Write the log (below) |
 | `--cache-ttl-seconds` | `3600` | The cache TTL. Lower it only to test the cold path |
@@ -65,12 +65,15 @@ Only requests that carry tools are trimmed: the main loop and subagents. Claude
 Code's side requests pass through unchanged. A conversation is keyed by its
 first message, so each subagent is its own.
 
-A turn starts at a prompt (user text that is not a tool result, a
-`<system-reminder>` or a command row). The current turn, from the last prompt
-on, is never touched.
+Tool calls are trimmed by step: an assistant message with the tool results
+that answer it. The latest step, the one the model is answering, is never
+touched. Reasoning is trimmed by turn, which starts at a prompt (user text
+that is not a tool result, a `<system-reminder>` or a command row). The
+current turn, from the last prompt on, is never touched.
 
 Each conversation has a frontier, saved in `state/<key>.json`: the completed
-turns whose tool calls, and whose reasoning, are trimmed. Every request is
+steps whose tool calls are trimmed, and the completed turns whose reasoning
+is. Every request is
 trimmed up to it, so they all send the same prefix and the prompt cache keeps
 reading it. The frontier only moves forward.
 
@@ -80,7 +83,7 @@ came and logs the refusal to stderr.
 ## When the frontier moves
 
 On each request the proxy prices moving the frontier up to the latest
-completed turns, outside the waits (`src/trim.ts`, `decide`). Let R be the
+completed steps and turns, outside the waits (`src/trim.ts`, `decide`). Let R be the
 characters from the first changed message onward, and S the characters saved.
 Advancing costs M·R − (M+1)·S extra cache-read characters on this request,
 with M = 19, because a 1-hour cache write is 2× and a read is 0.1×. Advancing

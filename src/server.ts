@@ -6,15 +6,15 @@
 // Each conversation (keyed by its first message, so a subagent is its own) has
 // a frontier, saved under state/, that every request is trimmed up to. On each
 // request the cost rule (trim.ts, decide) says whether moving it up to the
-// latest completed turns pays: always on a cold cache, and on a warm one when
-// what it saves outweighs what it rewrites.
+// latest completed steps and turns pays: always on a cold cache, and on a warm
+// one when what it saves outweighs what it rewrites.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeLine, writeParts } from './log.ts'
-import { candidate, decide, frontierEnd, strip, turnsOf, type ApiMsg, type Decision, type Frontier, type Options } from './trim.ts'
+import { candidate, decide, frontierEnd, stepsOf, strip, turnsOf, type ApiMsg, type Decision, type Frontier, type Options } from './trim.ts'
 
 const { values: a } = parseArgs({
   allowNegative: true,
@@ -24,7 +24,7 @@ const { values: a } = parseArgs({
     dir: { type: 'string', default: path.resolve(import.meta.dirname, '..') },
     'strip-tool-calls': { type: 'boolean', default: true },
     'strip-reasoning': { type: 'boolean', default: true },
-    'strip-tool-calls-wait-turns': { type: 'string', default: '0' },
+    'strip-tool-calls-wait-steps': { type: 'string', default: '0' },
     'strip-reasoning-wait-turns': { type: 'string', default: '0' },
     'log-step-events': { type: 'boolean', default: false },
     'cache-ttl-seconds': { type: 'string', default: '3600' },
@@ -34,7 +34,7 @@ const { values: a } = parseArgs({
 const o: Options = {
   stripToolCalls: a['strip-tool-calls'],
   stripReasoning: a['strip-reasoning'],
-  stripToolCallsWaitTurns: Number(a['strip-tool-calls-wait-turns']),
+  stripToolCallsWaitSteps: Number(a['strip-tool-calls-wait-steps']),
   stripReasoningWaitTurns: Number(a['strip-reasoning-wait-turns']),
 }
 const ttlMs = Number(a['cache-ttl-seconds']) * 1000
@@ -46,9 +46,12 @@ mkdirSync(stateDir, { recursive: true })
 // request, which say whether its cache is still warm.
 type State = { frontier: Frontier; model: string; lastAt: number }
 
+// A state saved before tool calls were counted in steps has a frontier of
+// turns, and is read as none.
 function load(key: string): State | undefined {
   try {
-    return JSON.parse(readFileSync(path.join(stateDir, `${key}.json`), 'utf8'))
+    const s: State = JSON.parse(readFileSync(path.join(stateDir, `${key}.json`), 'utf8'))
+    return s.frontier.toolSteps === undefined ? undefined : s
   } catch {
     return undefined
   }
@@ -69,13 +72,13 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const key = hash(JSON.stringify(msgs[0]))
   const s = load(key)
-  const f = s?.frontier ?? { tools: 0, reasoning: 0 }
+  const f = s?.frontier ?? { toolSteps: 0, reasoningTurns: 0 }
   const keep = strip(msgs, f)
   const next = candidate(msgs, f, o)
   let sent = keep
   let frontier = f
   let d: Decision | undefined
-  if (next.tools > f.tools || next.reasoning > f.reasoning) {
+  if (next.toolSteps > f.toolSteps || next.reasoningTurns > f.reasoningTurns) {
     const advanced = strip(msgs, next)
     d = decide(keep.msgs, advanced.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs)
     if (d.advanced) [sent, frontier] = [advanced, next]
@@ -101,6 +104,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
         savedChars: d.savedChars,
         rewriteChars: d.rewriteChars,
         extraChars: d.extraChars,
+        steps: stepsOf(msgs).completed,
         turns: turnsOf(msgs).completed,
         stubbedResults: advanced.results - keep.results,
         stubbedInputs: advanced.inputs - keep.inputs,

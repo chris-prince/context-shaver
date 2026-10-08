@@ -17,7 +17,7 @@ fi
 
 if ! up; then
   nohup node "$repo/src/server.ts" --port "$port" \
-    --strip-tool-calls-wait-turns 1 --strip-reasoning-wait-turns 1 --log-step-events \
+    --strip-tool-calls-wait-steps 1 --strip-reasoning-wait-turns 1 --log-step-events \
     >>"$repo/proxy.log" 2>&1 &
   for _ in $(seq 50); do up && break; sleep 0.1; done
   up || { echo "start-proxy: the proxy did not start; see $repo/proxy.log" >&2; exit 1; }

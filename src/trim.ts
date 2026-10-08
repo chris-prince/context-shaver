@@ -1,11 +1,13 @@
 // What the proxy trims from a Messages API request, and whether trimming more
 // pays. Pure functions over the request body.
 //
-// A conversation is trimmed up to its frontier: the completed turns, counted
-// by prompt from 1, whose tool calls and whose reasoning are trimmed. The
-// frontier only moves forward, so every request of the conversation sends the
-// same trimmed prefix and the prompt cache keeps reading it. The current turn
-// (from the last prompt on) is never touched.
+// A conversation is trimmed up to its frontier: the steps whose tool calls are
+// trimmed, and the completed turns whose reasoning is. A step is an assistant
+// message with the tool results that answer it, counted from 1; a turn runs
+// from a prompt, counted from 1. The frontier only moves forward, so every
+// request of the conversation sends the same trimmed prefix and the prompt
+// cache keeps reading it. The latest step's tool calls and the current turn's
+// reasoning are never touched.
 
 export type Block = { type: string; [k: string]: unknown }
 export type ApiMsg = { role: 'user' | 'assistant' | 'system'; content: string | Block[] }
@@ -13,11 +15,14 @@ export type ApiMsg = { role: 'user' | 'assistant' | 'system'; content: string | 
 export type Options = {
   stripToolCalls: boolean
   stripReasoning: boolean
-  stripToolCallsWaitTurns: number
+  stripToolCallsWaitSteps: number
   stripReasoningWaitTurns: number
 }
 
-export type Frontier = { tools: number; reasoning: number }
+export type Frontier = { toolSteps: number; reasoningTurns: number }
+// Where a frontier ends in the messages: the index of the first message past
+// it, for tool calls and for reasoning.
+export type Ends = { tools: number; reasoning: number }
 
 // What stands in for trimmed content, a tool result or a long input: how many
 // UTF-8 bytes of it were cut.
@@ -85,25 +90,35 @@ export function turnsOf(msgs: readonly ApiMsg[]): { turnOf: number[]; completed:
   return { turnOf, completed: Math.max(0, t - 1) }
 }
 
-// Where the frontier ends in the messages, for tool calls and for reasoning:
-// the index of the first message past it. Behind it, content is trimmed as far
+// Each message's step, counting assistant messages from 1, so a tool result
+// shares the step of the call it answers; messages before the first are step
+// 0. Every step but the latest is completed.
+export function stepsOf(msgs: readonly ApiMsg[]): { stepOf: number[]; completed: number } {
+  let s = 0
+  const stepOf = msgs.map((m) => (m.role === 'assistant' ? ++s : s))
+  return { stepOf, completed: Math.max(0, s - 1) }
+}
+
+// Where the frontier ends in the messages. Behind it, content is trimmed as far
 // as it will be, so what is still whole there stays.
-export function frontierEnd(msgs: readonly ApiMsg[], f: Frontier): Frontier {
-  const { turnOf, completed } = turnsOf(msgs)
-  const end = (n: number) => {
+export function frontierEnd(msgs: readonly ApiMsg[], f: Frontier): Ends {
+  const end = (of: number[], completed: number, n: number) => {
     const k = Math.min(n, completed)
-    return k ? turnOf.findIndex((t) => t > k) : 0
+    return k ? of.findIndex((t) => t > k) : 0
   }
-  return { tools: end(f.tools), reasoning: end(f.reasoning) }
+  const steps = stepsOf(msgs)
+  const turns = turnsOf(msgs)
+  return { tools: end(steps.stepOf, steps.completed, f.toolSteps), reasoning: end(turns.turnOf, turns.completed, f.reasoningTurns) }
 }
 
 // Where the frontier goes if the conversation is trimmed now: every completed
-// turn outside the waits, and never backwards.
+// step or turn outside the waits, and never backwards.
 export function candidate(msgs: readonly ApiMsg[], f: Frontier, o: Options): Frontier {
-  const { completed } = turnsOf(msgs)
+  const steps = stepsOf(msgs).completed
+  const turns = turnsOf(msgs).completed
   return {
-    tools: o.stripToolCalls ? Math.max(f.tools, completed - o.stripToolCallsWaitTurns) : f.tools,
-    reasoning: o.stripReasoning ? Math.max(f.reasoning, completed - o.stripReasoningWaitTurns) : f.reasoning,
+    toolSteps: o.stripToolCalls ? Math.max(f.toolSteps, steps - o.stripToolCallsWaitSteps) : f.toolSteps,
+    reasoningTurns: o.stripReasoning ? Math.max(f.reasoningTurns, turns - o.stripReasoningWaitTurns) : f.reasoningTurns,
   }
 }
 
@@ -128,18 +143,21 @@ function stubbedInput(name: string, input: Record<string, unknown>): Record<stri
 }
 
 // The messages trimmed up to the frontier. The frontier is held to the
-// completed turns, so a conversation rewound to an earlier turn never has its
-// current turn trimmed. Blocks keep every other field, cache_control included.
+// completed steps and turns, so a conversation rewound to an earlier point never
+// has its latest step or current turn trimmed. Blocks keep every other field,
+// cache_control included.
 export function strip(msgs: readonly ApiMsg[], f: Frontier): Stripped {
-  const { turnOf, completed } = turnsOf(msgs)
-  const tools = Math.min(f.tools, completed)
-  const reasoning = Math.min(f.reasoning, completed)
+  const { stepOf, completed: steps } = stepsOf(msgs)
+  const { turnOf, completed: turns } = turnsOf(msgs)
+  const tools = Math.min(f.toolSteps, steps)
+  const reasoning = Math.min(f.reasoningTurns, turns)
   const out: Stripped = { msgs: [], results: 0, inputs: 0, thinking: 0 }
   msgs.forEach((m, i) => {
     const t = turnOf[i] ?? 0
-    if (t === 0 || typeof m.content === 'string' || m.role === 'system') return out.msgs.push(m)
+    const s = stepOf[i] ?? 0
+    if (typeof m.content === 'string' || m.role === 'system') return out.msgs.push(m)
     let content = m.content
-    if (m.role === 'assistant' && t <= reasoning) {
+    if (m.role === 'assistant' && t && t <= reasoning) {
       const kept = content.filter((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking')
       // A message of thinking alone stays: an empty one is refused.
       if (kept.length && kept.length < content.length) {
@@ -147,7 +165,7 @@ export function strip(msgs: readonly ApiMsg[], f: Frontier): Stripped {
         content = kept
       }
     }
-    if (m.role === 'assistant' && t <= tools) {
+    if (m.role === 'assistant' && s && s <= tools) {
       content = content.map((b) => {
         if (b.type !== 'tool_use' || !b.input || typeof b.input !== 'object') return b
         const input = stubbedInput(String(b.name), b.input as Record<string, unknown>)
@@ -156,7 +174,7 @@ export function strip(msgs: readonly ApiMsg[], f: Frontier): Stripped {
         return { ...b, input }
       })
     }
-    if (m.role === 'user' && t <= tools) {
+    if (m.role === 'user' && s && s <= tools) {
       content = content.map((b) => {
         const n = bytes(b.content ?? '')
         if (b.type !== 'tool_result' || n <= stub(n).length || STUB.test(String(b.content))) return b
