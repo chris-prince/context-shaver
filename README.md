@@ -109,6 +109,9 @@ Scripts:
   request's tokens down by age and by part type.
 - `scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
+- `scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's
+  logged parts with the current part-type rules. The proxy labels a part once,
+  when it first logs it, so run this after changing the rules in `src/log.ts`.
 
 Tokens are estimated from a per-conversation fit: inputTokens = base + rate·bytes.
 
