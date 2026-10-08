@@ -16,18 +16,24 @@ inside OpenCode.
 ## Running
 
 ```bash
-node src/server.ts                     # Node 26 runs the TypeScript directly
+bin/claude-mini [claude args ...]
+```
+
+`bin/claude-mini` starts the proxy if nothing is listening on its port (8787,
+or `MINI_CTX_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
+it. The proxy is left running for later sessions, with its output in
+`proxy.log`. It starts the proxy with both wait turns at 1 and logging on; edit
+the script to change them.
+
+Claude Code cannot reach the API while the proxy is down, so a session started
+this way fails if the proxy is stopped.
+
+To run the proxy by hand (Node 26 runs the TypeScript directly):
+
+```bash
+node src/server.ts [options]
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
 ```
-
-To route every session through it, put the URL in `~/.claude/settings.json`:
-
-```json
-{ "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787" } }
-```
-
-Claude Code cannot reach the API while the proxy is down, so keep it running
-(for example as a launchd agent).
 
 It works with a claude.ai login as well as an API key: the proxy forwards the
 headers as they come.
