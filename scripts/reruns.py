@@ -27,6 +27,9 @@ after an edit. Each hit names its message, the parts file to open, the stubs
 in the request it answered, and the step's tool calls, to confirm or deny it.
 Thinking can't be searched: the API returns it signed but empty.
 
+A last count is of the steps whose text or tool call descriptions say "cull",
+the word the stub uses, a sharper signal than the loss words above.
+
 Usage:
     scripts/reruns.py [conversation-dir]
 """
@@ -46,6 +49,7 @@ OLD_STUB = re.compile(r"^\[Output from an earlier turn removed")
 LOSS = re.compile(r"\b(removed|cleared|culled|dropped|trimmed|stripped|gone|no longer|can't (?:see|read)|cannot (?:see|read))\b", re.I)
 CONTEXT = re.compile(r"\b(context|outputs?|results?)\b", re.I)
 AGAIN = re.compile(r"^re-|\bre-?run\b|\bagain\b", re.I)
+CULL = re.compile(r"cull", re.I)
 
 
 def requests(conv_dir: str) -> list[dict]:
@@ -185,6 +189,21 @@ def main() -> int:
             print(f"    {kind}: {s[:160]!r}")
         for c in calls_here:
             print(f"    call: {str(c).splitlines()[0][:100]}")
+
+    culls = []
+    for i, m in enumerate(msgs):
+        if m.get("role") != "assistant":
+            continue
+        said = [b.get("text", "") for b in blocks(m) if b.get("type") == "text"]
+        said += [(b.get("input") or {}).get("description") or "" for b in blocks(m) if b.get("type") == "tool_use"]
+        found = [t for t in said if CULL.search(t)]
+        if found:
+            culls.append((i, found))
+    print(f"\nSteps saying \"cull\": {len(culls)}")
+    for i, found in culls:
+        t = found[0]
+        at = CULL.search(t).start()
+        print(f"  msg {i}, step {step[i]}: {t[max(0, at - 60):at + 60].replace(chr(10), ' ')!r}")
     return 0
 
 
