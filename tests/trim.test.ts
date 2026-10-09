@@ -138,7 +138,8 @@ test('a tool call is stubbed, then dropped, as the conversation goes on', () => 
 })
 
 test('the gate applies every due transition at once', () => {
-  const at = (c: Clock) => apply(msgs, committed, c)
+  const stubLater: Policy = { ...committed, tool: [{ on: 'step', wait: 1, action: 'stub' }] }
+  const at = (c: Clock) => apply(msgs, stubLater, c)
   assert.deepEqual(transitions(at({ steps: 0, turns: 0 }), at({ steps: 5, turns: 2 })), { 'tool:stub': 2, 'reasoning:drop': 4 })
   // A clock the gate held back catches up in one batch: a call never sent
   // stubbed goes straight to dropped. One sent stubbed moves on to dropped.
