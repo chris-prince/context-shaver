@@ -47,7 +47,7 @@ from collections import defaultdict
 
 # The kinds the frontier holds back, each with the frontier that trims it.
 FRONTIER = {"reasoning": "reasoning", "toolCalls": "tools", "toolResults": "tools"}
-TYPE_ORDER = ["base", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "reasoning", "other"]
+TYPE_ORDER = ["base", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "toolResultsSkill", "reasoning", "other"]
 
 
 def requests(session_dir: str) -> list[dict]:

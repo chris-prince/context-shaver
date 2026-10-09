@@ -35,7 +35,9 @@ export function hash(s: string): string {
 // mini-context's analyze-context reads: user, assistant, reasoning, tool calls
 // and results each split into stubbed and not, what Claude Code injects, and
 // other (content of an unknown type). The role/content wrapper rides with the
-// role, a system message's with its text. `lineage` ties a trimmed message to
+// role, a system message's with its text. A skill's body, which Claude Code
+// sends as a text block beside the Skill call's result, is `toolResultsSkill`.
+// `lineage` ties a trimmed message to
 // the full one it replaced: its first tool_use id, or tool_result id, prefixed
 // by role.
 //
@@ -61,10 +63,12 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
 
 const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('<system-reminder>')
 
+const isSkillBody = (b: Block) => typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
+
 function kindOf(b: Block, role: string): string {
   switch (b.type) {
     case 'text':
-      return role
+      return role === 'user' && isSkillBody(b) ? 'toolResultsSkill' : role
     case 'thinking':
     case 'redacted_thinking':
       return 'reasoning'
