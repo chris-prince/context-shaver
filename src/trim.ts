@@ -14,6 +14,7 @@ export type ApiMsg = { role: 'user' | 'assistant' | 'system'; content: string | 
 
 export type Options = {
   stripToolCalls: boolean
+  dropToolCalls: boolean
   stripReasoning: boolean
   stripToolCallsWaitSteps: number
   stripReasoningWaitTurns: number
@@ -127,6 +128,8 @@ export type Stripped = {
   results: number // tool results stubbed
   inputs: number // tool calls whose input is stubbed
   thinking: number // thinking blocks dropped
+  dropped: number // tool calls dropped with their results
+  origin: number[] // each message's index in the request as it came
 }
 
 function stubbedInput(name: string, input: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -146,16 +149,29 @@ function stubbedInput(name: string, input: Record<string, unknown>): Record<stri
 // completed steps and turns, so a conversation rewound to an earlier point never
 // has its latest step or current turn trimmed. Blocks keep every other field,
 // cache_control included.
-export function strip(msgs: readonly ApiMsg[], f: Frontier): Stripped {
+//
+// With `drop`, tool calls behind the frontier are removed with their results
+// instead of stubbed. A message left empty is removed; the API joins the
+// neighbours that leaves in the same role. One left with thinking alone stays.
+// A pair whose results are followed by a system message is kept, since a
+// system message must follow a user one.
+export function strip(msgs: readonly ApiMsg[], f: Frontier, drop = false): Stripped {
   const { stepOf, completed: steps } = stepsOf(msgs)
   const { turnOf, completed: turns } = turnsOf(msgs)
   const tools = Math.min(f.toolSteps, steps)
   const reasoning = Math.min(f.reasoningTurns, turns)
-  const out: Stripped = { msgs: [], results: 0, inputs: 0, thinking: 0 }
+  const out: Stripped = { msgs: [], results: 0, inputs: 0, thinking: 0, dropped: 0, origin: [] }
+  const droppedIds = new Set<unknown>()
+  const keptIds = new Set<unknown>()
+  msgs.forEach((m, i) => {
+    if (m.role === 'user' && typeof m.content !== 'string' && msgs[i + 1]?.role === 'system')
+      for (const b of m.content) if (b.type === 'tool_result') keptIds.add(b.tool_use_id)
+  })
   msgs.forEach((m, i) => {
     const t = turnOf[i] ?? 0
     const s = stepOf[i] ?? 0
-    if (typeof m.content === 'string' || m.role === 'system') return out.msgs.push(m)
+    const push = (m: ApiMsg) => (out.msgs.push(m), out.origin.push(i))
+    if (typeof m.content === 'string' || m.role === 'system') return push(m)
     let content = m.content
     if (m.role === 'assistant' && t && t <= reasoning) {
       const kept = content.filter((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking')
@@ -165,7 +181,13 @@ export function strip(msgs: readonly ApiMsg[], f: Frontier): Stripped {
         content = kept
       }
     }
-    if (m.role === 'assistant' && s && s <= tools) {
+    if (drop && s && s <= tools) {
+      for (const b of content) if (b.type === 'tool_use' && !keptIds.has(b.id)) droppedIds.add(b.id)
+      const kept = content.filter((b) => !droppedIds.has(b.type === 'tool_use' ? b.id : b.type === 'tool_result' ? b.tool_use_id : undefined))
+      if (m.role === 'assistant') out.dropped += content.length - kept.length
+      if (!kept.length) return
+      content = kept
+    } else if (m.role === 'assistant' && s && s <= tools) {
       content = content.map((b) => {
         if (b.type !== 'tool_use' || !b.input || typeof b.input !== 'object') return b
         const input = stubbedInput(String(b.name), b.input as Record<string, unknown>)
@@ -173,8 +195,7 @@ export function strip(msgs: readonly ApiMsg[], f: Frontier): Stripped {
         out.inputs++
         return { ...b, input }
       })
-    }
-    if (m.role === 'user' && s && s <= tools) {
+    } else if (m.role === 'user' && s && s <= tools) {
       content = content.map((b) => {
         const n = bytes(b.content ?? '')
         if (b.type !== 'tool_result' || n <= stub(n).length || STUB.test(String(b.content))) return b
@@ -182,7 +203,7 @@ export function strip(msgs: readonly ApiMsg[], f: Frontier): Stripped {
         return { ...b, content: stub(n) }
       })
     }
-    out.msgs.push(content === m.content ? m : { ...m, content })
+    push(content === m.content ? m : { ...m, content })
   })
   return out
 }

@@ -23,16 +23,19 @@ const { values: a } = parseArgs({
     upstream: { type: 'string', default: 'https://api.anthropic.com' },
     dir: { type: 'string', default: path.resolve(import.meta.dirname, '..') },
     'strip-tool-calls': { type: 'boolean', default: true },
+    'drop-tool-calls': { type: 'boolean', default: false },
     'strip-reasoning': { type: 'boolean', default: true },
     'strip-tool-calls-wait-steps': { type: 'string', default: '0' },
     'strip-reasoning-wait-turns': { type: 'string', default: '0' },
     'log-step-events': { type: 'boolean', default: false },
     'cache-ttl-seconds': { type: 'string', default: '3600' },
+    'check-thinking-binding': { type: 'boolean', default: false },
   },
 })
 
 const o: Options = {
   stripToolCalls: a['strip-tool-calls'],
+  dropToolCalls: a['drop-tool-calls'],
   stripReasoning: a['strip-reasoning'],
   stripToolCallsWaitSteps: Number(a['strip-tool-calls-wait-steps']),
   stripReasoningWaitTurns: Number(a['strip-reasoning-wait-turns']),
@@ -73,13 +76,13 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const key = hash(JSON.stringify(msgs[0]))
   const s = load(key)
   const f = s?.frontier ?? { toolSteps: 0, reasoningTurns: 0 }
-  const keep = strip(msgs, f)
+  const keep = strip(msgs, f, o.dropToolCalls)
   const next = candidate(msgs, f, o)
   let sent = keep
   let frontier = f
   let d: Decision | undefined
   if (next.toolSteps > f.toolSteps || next.reasoningTurns > f.reasoningTurns) {
-    const advanced = strip(msgs, next)
+    const advanced = strip(msgs, next, o.dropToolCalls)
     d = decide(keep.msgs, advanced.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs)
     if (d.advanced) [sent, frontier] = [advanced, next]
   }
@@ -95,7 +98,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
     if (d?.savedChars) {
       const context: Record<string, number> = {}
       for (const m of keep.msgs) for (const [k, n] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + n
-      const advanced = d.advanced ? sent : strip(msgs, next)
+      const advanced = d.advanced ? sent : strip(msgs, next, o.dropToolCalls)
       writeLine(p.logDir, {
         event: 'compaction',
         time,
@@ -109,27 +112,33 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
         stubbedResults: advanced.results - keep.results,
         stubbedInputs: advanced.inputs - keep.inputs,
         thinkingBlocks: advanced.thinking - keep.thinking,
+        droppedCalls: advanced.dropped - keep.dropped,
         context,
       })
     }
-    p.logLine = { event: 'request', time, model: body.model, frontierEnd: frontierEnd(msgs, frontier), parts: writeParts(p.logDir, sent.msgs) }
+    // The frontier's end in the messages as sent, which dropped calls shorten.
+    const ends = frontierEnd(msgs, frontier)
+    const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
+    p.logLine = { event: 'request', time, model: body.model, frontierEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs) }
   }
   return p
 }
 
 // The usage a response reports: message_start's, with message_delta's output
-// tokens, for a stream; the body's for a plain response.
+// tokens, for a stream; the body's for a plain response. Also the
+// input_transformations it reports, which --check-thinking-binding asks for.
 type Usage = { input_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; output_tokens?: number }
 
 function usageReader() {
   let usage: Usage | undefined
+  let transformations: unknown
   let buf = ''
   const dec = new TextDecoder()
   const line = (l: string) => {
     if (!l.startsWith('data: ')) return
     try {
       const e = JSON.parse(l.slice(6))
-      if (e.type === 'message_start') usage = { ...e.message?.usage }
+      if (e.type === 'message_start') [usage, transformations] = [{ ...e.message?.usage }, e.message?.input_transformations]
       if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
     } catch {}
   }
@@ -140,12 +149,13 @@ function usageReader() {
       buf = lines.pop() ?? ''
       lines.forEach(line)
     },
-    end(): Usage | undefined {
-      if (usage) return usage
+    end(): { usage?: Usage; transformations?: unknown } {
+      if (usage) return { usage, transformations }
       try {
-        return JSON.parse(buf).usage
+        const b = JSON.parse(buf)
+        return { usage: b.usage, transformations: b.input_transformations }
       } catch {
-        return undefined
+        return {}
       }
     },
   }
@@ -174,9 +184,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && v !== undefined) headers[k] = Array.isArray(v) ? v.join(', ') : v
   const abort = new AbortController()
   res.on('close', () => res.writableFinished || abort.abort())
-  const send = (body: Buffer | undefined) =>
-    fetch(a.upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
-  let up = await send(p?.body ?? raw)
+  const send = (body: Buffer | undefined, h = headers) =>
+    fetch(a.upstream + url, { method: req.method, headers: h, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
+  // The check: with this beta, a response lists in input_transformations each
+  // thinking block whose signed prefix no longer matches what was sent
+  // (thinking_mismatch_allowed, on an account that isn't enforced). Asked of
+  // trimmed requests only, and dropped from the retry below.
+  const beta = 'thinking-binding-controls-2026-08-01'
+  const checked = { ...headers, 'anthropic-beta': [headers['anthropic-beta'], beta].filter(Boolean).join(',') }
+  let up = await send(p?.body ?? raw, p && a['check-thinking-binding'] ? checked : headers)
   // A trimmed request the API refuses is sent again as it came, so a trim
   // never costs the user a turn.
   if (p && up.status === 400) {
@@ -199,9 +215,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (!p || up.status !== 200) return
   save(p.key, { frontier: p.frontier, model: p.model, lastAt: Date.now() })
   if (p.logDir && p.logLine) {
-    const u = usage.end()
+    const { usage: u, transformations } = usage.end()
     writeLine(p.logDir, {
       ...p.logLine,
+      ...(transformations !== undefined && { inputTransformations: transformations }),
       ...(u && {
         inputTokens: u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
         cachedTokens: u.cache_read_input_tokens ?? 0,

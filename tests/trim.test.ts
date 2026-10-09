@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { candidate, decide, frontierEnd, isPrompt, isStubbed, stepsOf, strip, stub, stubHeredocs, turnsOf, type ApiMsg, type Options } from '../src/trim.ts'
 
-const opts: Options = { stripToolCalls: true, stripReasoning: true, stripToolCallsWaitSteps: 0, stripReasoningWaitTurns: 0 }
+const opts: Options = { stripToolCalls: true, dropToolCalls: false, stripReasoning: true, stripToolCallsWaitSteps: 0, stripReasoningWaitTurns: 0 }
 const long = 'x'.repeat(5000)
 
 // A turn as Claude Code sends it: prompt, a response with thinking and a tool
@@ -49,6 +49,31 @@ test('strips completed steps and turns up to the frontier, never the latest', ()
   assert.equal((s.msgs[1].content as any[])[0].input.content, stub(5000))
   assert.equal((s.msgs[12].content as any[])[0].content, stub(5000))
   assert.deepEqual(s.msgs.slice(13), msgs.slice(13))
+})
+
+test('dropping removes calls with their results, and messages left empty', () => {
+  const s = strip(msgs, { toolSteps: 1, reasoningTurns: 0 }, true)
+  assert.equal(s.dropped, 1)
+  // The call's message keeps its thinking; the result's message goes.
+  assert.deepEqual(s.msgs[1].content, [{ type: 'thinking', thinking: 'hm', signature: 'sig' }])
+  assert.deepEqual(s.msgs.slice(2), msgs.slice(3))
+  assert.deepEqual(s.origin.slice(0, 3), [0, 1, 3])
+  // With its thinking stripped too, the call's message goes as well. The
+  // current turn keeps its thinking, and the latest step its call.
+  const all = strip(msgs, { toolSteps: 9, reasoningTurns: 5 }, true)
+  assert.equal(all.dropped, 3)
+  assert.equal(all.thinking, 4)
+  assert.deepEqual(all.origin, [0, 3, 4, 5, 8, 9, 10, 11, 13, 14])
+  assert.deepEqual(all.msgs[7].content, [{ type: 'thinking', thinking: 'hm', signature: 'sig' }])
+  assert.equal(all.msgs.some((m) => typeof m.content !== 'string' && m.content.some((b) => b.type === 'tool_result')), false)
+  assert.deepEqual(all.msgs.slice(8), msgs.slice(13))
+})
+
+test('dropping keeps a pair whose results a system message follows', () => {
+  const sys: ApiMsg[] = [...msgs.slice(0, 3), { role: 'system', content: 'reminder' }, ...msgs.slice(3)]
+  const s = strip(sys, { toolSteps: 1, reasoningTurns: 0 }, true)
+  assert.equal(s.dropped, 0)
+  assert.deepEqual(s.msgs, sys)
 })
 
 test('here-document bodies are stubbed, each to its own end line', () => {
