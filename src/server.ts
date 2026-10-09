@@ -3,18 +3,22 @@
 // reasoning from each request it forwards. The stored session and the screen
 // are untouched; only what is sent changes. See README.md.
 //
-// Each conversation (keyed by its first message, so a subagent is its own) has
-// a frontier, saved under state/, that every request is trimmed up to. On each
-// request the cost rule (trim.ts, decide) says whether moving it up to the
-// latest completed steps and turns pays: always on a cold cache, and on a warm
-// one when what it saves outweighs what it rewrites.
+// What is trimmed, and when, is the policy file's (policy.ts); with none, it
+// passes requests through. Each conversation (keyed by its first message, so a
+// subagent is its own) has an applied clock, saved under state/: the completed
+// steps and turns every request is trimmed at. On each request the cost rule
+// (trim.ts, decide) says whether moving it up to the conversation's clock pays:
+// always on a cold cache, and on a warm one when what it saves outweighs what it
+// rewrites.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeLine, writeParts } from './log.ts'
-import { candidate, decide, frontierEnd, stepsOf, strip, turnsOf, type ApiMsg, type Decision, type Frontier, type Options } from './trim.ts'
+import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
+import { loadPolicy } from './policy.ts'
+import { apply, decide, transitions, trimmedEnd, type Decision } from './trim.ts'
 
 const { values: a } = parseArgs({
   allowNegative: true,
@@ -22,39 +26,30 @@ const { values: a } = parseArgs({
     port: { type: 'string', default: '8787' },
     upstream: { type: 'string', default: 'https://api.anthropic.com' },
     dir: { type: 'string', default: path.resolve(import.meta.dirname, '..') },
-    'strip-tool-calls': { type: 'boolean', default: true },
-    'drop-tool-calls': { type: 'boolean', default: false },
-    'strip-reasoning': { type: 'boolean', default: true },
-    'strip-tool-calls-wait-steps': { type: 'string', default: '0' },
-    'strip-reasoning-wait-turns': { type: 'string', default: '0' },
+    policy: { type: 'string', default: path.resolve(import.meta.dirname, '..', 'policy.json') },
     'log-step-events': { type: 'boolean', default: false },
     'cache-ttl-seconds': { type: 'string', default: '3600' },
     'check-thinking-binding': { type: 'boolean', default: false },
   },
 })
 
-const o: Options = {
-  stripToolCalls: a['strip-tool-calls'],
-  dropToolCalls: a['drop-tool-calls'],
-  stripReasoning: a['strip-reasoning'],
-  stripToolCallsWaitSteps: Number(a['strip-tool-calls-wait-steps']),
-  stripReasoningWaitTurns: Number(a['strip-reasoning-wait-turns']),
-}
+const loaded = loadPolicy(a.policy)
+if (!loaded) console.error(`mini-context: no policy at ${a.policy}, so requests pass through untrimmed`)
+const policy = loaded ?? {}
 const ttlMs = Number(a['cache-ttl-seconds']) * 1000
 const stateDir = path.join(a.dir, 'state')
 const logRoot = path.join(a.dir, LOG_DIR)
 mkdirSync(stateDir, { recursive: true })
 
-// A conversation's frontier, and the model and time of its last answered
+// A conversation's applied clock, and the model and time of its last answered
 // request, which say whether its cache is still warm.
-type State = { frontier: Frontier; model: string; lastAt: number }
+type State = { applied: Clock; model: string; lastAt: number }
 
-// A state saved before tool calls were counted in steps has a frontier of
-// turns, and is read as none.
+// A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
   try {
     const s: State = JSON.parse(readFileSync(path.join(stateDir, `${key}.json`), 'utf8'))
-    return s.frontier.toolSteps === undefined ? undefined : s
+    return s.applied ? s : undefined
   } catch {
     return undefined
   }
@@ -64,7 +59,7 @@ const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; frontier: Frontier; model: string; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; applied: Clock; model: string; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a /v1/messages request. Only requests with tools are trimmed: those
 // are the main loop and subagents. Claude Code's side requests are sent as
@@ -75,19 +70,20 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const key = hash(JSON.stringify(msgs[0]))
   const s = load(key)
-  const f = s?.frontier ?? { toolSteps: 0, reasoningTurns: 0 }
-  const keep = strip(msgs, f, o.dropToolCalls)
-  const next = candidate(msgs, f, o)
+  const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
+  const clock = clockOf(msgs)
+  const keep = apply(msgs, policy, held)
   let sent = keep
-  let frontier = f
+  let applied = held
+  let next = keep
   let d: Decision | undefined
-  if (next.toolSteps > f.toolSteps || next.reasoningTurns > f.reasoningTurns) {
-    const advanced = strip(msgs, next, o.dropToolCalls)
-    d = decide(keep.msgs, advanced.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs)
-    if (d.advanced) [sent, frontier] = [advanced, next]
+  if (clock.steps > held.steps || clock.turns > held.turns) {
+    next = apply(msgs, policy, clock)
+    d = decide(keep.msgs, next.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs)
+    if (d.advanced) [sent, applied] = [next, clock]
   }
   body.messages = sent.msgs
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, frontier, model: body.model }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, model: body.model }
   if (a['log-step-events']) {
     let session = 'unknown'
     try {
@@ -98,7 +94,6 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
     if (d?.savedChars) {
       const context: Record<string, number> = {}
       for (const m of keep.msgs) for (const [k, n] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + n
-      const advanced = d.advanced ? sent : strip(msgs, next, o.dropToolCalls)
       writeLine(p.logDir, {
         event: 'compaction',
         time,
@@ -107,19 +102,16 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
         savedChars: d.savedChars,
         rewriteChars: d.rewriteChars,
         extraChars: d.extraChars,
-        steps: stepsOf(msgs).completed,
-        turns: turnsOf(msgs).completed,
-        stubbedResults: advanced.results - keep.results,
-        stubbedInputs: advanced.inputs - keep.inputs,
-        thinkingBlocks: advanced.thinking - keep.thinking,
-        droppedCalls: advanced.dropped - keep.dropped,
+        steps: clock.steps,
+        turns: clock.turns,
+        transitions: transitions(keep, next),
         context,
       })
     }
-    // The frontier's end in the messages as sent, which dropped calls shorten.
-    const ends = frontierEnd(msgs, frontier)
+    // Where trimming ends in the messages as sent, which drops shorten.
+    const ends = trimmedEnd(msgs, policy, applied)
     const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
-    p.logLine = { event: 'request', time, model: body.model, frontierEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs) }
+    p.logLine = { event: 'request', time, model: body.model, trimmedEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs) }
   }
   return p
 }
@@ -213,7 +205,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   res.end()
   if (!p || up.status !== 200) return
-  save(p.key, { frontier: p.frontier, model: p.model, lastAt: Date.now() })
+  save(p.key, { applied: p.applied, model: p.model, lastAt: Date.now() })
   if (p.logDir && p.logLine) {
     const { usage: u, transformations } = usage.end()
     writeLine(p.logDir, {

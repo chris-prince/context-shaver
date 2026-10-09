@@ -1,28 +1,18 @@
-// What the proxy trims from a Messages API request, and whether trimming more
-// pays. Pure functions over the request body.
+// What the proxy sends in place of a Messages API request, and whether
+// trimming more pays. Pure functions over the request body.
 //
-// A conversation is trimmed up to its frontier: the steps whose tool calls are
-// trimmed, and the completed turns whose reasoning is. A step is an assistant
-// message with the tool results that answer it, counted from 1; a turn runs
-// from a prompt, counted from 1. The frontier only moves forward, so every
-// request of the conversation sends the same trimmed prefix and the prompt
-// cache keeps reading it. The latest step's tool calls and the current turn's
-// reasoning are never touched.
+// A conversation is trimmed as its policy says (policy.ts) at its applied
+// clock: the completed steps and turns the policy was last applied at. The
+// clock only moves forward, so every request of the conversation sends the same
+// trimmed prefix and the prompt cache keeps reading it; decide says when moving
+// it pays. The latest step and the current turn are never touched.
 
-export type Block = { type: string; [k: string]: unknown }
-export type ApiMsg = { role: 'user' | 'assistant' | 'system'; content: string | Block[] }
+import { heldTo, isSkillBody, isThinking, itemsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Kind } from './items.ts'
+import { treatment, type Action, type Policy } from './policy.ts'
 
-export type Options = {
-  stripToolCalls: boolean
-  dropToolCalls: boolean
-  stripReasoning: boolean
-  stripToolCallsWaitSteps: number
-  stripReasoningWaitTurns: number
-}
-
-export type Frontier = { toolSteps: number; reasoningTurns: number }
-// Where a frontier ends in the messages: the index of the first message past
-// it, for tool calls and for reasoning.
+// Where trimming ends in the messages: the index of the first message past
+// the steps (or turns) the furthest-reaching rule covers, for tool calls and
+// for reasoning.
 export type Ends = { tools: number; reasoning: number }
 
 // What stands in for trimmed content, a tool result or a long input: how many
@@ -70,68 +60,6 @@ export function stubHeredocs(command: string): string {
 // Whether an input value carries a stub: is one, or has a here-document that is.
 export const isStubbed = (v: unknown) => typeof v === 'string' && (STUB.test(v) || STUBBED_HEREDOC.test(v))
 
-// User text that is not a prompt: command rows, the interrupt marker, and
-// context Claude Code adds in <system-reminder> tags.
-const NOT_A_PROMPT = /^\s*(<command-name>|<local-command-|\[Request interrupted|<system-reminder>)/
-
-const blocks = (m: ApiMsg): Block[] => (typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content)
-
-export function isPrompt(m: ApiMsg): boolean {
-  if (m.role !== 'user') return false
-  const c = blocks(m)
-  if (c.some((b) => b.type === 'tool_result')) return false
-  return c.some((b) => (b.type === 'text' ? !NOT_A_PROMPT.test(String(b.text)) : b.type === 'image' || b.type === 'document'))
-}
-
-// Each message's turn, counting prompts from 1; messages before the first
-// prompt are turn 0. The completed turns are those before the last prompt's.
-export function turnsOf(msgs: readonly ApiMsg[]): { turnOf: number[]; completed: number } {
-  let t = 0
-  const turnOf = msgs.map((m) => (isPrompt(m) ? ++t : t))
-  return { turnOf, completed: Math.max(0, t - 1) }
-}
-
-// Each message's step, counting assistant messages from 1, so a tool result
-// shares the step of the call it answers; messages before the first are step
-// 0. Every step but the latest is completed.
-export function stepsOf(msgs: readonly ApiMsg[]): { stepOf: number[]; completed: number } {
-  let s = 0
-  const stepOf = msgs.map((m) => (m.role === 'assistant' ? ++s : s))
-  return { stepOf, completed: Math.max(0, s - 1) }
-}
-
-// Where the frontier ends in the messages. Behind it, content is trimmed as far
-// as it will be, so what is still whole there stays.
-export function frontierEnd(msgs: readonly ApiMsg[], f: Frontier): Ends {
-  const end = (of: number[], completed: number, n: number) => {
-    const k = Math.min(n, completed)
-    return k ? of.findIndex((t) => t > k) : 0
-  }
-  const steps = stepsOf(msgs)
-  const turns = turnsOf(msgs)
-  return { tools: end(steps.stepOf, steps.completed, f.toolSteps), reasoning: end(turns.turnOf, turns.completed, f.reasoningTurns) }
-}
-
-// Where the frontier goes if the conversation is trimmed now: every completed
-// step or turn outside the waits, and never backwards.
-export function candidate(msgs: readonly ApiMsg[], f: Frontier, o: Options): Frontier {
-  const steps = stepsOf(msgs).completed
-  const turns = turnsOf(msgs).completed
-  return {
-    toolSteps: o.stripToolCalls ? Math.max(f.toolSteps, steps - o.stripToolCallsWaitSteps) : f.toolSteps,
-    reasoningTurns: o.stripReasoning ? Math.max(f.reasoningTurns, turns - o.stripReasoningWaitTurns) : f.reasoningTurns,
-  }
-}
-
-export type Stripped = {
-  msgs: ApiMsg[]
-  results: number // tool results stubbed
-  inputs: number // tool calls whose input is stubbed
-  thinking: number // thinking blocks dropped
-  dropped: number // tool calls dropped with their results
-  origin: number[] // each message's index in the request as it came
-}
-
 function stubbedInput(name: string, input: Record<string, unknown>): Record<string, unknown> | undefined {
   const long = (STUBBED_INPUTS[name] ?? []).filter((k) => {
     const v = input[k]
@@ -145,70 +73,102 @@ function stubbedInput(name: string, input: Record<string, unknown>): Record<stri
   return long.length ? out : undefined
 }
 
-// The messages trimmed up to the frontier. The frontier is held to the
-// completed steps and turns, so a conversation rewound to an earlier point never
-// has its latest step or current turn trimmed. Blocks keep every other field,
-// cache_control included.
+export type Applied = {
+  msgs: ApiMsg[]
+  origin: number[] // each message's index in the request as it came
+  treated: Map<string, { kind: Kind; action: Action }> // the items it changed, and how
+}
+
+// The messages with each item given what is due to it at the clock. Blocks keep
+// every other field, cache_control included.
 //
-// With `drop`, tool calls behind the frontier are removed with their results
-// instead of stubbed. A message left empty is removed; the API joins the
-// neighbours that leaves in the same role. One left with thinking alone stays.
-// A pair whose results are followed by a system message is kept, since a
-// system message must follow a user one.
-export function strip(msgs: readonly ApiMsg[], f: Frontier, drop = false): Stripped {
-  const { stepOf, completed: steps } = stepsOf(msgs)
-  const { turnOf, completed: turns } = turnsOf(msgs)
-  const tools = Math.min(f.toolSteps, steps)
-  const reasoning = Math.min(f.reasoningTurns, turns)
-  const out: Stripped = { msgs: [], results: 0, inputs: 0, thinking: 0, dropped: 0, origin: [] }
-  const droppedIds = new Set<unknown>()
-  const keptIds = new Set<unknown>()
+// - A stubbed tool call has its result and long inputs stubbed.
+// - A dropped tool call goes with its results; a dropped skill also takes the
+//   skill's body beside its result. A pair whose results a system message
+//   follows is kept, since a system message must follow a user one: it gets
+//   what else is due to it, a stub.
+// - Dropped reasoning is the message's thinking, unless that would leave it
+//   empty: an empty message is refused. One left empty by dropped calls is
+//   removed; the API joins the neighbours that leaves in the same role.
+export function apply(msgs: readonly ApiMsg[], policy: Policy, clock: Clock): Applied {
+  const c = heldTo(clock, msgs)
+  const undroppable = new Set<unknown>()
   msgs.forEach((m, i) => {
     if (m.role === 'user' && typeof m.content !== 'string' && msgs[i + 1]?.role === 'system')
-      for (const b of m.content) if (b.type === 'tool_result') keptIds.add(b.tool_use_id)
+      for (const b of m.content) if (b.type === 'tool_result') undroppable.add(b.tool_use_id)
   })
+  const items = new Map(itemsOf(msgs).map((it) => [it.id, it]))
+  const due = new Map<unknown, Action>()
+  for (const it of items.values()) {
+    const rules = policy[it.kind]
+    let a = treatment(rules, it, c)
+    if (a === 'drop' && undroppable.has(it.id)) a = treatment(rules?.filter((r) => r.action !== 'drop'), it, c)
+    if (a) due.set(it.id, a)
+  }
+  const out: Applied = { msgs: [], origin: [], treated: new Map() }
+  const mark = (id: unknown, action: Action) => out.treated.set(String(id), { kind: items.get(String(id))!.kind, action })
+  const idOf = (b: Block) => (b.type === 'tool_use' ? b.id : b.type === 'tool_result' ? b.tool_use_id : undefined)
   msgs.forEach((m, i) => {
-    const t = turnOf[i] ?? 0
-    const s = stepOf[i] ?? 0
     const push = (m: ApiMsg) => (out.msgs.push(m), out.origin.push(i))
     if (typeof m.content === 'string' || m.role === 'system') return push(m)
     let content = m.content
-    if (m.role === 'assistant' && t && t <= reasoning) {
-      const kept = content.filter((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking')
-      // A message of thinking alone stays: an empty one is refused.
+    if (m.role === 'assistant' && due.get(String(i)) === 'drop') {
+      const kept = content.filter((b) => !isThinking(b))
       if (kept.length && kept.length < content.length) {
-        out.thinking += content.length - kept.length
+        mark(i, 'drop')
         content = kept
       }
     }
-    if (drop && s && s <= tools) {
-      for (const b of content) if (b.type === 'tool_use' && !keptIds.has(b.id)) droppedIds.add(b.id)
-      const kept = content.filter((b) => !droppedIds.has(b.type === 'tool_use' ? b.id : b.type === 'tool_result' ? b.tool_use_id : undefined))
-      if (m.role === 'assistant') out.dropped += content.length - kept.length
-      if (!kept.length) return
-      content = kept
-    } else if (m.role === 'assistant' && s && s <= tools) {
-      content = content.map((b) => {
-        if (b.type !== 'tool_use' || !b.input || typeof b.input !== 'object') return b
+    const skillDropped = content.some((b) => b.type === 'tool_result' && items.get(String(b.tool_use_id))?.kind === 'skill' && due.get(b.tool_use_id) === 'drop')
+    content = content.filter((b) => {
+      const gone = due.get(idOf(b)) === 'drop' || (skillDropped && isSkillBody(b))
+      if (gone && b.type === 'tool_use') mark(b.id, 'drop')
+      return !gone
+    })
+    content = content.map((b) => {
+      if (due.get(idOf(b)) !== 'stub') return b
+      if (b.type === 'tool_use' && b.input && typeof b.input === 'object') {
         const input = stubbedInput(String(b.name), b.input as Record<string, unknown>)
-        if (!input) return b
-        out.inputs++
-        return { ...b, input }
-      })
-    } else if (m.role === 'user' && s && s <= tools) {
-      content = content.map((b) => {
-        const n = bytes(b.content ?? '')
-        if (b.type !== 'tool_result' || n <= stub(n).length || STUB.test(String(b.content))) return b
-        out.results++
-        return { ...b, content: stub(n) }
-      })
-    }
+        return input ? (mark(b.id, 'stub'), { ...b, input }) : b
+      }
+      const n = bytes(b.content ?? '')
+      if (b.type !== 'tool_result' || n <= stub(n).length || STUB.test(String(b.content))) return b
+      mark(b.tool_use_id, 'stub')
+      return { ...b, content: stub(n) }
+    })
+    if (!content.length) return
     push(content === m.content ? m : { ...m, content })
   })
   return out
 }
 
-// --- The policy. ---
+// The items whose treatment differs between two applications, counted by
+// kind and what they now get, as `tool:stub`.
+export function transitions(before: Applied, after: Applied): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [id, t] of after.treated)
+    if (before.treated.get(id)?.action !== t.action) out[`${t.kind}:${t.action}`] = (out[`${t.kind}:${t.action}`] ?? 0) + 1
+  return out
+}
+
+// Where trimming ends at a clock. Behind it, content has had at least its
+// first treatment.
+export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock): Ends {
+  const c = heldTo(clock, msgs)
+  const { stepOf } = stepsOf(msgs)
+  const { turnOf } = turnsOf(msgs)
+  const end = (rules: Policy[Kind]) =>
+    Math.max(
+      0,
+      ...(rules ?? []).map((r) => {
+        const [of, n] = r.on === 'step' ? [stepOf, c.steps - r.wait] : [turnOf, c.turns - r.wait]
+        return n > 0 ? of.findIndex((x) => x > n) : 0
+      }),
+    )
+  return { tools: end(policy.tool), reasoning: end(policy.reasoning) }
+}
+
+// --- When to move the applied clock. ---
 
 // Claude Code writes 1-hour cache entries: 2x input against 0.1x for a read, so
 // a written character costs M + 1 = 20 reads. K is the warm requests expected

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { kinds } from '../src/log.ts'
-import type { ApiMsg } from '../src/trim.ts'
+import type { ApiMsg } from '../src/items.ts'
 
 test('injected content is system in the preamble and harness after it; the prompt is user', () => {
   const reminder = { type: 'text', text: '<system-reminder>\nCLAUDE.md\n</system-reminder>' }

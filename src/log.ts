@@ -9,7 +9,8 @@
 
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { isStubbed, STUB, type ApiMsg, type Block } from './trim.ts'
+import { isSkillBody, type ApiMsg, type Block } from './items.ts'
+import { isStubbed, STUB } from './trim.ts'
 
 export const LOG_DIR = 'logs-mini-ctx-claude'
 
@@ -62,8 +63,6 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
 }
 
 const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('<system-reminder>')
-
-const isSkillBody = (b: Block) => typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
 
 function kindOf(b: Block, role: string): string {
   switch (b.type) {

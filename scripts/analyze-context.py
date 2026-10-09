@@ -17,11 +17,12 @@ later shows as `harness`.
 By age: base, then the message content grouped by how many calendar days (local
 time) before the request each message first appeared -- oldest first, then
 "today" -- and the frontier, the reasoning and tool calls and results still sent
-whole past where the request's frontier ends (its `frontierEnd`, a message
-index each for tools and reasoning). Behind that end, what is still whole is
-trimmed as far as it will be, so it persists: a call with no input to stub, or
-a result too short to stub. Requests logged before `frontierEnd`
-count all of it as frontier. A trimmed message ages as the message it replaced: the two share a
+whole past where the request's trimming ends (its `trimmedEnd`, a message
+index each for tools and reasoning: the furthest any of the policy's rules
+reach). Behind that end, what is still whole has had its first treatment, so
+it persists until a later rule drops it: a call with no input to stub, or a
+result too short to stub. Requests logged without `trimmedEnd` (the older
+`frontierEnd` meant the same) count all of it as frontier. A trimmed message ages as the message it replaced: the two share a
 lineage (role and tool id), and the earliest first appearance among the hashes
 carrying it wins.
 
@@ -152,7 +153,7 @@ def main() -> int:
     by_day: dict[int, float] = defaultdict(float)
     by_type: dict[str, float] = defaultdict(float)
     frontier = 0.0
-    ends = request.get("frontierEnd")
+    ends = request.get("trimmedEnd") or request.get("frontierEnd")
     for i, p in enumerate(request["parts"]):
         h = p["hash"]
         kinds = side[h].get("kinds") or {p["part"]: p["bytes"]}
