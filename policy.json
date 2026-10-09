@@ -1,5 +1,8 @@
 {
-  "tool": [{ "on": "step", "wait": 8, "action": "drop" }],
+  "tool": [
+    { "on": "step", "wait": 8, "action": "drop" },
+    { "on": "turn", "wait": 2, "action": "drop" }
+  ],
   "skill": [{ "on": "turn", "wait": 0, "action": "drop" }],
   "reasoning": [{ "on": "turn", "wait": 0, "action": "drop" }]
 }
