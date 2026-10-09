@@ -214,9 +214,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       ...(u && {
         inputTokens: u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
         cachedTokens: u.cache_read_input_tokens ?? 0,
-        writtenTokens: u.cache_creation_input_tokens ?? 0,
-        // The written tokens cached for an hour; the rest are cached for 5 minutes.
-        written1hTokens: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+        writtenTokens60m: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+        writtenTokens5m: (u.cache_creation_input_tokens ?? 0) - (u.cache_creation?.ephemeral_1h_input_tokens ?? 0),
         outputTokens: u.output_tokens ?? 0,
       }),
     })

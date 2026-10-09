@@ -20,8 +20,9 @@ the session's fitted rate, as in analyze-context.py.
 
 Prices are per million input tokens: Haiku $1, Sonnet $3, Opus $5 (default $5).
 A cache read is 0.1x, a 1-hour cache write 2x, a 5-minute one 1.25x, output
-5x. A request's write price is its writes' mix of the two, by written1hTokens;
-logs from before the proxy recorded that field are priced as all 1-hour.
+5x. A request's write price is its writes' mix of the two, by writtenTokens60m
+and writtenTokens5m. Older logs have only a total, writtenTokens, priced as all
+1-hour, or that total with written1hTokens.
 
 Usage:
     scripts/strip-savings.py [dir ...]
@@ -45,12 +46,19 @@ def input_price(model: str | None) -> float:
     return 5.0 / 1e6
 
 
+def written(l: dict) -> tuple[int, int]:
+    """A request's cache writes as (1-hour, 5-minute) tokens."""
+    if "writtenTokens60m" in l:
+        return l["writtenTokens60m"], l.get("writtenTokens5m", 0)
+    total = l.get("writtenTokens", 0)
+    hour = l.get("written1hTokens", total)
+    return hour, total - hour
+
+
 def write_price(l: dict) -> float:
     """A request's cache-write multiplier, by the mix of 1-hour and 5-minute writes."""
-    written, hour = l.get("writtenTokens", 0), l.get("written1hTokens")
-    if hour is None or not written:
-        return 2.0
-    return (2 * hour + 1.25 * (written - hour)) / written
+    hour, five = written(l)
+    return (2 * hour + 1.25 * five) / (hour + five) if hour + five else 2.0
 
 
 def fit_rate(reqs: list[dict]) -> float | None:
@@ -90,10 +98,10 @@ def session_row(session_dir: str) -> dict | None:
                 pending_rewrite += (l["rewriteChars"] - l["savedChars"]) * rate
         elif l in reqs:
             p = input_price(l.get("model"))
-            cached, written = l.get("cachedTokens", 0), l.get("writtenTokens", 0)
-            fresh = l["inputTokens"] - cached - written
+            cached, (hour, five) = l.get("cachedTokens", 0), written(l)
+            fresh = l["inputTokens"] - cached - hour - five
             w = write_price(l)
-            cost += p * (fresh + 0.1 * cached + w * written + 5 * l.get("outputTokens", 0))
+            cost += p * (fresh + 0.1 * cached + 2 * hour + 1.25 * five + 5 * l.get("outputTokens", 0))
             warm = cached > l["inputTokens"] / 2
             savings += saved_tokens * p * (0.1 if warm else w)
             rewrite += pending_rewrite * p * (w - 0.1)
