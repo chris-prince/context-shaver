@@ -135,7 +135,9 @@ With `--log-step-events`, logs go to
 
 - `step_events.jsonl`, with one line per event:
   - a `request` line for each answered request: usage, and the request's
-    messages as sent, by hash;
+    messages as sent, by hash. Of the usage, `writtenTokens` are the tokens
+    written to the cache and `written1hTokens` those of them cached for an
+    hour, which cost more (the rest are cached for 5 minutes);
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind

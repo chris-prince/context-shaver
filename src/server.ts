@@ -119,7 +119,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
 // The usage a response reports: message_start's, with message_delta's output
 // tokens, for a stream; the body's for a plain response. Also the
 // input_transformations it reports, which --check-thinking-binding asks for.
-type Usage = { input_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; output_tokens?: number }
+type Usage = { input_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number }; output_tokens?: number }
 
 function usageReader() {
   let usage: Usage | undefined
@@ -215,6 +215,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         inputTokens: u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
         cachedTokens: u.cache_read_input_tokens ?? 0,
         writtenTokens: u.cache_creation_input_tokens ?? 0,
+        // The written tokens cached for an hour; the rest are cached for 5 minutes.
+        written1hTokens: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
         outputTokens: u.output_tokens ?? 0,
       }),
     })
