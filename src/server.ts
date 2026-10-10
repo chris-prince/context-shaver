@@ -81,7 +81,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   let d: Decision | undefined
   if (clock.steps > held.steps || clock.turns > held.turns) {
     next = apply(msgs, policy, clock)
-    d = decide(keep.msgs, next.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs, new Map(Object.entries(s?.thinking ?? {})))
+    d = decide(keep.msgs, next.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs, body.model, new Map(Object.entries(s?.thinking ?? {})))
     if (d.advanced) [sent, applied] = [next, clock]
   }
   body.messages = sent.msgs

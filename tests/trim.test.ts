@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { parsePolicy, treatment, type Policy } from '../src/policy.ts'
-import { apply, decide, isStubbed, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied } from '../src/trim.ts'
+import { apply, decide, isStubbed, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'stub' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
@@ -123,7 +123,7 @@ test('a tool call is stubbed, then dropped, as the conversation goes on', () => 
       let sent = apply(prefix, p, clock)
       if (gated) {
         const keep = apply(prefix, p, applied)
-        if (decide(keep.msgs, sent.msgs, false).advanced) applied = clock
+        if (decide(keep.msgs, sent.msgs, false, 'claude-haiku-5-5').advanced) applied = clock
         else sent = keep
       }
       const result = sent.msgs.flatMap((m) => (typeof m.content === 'string' ? [] : m.content)).find((b) => b.tool_use_id === 'toolu_1')
@@ -208,14 +208,14 @@ test('applying is idempotent', () => {
 test('cold always advances; warm only when savings outweigh the rewrite', () => {
   const keep = apply(msgs, stubAll, { steps: 0, turns: 0 }).msgs
   const adv = apply(msgs, stubAll, { steps: 5, turns: 2 }).msgs
-  assert.equal(decide(keep, adv, true).advanced, true)
-  assert.equal(decide(keep, adv, false).advanced, true) // the results are most of the history
+  assert.equal(decide(keep, adv, true, 'claude-haiku-5-5').advanced, true)
+  assert.equal(decide(keep, adv, false, 'claude-haiku-5-5').advanced, true) // the results are most of the history
   // Saving a few characters at the start of a long history does not pay.
   const big: ApiMsg[] = [{ role: 'user', content: 'pp' }, { role: 'user', content: long.repeat(40) }]
   const tiny: ApiMsg[] = [{ role: 'user', content: 'p' }, big[1]]
-  assert.equal(decide(big, tiny, false).advanced, false)
-  assert.equal(decide(big, tiny, true).advanced, true)
-  assert.equal(decide(msgs, msgs, true).advanced, false)
+  assert.equal(decide(big, tiny, false, 'claude-haiku-5-5').advanced, false)
+  assert.equal(decide(big, tiny, true, 'claude-haiku-5-5').advanced, true)
+  assert.equal(decide(msgs, msgs, true, 'claude-haiku-5-5').advanced, false)
 })
 
 test('a thinking block is sized by the tokens it bills, not its signature', () => {
@@ -228,6 +228,18 @@ test('a thinking block is sized by the tokens it bills, not its signature', () =
   // signature size as 667 of text.
   assert.equal(sizeOf(keep[1], new Map()) - sizeOf(drop[1], new Map()), 667 - 2000 + JSON.stringify(think(sig)).length - JSON.stringify(drop[1]).length)
   // A block that billed little is not worth the rewrite; one that billed much is.
-  assert.equal(decide(keep, drop, false, new Map([[hash(sig), 50]])).advanced, false)
-  assert.equal(decide(keep, drop, false, new Map([[hash(sig), 3000]])).advanced, true)
+  assert.equal(decide(keep, drop, false, 'claude-haiku-5-5', new Map([[hash(sig), 50]])).advanced, false)
+  assert.equal(decide(keep, drop, false, 'claude-haiku-5-5', new Map([[hash(sig), 3000]])).advanced, true)
+})
+
+test('a model with cheaper reads makes a rewrite cost more of them', () => {
+  // Saving S of a rewrite R ≈ 3S: M R - (M + 1) S is about 37 S at M = 19, within K S
+  // = 40 S, and about 77 S at M = 39, beyond it.
+  const head: ApiMsg[] = [{ role: 'user', content: 'p' }]
+  const keep = [...head, { role: 'user', content: 'x'.repeat(1000) } as ApiMsg, { role: 'user', content: 'y'.repeat(2000) } as ApiMsg]
+  const drop = [...head, { role: 'user', content: '' } as ApiMsg, keep[2]]
+  assert.equal(writeCost('claude-haiku-5-5'), 19)
+  assert.equal(writeCost('claude-opus-5-5'), 39)
+  assert.equal(decide(keep, drop, false, 'claude-haiku-5-5').advanced, true)
+  assert.equal(decide(keep, drop, false, 'claude-opus-5-5').advanced, false)
 })

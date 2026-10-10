@@ -171,11 +171,13 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock
 
 // --- When to move the applied clock. ---
 
-// Claude Code writes 1-hour cache entries: 2x input against 0.1x for a read, so
-// a written character costs M + 1 = 20 reads. K is the warm requests expected
-// to read what a trim saved before the cache next goes cold: 40 at an hour's
-// TTL (mini-context's notes.md, "Light compaction").
-export const M = 19
+// Claude Code writes 1-hour cache entries at 2x input. A read costs 0.1x on
+// most models, so a written character costs M + 1 = 20 reads; the models in
+// READ_COST read for less, and a write costs them more reads. K is the warm
+// requests expected to read what a trim saved before the cache next goes cold:
+// 40 at an hour's TTL (mini-context's notes.md, "Light compaction").
+const READ_COST: Record<string, number> = { 'claude-opus-5-5': 0.05, 'claude-fable-5-1': 0.025, 'claude-mythos-5-1': 0.025 }
+export const writeCost = (model: string) => 2 / (READ_COST[model] ?? 0.1) - 1 // M
 export const K = 40
 
 export type Decision = {
@@ -216,7 +218,8 @@ export function sizeOf(m: ApiMsg, thinking: Thinking): number {
 //   (M + 1)(R - S) - R = M R - (M + 1) S
 // and advancing pays when it is at most K S. On a cold cache both requests
 // write everything, so advancing always pays: its extra is -(M + 1) S.
-export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], cold: boolean, thinking: Thinking = new Map()): Decision {
+export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], cold: boolean, model: string, thinking: Thinking = new Map()): Decision {
+  const M = writeCost(model)
   const a = before.map((m) => sizeOf(m, thinking))
   const b = after.map((m) => sizeOf(m, thinking))
   const first = before.findIndex((m, i) => JSON.stringify(m) !== JSON.stringify(after[i]))
