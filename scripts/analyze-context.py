@@ -55,8 +55,9 @@ import defs
 # The kinds the frontier holds back, each with the frontier that trims it.
 FRONTIER = {"reasoning": "reasoning", "toolCalls": "tools", "toolResults": "tools"}
 BASE_TYPES = ["systemPrompt", "tools", "preamble"]
-# What Claude Code injects reads the same before the first response as after.
-LABELS = {"preamble": "systemMessage", "harness": "systemMessage"}
+# Display names. What Claude Code injects reads the same before the first
+# response as after.
+LABELS = {"preamble": "systemMessage", "harness": "systemMessage", "user": "userPrompt", "assistant": "modelReply"}
 REST_TYPES = ["toolsLoaded", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "toolResultsSkill", "reasoning", "other"]
 
 
