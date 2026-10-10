@@ -5,7 +5,7 @@ Reads logs-mini-ctx-claude/<conversation>/step_events.jsonl under each dir
 given (default the current one, the proxy's default --dir when run from the
 repo): its `request` lines (usage) and `compaction` lines (each decision, with
 savedChars and rewriteChars). Characters become tokens at
-the session's fitted rate, as in analyze-context.py.
+the session's fitted rate.
 
   savings  Each request after an advance no longer sends what it saved: the
            characters saved so far, at the cache-read price when the request

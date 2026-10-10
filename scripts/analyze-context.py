@@ -6,13 +6,13 @@ lines of step_events.jsonl, each listing the request's messages by hash, and
 beside each message its parts/<hash>.kinds.json, the message's bytes split by
 kind (src/log.ts).
 
-The log holds the messages but not the system prompt or tool definitions, so a
-request's tokens are fitted across the session as base + rate x message bytes,
-by least squares over the session's requests: `base` is the unseen system prompt
-and tools, and `rate` turns a message's bytes by kind into tokens. Logged bytes
-of kind `system` -- what Claude Code injects before the first response,
-CLAUDE.md and the environment block among it -- are base too. What it injects
-later shows as `harness`.
+The base is the session's first request's tokens, as the API reported them:
+the system prompt and tools, which the log does not hold, and the messages
+Claude Code injects before the first response (CLAUDE.md and the environment
+block among them) with the first prompt. What the request has beyond that is
+shared among its other messages by their bytes by kind. That includes any
+tools loaded after the first request, deferred ones fetched by tool search.
+What Claude Code injects later shows as `harness`.
 
 By age: base, then the message content grouped by how many calendar days (local
 time) before the request each message first appeared -- oldest first, then
@@ -79,23 +79,6 @@ def local_date(stamp: str | None) -> dt.date | None:
     return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date()
 
 
-def message_bytes(r: dict) -> int:
-    return sum(p["bytes"] for p in r["parts"])
-
-
-def fit(reqs: list[dict]) -> tuple[float, float] | None:
-    """(base, rate) fitting inputTokens = base + rate x message bytes."""
-    xs = [message_bytes(r) for r in reqs]
-    ys = [r["inputTokens"] for r in reqs]
-    n = len(xs)
-    mx, my = sum(xs) / n, sum(ys) / n
-    sxx = sum((x - mx) ** 2 for x in xs)
-    if sxx == 0:
-        return None
-    rate = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
-    return my - rate * mx, rate
-
-
 def sidecar(parts_dir: str, h: str) -> dict:
     try:
         with open(os.path.join(parts_dir, h + ".kinds.json"), encoding="utf-8") as f:
@@ -131,11 +114,13 @@ def main() -> int:
         return 1
     request = reqs[index]
     model = request.get("model")
-    fitted = fit([r for r in reqs if r.get("model") == model])
-    if not fitted:
-        print("too few requests of different sizes to fit base and rate", file=sys.stderr)
-        return 1
-    base_fit, rate = fitted
+    first = next(r for r in reqs if r.get("model") == model)
+    base = float(first["inputTokens"])
+    in_base = {p["hash"] for p in first["parts"]}
+    total = float(request["inputTokens"])
+    rest = [p for p in request["parts"] if p["hash"] not in in_base]
+    rest_bytes = sum(p["bytes"] for p in rest)
+    rate = (total - base) / rest_bytes if rest_bytes else 0.0
 
     parts_dir = os.path.join(session, "parts")
     seen: dict[str, str] = {}
@@ -156,12 +141,12 @@ def main() -> int:
     ends = request.get("trimmedEnd") or request.get("frontierEnd")
     for i, p in enumerate(request["parts"]):
         h = p["hash"]
+        if h in in_base:
+            continue
         kinds = side[h].get("kinds") or {p["part"]: p["bytes"]}
         key = side[h].get("lineage")
         day = local_date(born_by_lineage.get(key, seen[h]) if key else seen[h])
         for kind, n in kinds.items():
-            if kind == "system":
-                continue  # base, which the request's tokens leave below
             tokens = n * rate
             if kind in FRONTIER and not (ends and i < ends[FRONTIER[kind]]):
                 frontier += tokens
@@ -169,15 +154,12 @@ def main() -> int:
             by_type[kind] += tokens
             by_day[(ref - day).days] += tokens
 
-    total = float(request["inputTokens"])
-    # The fit is approximate; the base is what the request's own tokens leave.
-    base = total - frontier - sum(by_type.values())
     persist = total - frontier
 
     print(f"Date: {ref}")
     print(f"Request #{index} of {len(reqs)} in session {os.path.basename(session)}")
     print(f"Model: {model}")
-    print(f"Fit: base {base_fit:,.0f} tokens, rate {rate:.3f} tokens per byte ({message_bytes(request):,} message bytes)")
+    print(f"Base: request #{reqs.index(first)}, {base:,.0f} tokens; the rest at {rate:.3f} tokens per byte ({rest_bytes:,} message bytes)")
 
     print("\nTokens by age (in calendar days, local time)")
     print(row("base", base, total))
