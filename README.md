@@ -179,19 +179,19 @@ With `--log-step-events`, logs go to
 
 Scripts:
 
-- `scripts/analyze-context.py [conversation dir] [--request N]` breaks one
+- `python3 scripts/analyze-context.py [conversation dir] [--request N]` breaks one
   request's tokens down by age and by part type.
-- `scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
+- `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
-- `scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's
+- `node scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's
   logged parts with the current part-type rules. The proxy labels a part once,
   when it first logs it, so run this after changing the rules in `src/log.ts`.
-- `scripts/reruns.py [conversation dir]` lists tool calls that fetched again
+- `python3 scripts/reruns.py [conversation dir]` lists tool calls that fetched again
   output trimming had taken from the model: at least half their result lines
   were in earlier results stubbed or removed from the request they answered,
   and in none still whole. With each, the step wait that would have avoided it,
   and a histogram of those: what trimming too much costs.
-- `scripts/prompt-cost.py "<prompt start>" <session id> ...` compares one
+- `python3 scripts/prompt-cost.py "<prompt start>" <session id> ...` compares one
   user prompt across sessions, such as runs of the same prompt under different
   policies: from the prompt to the next one, its steps, duration, cost, tool
   calls, trims applied and peak context.
