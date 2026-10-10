@@ -1,6 +1,6 @@
 #!/bin/bash
 # Starts the mini-context proxy if nothing is listening on its port, and leaves
-# it running; its output goes to proxy.log. With --restart, stops whatever is
+# it running; its output goes to proxy-data/proxy.log. With --restart, stops whatever is
 # listening there first, so the proxy picks up code changes. Sessions running
 # through it resume with their next request, once it is back up.
 set -euo pipefail
@@ -16,8 +16,9 @@ if [[ ${1:-} == --restart ]] && up; then
 fi
 
 if ! up; then
+  mkdir -p "$repo/proxy-data"
   nohup node "$repo/src/server.ts" --port "$port" --log-step-events \
-    >>"$repo/proxy.log" 2>&1 &
+    >>"$repo/proxy-data/proxy.log" 2>&1 &
   for _ in $(seq 50); do up && break; sleep 0.1; done
-  up || { echo "start-proxy: the proxy did not start; see $repo/proxy.log" >&2; exit 1; }
+  up || { echo "start-proxy: the proxy did not start; see $repo/proxy-data/proxy.log" >&2; exit 1; }
 fi

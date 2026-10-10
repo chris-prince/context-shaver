@@ -1,4 +1,4 @@
-// The one log: logs-mini-ctx-claude/<conversation>/step_events.jsonl, a line
+// The one log: proxy-data/logs/<conversation>/step_events.jsonl, a line
 // per model request and per trim decision, and parts/, each distinct message
 // saved once (parts/<hash>.json) with its bytes split by kind
 // (parts/<hash>.kinds.json). A request line lists its messages by hash, so the
@@ -13,7 +13,7 @@ import path from 'node:path'
 import { isSkillBody, type ApiMsg, type Block } from './items.ts'
 import { isStubbed, STUB } from './trim.ts'
 
-export const LOG_DIR = 'logs-mini-ctx-claude'
+export const LOG_DIR = 'logs'
 
 // cyrb53, twice with different seeds: a 106-bit content hash, kept so part
 // names match the plugin's earlier logs.

@@ -1,7 +1,3 @@
-logs-mini-ctx-claude/
-state/
+proxy-data/
 __pycache__/
-proxy.log
-debug.log
-latest
 old/

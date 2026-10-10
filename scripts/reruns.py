@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """List tool calls that fetched again output trimming had taken from the model.
 
-Reads a conversation's logs under logs-mini-ctx-claude/<conversation>/ (default
+Reads a conversation's logs under proxy-data/logs/<conversation>/ (default
 the newest). Each request's last assistant message is the response to the
 request before it: one step, and that earlier request is what the model saw
 when it made the step's calls. A result is read as first sent, whole, from the
@@ -49,7 +49,7 @@ import re
 import sys
 from collections import Counter
 
-LOGS = "logs-mini-ctx-claude"
+LOGS = "proxy-data/logs"
 STUB = re.compile(r"^\[CULLED (\d+) B FROM CTX\]$")
 # The wording before 2026-10-07, still in older logs.
 OLD_STUB = re.compile(r"^\[Output from an earlier turn removed")

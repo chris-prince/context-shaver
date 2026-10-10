@@ -14,7 +14,7 @@ transcript doesn't record. Prices are per million input tokens: Opus 5.5 $4
 have only a total, writtenTokens, priced as all 1-hour.
 
 Transcripts are read from ~/.claude/projects/<this directory, slugged>/, and
-logs from logs-mini-ctx-claude/<session>-*/ under the current directory.
+logs from proxy-data/logs/<session>-*/ under the current directory.
 
 Usage:
     scripts/prompt-cost.py "<prompt start>" <session id> ...
@@ -29,7 +29,7 @@ import re
 import sys
 from datetime import datetime
 
-LOGS = "logs-mini-ctx-claude"
+LOGS = "proxy-data/logs"
 PRICES = (("opus-5-5", 4.0, 0.05), ("haiku-5-5", 0.10, 0.1), ("haiku", 1.0, 0.1), ("sonnet", 3.0, 0.1), ("opus", 5.0, 0.1))
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Break down a request's context by age, then by part type.
 
-Reads the proxy's logs under logs-mini-ctx-claude/<conversation>/: the `request`
+Reads the proxy's logs under proxy-data/logs/<conversation>/: the `request`
 lines of step_events.jsonl, each listing the request's system blocks, tool
 definitions and messages with their bytes, and beside each message its
 parts/<hash>.kinds.json, the message's bytes split by kind (src/log.ts).
@@ -101,7 +101,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("session", nargs="?", help="session dir (default: newest under --logs)")
     parser.add_argument("--request", type=int, help="request index to analyze (default: the latest)")
-    parser.add_argument("--logs", default="logs-mini-ctx-claude", help="logs directory (default: logs-mini-ctx-claude)")
+    parser.add_argument("--logs", default="proxy-data/logs", help="logs directory (default: proxy-data/logs)")
     args = parser.parse_args()
 
     session = args.session or newest_session(args.logs)

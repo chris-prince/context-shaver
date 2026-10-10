@@ -25,7 +25,7 @@ bin/claude-mini [claude args ...]
 `bin/claude-mini` starts the proxy if nothing is listening on its port (8787,
 or `MINI_CTX_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
-`proxy.log`. It starts the proxy with logging on and the repo's
+`proxy-data/proxy.log`. It starts the proxy with logging on and the repo's
 `policy.json`. It also sets `ENABLE_TOOL_SEARCH=true`: Claude Code turns its
 tool search off when the base URL isn't Anthropic's, which sends every tool's
 definition on every request (about 26k more tokens).
@@ -55,7 +55,7 @@ headers as they come.
 | --- | --- | --- |
 | `--port` | `8787` | Listens on 127.0.0.1 only |
 | `--upstream` | `https://api.anthropic.com` | |
-| `--dir` | the repo | Where `state/` and `logs-mini-ctx-claude/` go |
+| `--dir` | the repo's `proxy-data/` | Where `state/` and `logs/` go |
 | `--policy` | the repo's `policy.json` | The policy (below). With no file there, requests pass through |
 | `--log-step-events` | off | Write the log (below) |
 | `--cache-ttl-seconds` | `3600` | The cache TTL. Lower it only to test the cold path |
@@ -127,10 +127,10 @@ The API constrains what can go:
 - a message whose only content is thinking keeps it, since an empty message is
   refused. One left empty by dropped calls is removed.
 
-Each conversation has an applied clock, saved in `state/<key>.json`: the
-completed steps and turns the policy was last applied at. Every request is
-trimmed at it, so they all send the same prefix and the prompt cache keeps
-reading it. The clock only moves forward.
+Each conversation has an applied clock, saved in
+`proxy-data/state/<key>.json`: the completed steps and turns the policy was
+last applied at. Every request is trimmed at it, so they all send the same
+prefix and the prompt cache keeps reading it. The clock only moves forward.
 
 If the API refuses a trimmed request (400), the proxy sends it again as it
 came and logs the refusal to stderr.
@@ -161,7 +161,7 @@ prompt changed), both candidates write everything, so advancing always pays.
 ## Logs
 
 With `--log-step-events`, logs go to
-`logs-mini-ctx-claude/<session>-<conversation>/`:
+`proxy-data/logs/<session>-<conversation>/`:
 
 - `step_events.jsonl`, with one line per event:
   - a `request` line for each answered request: usage, and the request's

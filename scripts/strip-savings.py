@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Total what trimming saved and cost, per session, from the proxy's logs.
 
-Reads logs-mini-ctx-claude/<conversation>/step_events.jsonl under each dir
+Reads proxy-data/logs/<conversation>/step_events.jsonl under each dir
 given (default the current one, the proxy's default --dir when run from the
 repo): its `request` lines (usage) and `compaction` lines (each decision, with
 savedChars and rewriteChars). Characters become tokens at the session's rate:
@@ -38,7 +38,7 @@ import sys
 
 from defs import def_bytes
 
-LOGS = "logs-mini-ctx-claude"
+LOGS = "proxy-data/logs"
 
 
 def input_price(model: str | None) -> tuple[float, float]:

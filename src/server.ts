@@ -5,11 +5,12 @@
 //
 // What is trimmed, and when, is the policy file's (policy.ts); with none, it
 // passes requests through. Each conversation (keyed by its first message, so a
-// subagent is its own) has an applied clock, saved under state/: the completed
-// steps and turns every request is trimmed at. On each request the cost rule
-// (trim.ts, decide) says whether moving it up to the conversation's clock pays:
-// always on a cold cache, and on a warm one when what it saves outweighs what it
-// rewrites, priced against the cache entries the conversation's requests left.
+// subagent is its own) has an applied clock, saved under proxy-data/state/: the
+// completed steps and turns every request is trimmed at. On each request the
+// cost rule (trim.ts, decide) says whether moving it up to the conversation's
+// clock pays: always on a cold cache, and on a warm one when what it saves
+// outweighs what it rewrites, priced against the cache entries the
+// conversation's requests left.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -26,7 +27,7 @@ const { values: a } = parseArgs({
   options: {
     port: { type: 'string', default: '8787' },
     upstream: { type: 'string', default: 'https://api.anthropic.com' },
-    dir: { type: 'string', default: path.resolve(import.meta.dirname, '..') },
+    dir: { type: 'string', default: path.resolve(import.meta.dirname, '..', 'proxy-data') },
     policy: { type: 'string', default: path.resolve(import.meta.dirname, '..', 'policy.json') },
     'log-step-events': { type: 'boolean', default: false },
     'cache-ttl-seconds': { type: 'string', default: '3600' },
