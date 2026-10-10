@@ -9,7 +9,9 @@ export type Action = 'stub' | 'drop'
 // Due once the item's step (or turn) is among the completed ones, leaving out
 // the latest `wait`.
 export type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
-export type Policy = Partial<Record<Kind, Rule[]>>
+// `tools_force_deferred` names tools to defer that Claude Code sends in full
+// (defer.ts).
+export type Policy = Partial<Record<Kind, Rule[]>> & { tools_force_deferred?: string[] }
 
 // What each kind can be given. Only tool calls have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['drop'], tool_search: ['drop'], reasoning: ['drop'] }
@@ -17,6 +19,10 @@ const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['drop'
 export function parsePolicy(v: unknown): Policy {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('a policy is an object of rule lists by kind')
   for (const [kind, rules] of Object.entries(v)) {
+    if (kind === 'tools_force_deferred') {
+      if (!Array.isArray(rules) || !rules.every((n) => typeof n === 'string')) throw new Error('policy: tools_force_deferred is not a list of tool names')
+      continue
+    }
     if (!Object.hasOwn(ACTIONS, kind)) throw new Error(`policy: unknown kind ${kind}`)
     if (!Array.isArray(rules)) throw new Error(`policy: ${kind} is not a list of rules`)
     for (const r of rules)

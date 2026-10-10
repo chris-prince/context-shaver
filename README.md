@@ -85,6 +85,12 @@ drop over stub. A kind with no rules is never trimmed.
 | `tool_search` | A `ToolSearch` call and its result | `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |
 
+`tools_force_deferred` lists tools to defer that Claude Code sends in full.
+Each is marked `defer_loading` and added to the deferred tools Claude Code
+lists in its environment message, so the model loads it with `ToolSearch` when
+it needs it. With tool search off (no `ENABLE_TOOL_SEARCH`) nothing is
+deferred. Changing the list rewrites the cache of open sessions once.
+
 The proxy reads the file when it starts; restart it after editing.
 
 ## What it trims

@@ -65,8 +65,8 @@ test('a rule is due once its unit is completed, past the wait', () => {
 })
 
 test('a policy file is checked', () => {
-  assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'tool_search', 'reasoning'])
-  for (const bad of [[], { tools: [] }, { tool: {} }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }])
+  assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'tool_search', 'reasoning', 'tools_force_deferred'])
+  for (const bad of [[], { tools: [] }, { tool: {} }, { tools_force_deferred: [1] }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }])
     assert.throws(() => parsePolicy(bad))
 })
 

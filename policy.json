@@ -5,5 +5,6 @@
   ],
   "skill": [{ "on": "turn", "wait": 0, "action": "drop" }],
   "tool_search": [{ "on": "turn", "wait": 10, "action": "drop" }],
-  "reasoning": [{ "on": "turn", "wait": 0, "action": "drop" }]
+  "reasoning": [{ "on": "turn", "wait": 0, "action": "drop" }],
+  "tools_force_deferred": ["Artifact", "SendFeedback", "ScheduleWakeup", "ReportFindings", "ListAgents"]
 }

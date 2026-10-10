@@ -17,6 +17,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
+import { forceDefer } from './defer.ts'
 import { loadPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
@@ -70,6 +71,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const body = JSON.parse(raw.toString('utf8'))
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
+  forceDefer(body, policy.tools_force_deferred ?? [])
   const key = hash(JSON.stringify(msgs[0]))
   const s = load(key)
   const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
