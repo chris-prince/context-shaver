@@ -3,9 +3,10 @@
 // saved once (parts/<hash>.json) with its bytes split by kind
 // (parts/<hash>.kinds.json). A request line lists its messages by hash, so the
 // full and the trimmed version of a message are both on disk, joined by their
-// lineage. The top-level `system` field and the tool definitions are not logged;
-// system-role messages in the conversation, such as the environment block
-// Claude Code sends at the start, are.
+// lineage. The line also lists the top-level `system` blocks and the tool
+// definitions, as sent, each saved once in parts/ beside the messages: a
+// deferred tool is marked, since its definition costs nothing until a tool
+// search loads it.
 
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -105,4 +106,23 @@ export function writeParts(dir: string, msgs: readonly ApiMsg[]): Array<{ part: 
     }
     return { part: m.role, hash: h, bytes: json.length }
   })
+}
+
+// Saves each system block and tool definition not saved before; returns the
+// request's lists of them.
+export function writeDefs(dir: string, body: { system?: unknown; tools?: Array<{ name?: string; defer_loading?: boolean }> }) {
+  const parts = path.join(dir, 'parts')
+  mkdirSync(parts, { recursive: true })
+  const save = (x: unknown) => {
+    const json = JSON.stringify(x)
+    const h = hash(json)
+    const file = path.join(parts, `${h}.json`)
+    if (!existsSync(file)) writeFileSync(file, json)
+    return { hash: h, bytes: json.length }
+  }
+  const system: unknown[] = typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : Array.isArray(body.system) ? body.system : []
+  return {
+    system: system.map(save),
+    tools: (body.tools ?? []).map((t) => ({ name: t.name, ...save(t), ...(t.defer_loading ? { deferred: true } : {}) })),
+  }
 }

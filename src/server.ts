@@ -15,7 +15,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
-import { hash, kinds, LOG_DIR, writeLine, writeParts } from './log.ts'
+import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { loadPolicy } from './policy.ts'
@@ -125,7 +125,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
     const ends = trimmedEnd(msgs, policy, applied)
     const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, predictedCachedChars, trimmedEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs) }
+    p.logLine = { event: 'request', time, model: body.model, predictedCachedChars, trimmedEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
   }
   return p
 }

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { kinds } from '../src/log.ts'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { kinds, writeDefs } from '../src/log.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 test('injected content is system in the preamble and harness after it; the prompt is user', () => {
@@ -27,4 +30,17 @@ test('a skill body beside the Skill result counts as a tool result', () => {
   const k = kinds(JSON.stringify(m), m).kinds
   assert.equal(k.toolResultsSkill, JSON.stringify(m.content[1]).length)
   assert.equal(k.toolResults, JSON.stringify(m.content[0]).length)
+})
+
+test('system blocks and tool definitions are listed with their bytes, deferred tools marked', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'log-'))
+  const tool = { name: 'Read', input_schema: {} }
+  const later = { name: 'Artifact', input_schema: {}, defer_loading: true }
+  const d = writeDefs(dir, { system: 'You are Claude Code.', tools: [tool, later] })
+  assert.deepEqual(d.system.map((s) => s.bytes), [JSON.stringify({ type: 'text', text: 'You are Claude Code.' }).length])
+  assert.deepEqual(d.tools.map(({ name, bytes, deferred }) => ({ name, bytes, deferred })), [
+    { name: 'Read', bytes: JSON.stringify(tool).length, deferred: undefined },
+    { name: 'Artifact', bytes: JSON.stringify(later).length, deferred: true },
+  ])
+  assert.equal(readFileSync(path.join(dir, 'parts', `${d.tools[1].hash}.json`), 'utf8'), JSON.stringify(later))
 })
