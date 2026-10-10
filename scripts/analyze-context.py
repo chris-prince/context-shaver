@@ -98,7 +98,7 @@ def percent(value: float, total: float) -> int:
 
 
 def row(label: str, value: float, total: float, show_percent: bool = True, indent: int = 0) -> str:
-    line = f"  {' ' * indent}{label:<{20 - indent}}{value:>12,.0f}"
+    line = f"  {' ' * indent}{label:<20}{value:>12,.0f}"
     return line + f"  ({percent(value, total):>2}%)" if show_percent else line
 
 
