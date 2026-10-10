@@ -9,11 +9,12 @@ parts/<hash>.kinds.json, the message's bytes split by kind (src/log.ts).
 Each part's tokens come from the requests' reported counts, taken in order
 (scripts/defs.py, part_tokens); within a part, its kinds share them by bytes,
 as the system prompt and the tools sent in full share theirs. The base is the
-system prompt, the tools sent in full, and the preamble: what Claude Code
-injects before the first response (CLAUDE.md and the environment block among
-them), the kind src/log.ts calls `system`. Deferred tools a tool search has
-loaded since are `toolsLoaded`. What Claude Code injects later shows as
-`harness`. Requests logged before the system blocks and tools were sit outside
+system prompt, the tools sent in full, and what Claude Code injects before the
+first response (CLAUDE.md and the environment block among them), the kind
+src/log.ts calls `system`. Deferred tools a tool search has loaded since are
+`toolsLoaded`. What Claude Code injects, as system messages or system-reminder
+blocks, shows as `systemMessage` under base or non-base: src/log.ts's `system`
+before the first response, `harness` after. Requests logged before the system blocks and tools were sit outside
 the analysis.
 
 By age: base, then the message content grouped by how many calendar days (local
@@ -54,6 +55,8 @@ import defs
 # The kinds the frontier holds back, each with the frontier that trims it.
 FRONTIER = {"reasoning": "reasoning", "toolCalls": "tools", "toolResults": "tools"}
 BASE_TYPES = ["systemPrompt", "tools", "preamble"]
+# What Claude Code injects reads the same before the first response as after.
+LABELS = {"preamble": "systemMessage", "harness": "systemMessage"}
 REST_TYPES = ["toolsLoaded", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "toolResultsSkill", "reasoning", "other"]
 
 
@@ -185,13 +188,13 @@ def main() -> int:
     print("\nTokens by part type (frontier left out)")
     print(row("base", base, persist))
     for key in BASE_TYPES:
-        print(row(key, by_type[key], persist, indent=2))
+        print(row(LABELS.get(key, key), by_type[key], persist, indent=2))
     print(row("non-base", persist - base, persist))
     for key in REST_TYPES:
         value = by_type.get(key, 0.0)
         if key in ("toolsLoaded", "reasoning", "other") and not value:
             continue
-        print(row(key, value, persist, indent=2))
+        print(row(LABELS.get(key, key), value, persist, indent=2))
     print(row("TOTAL", persist, persist, show_percent=False))
     return 0
 
