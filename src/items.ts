@@ -55,16 +55,16 @@ export function heldTo(c: Clock, msgs: readonly ApiMsg[]): Clock {
 // - tool: a tool call with its results, by the call's id;
 // - skill: a Skill call with its result and the skill's body, which Claude Code
 //   sends as a text block beside the result;
-// - search: a ToolSearch call with its result, which loads the tools it found
+// - tool_search: a ToolSearch call with its result, which loads the tools it found
 //   (their definitions go with it);
 // - reasoning: an assistant message's thinking, by the message's index.
-export type Kind = 'tool' | 'skill' | 'search' | 'reasoning'
+export type Kind = 'tool' | 'skill' | 'tool_search' | 'reasoning'
 export type Item = { kind: Kind; id: string; step: number; turn: number }
 
 export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'redacted_thinking'
 export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
 
-const KINDS: Record<string, Kind> = { Skill: 'skill', ToolSearch: 'search' }
+const KINDS: Record<string, Kind> = { Skill: 'skill', ToolSearch: 'tool_search' }
 
 export function itemsOf(msgs: readonly ApiMsg[]): Item[] {
   const { stepOf } = stepsOf(msgs)

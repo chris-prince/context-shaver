@@ -4,6 +4,6 @@
     { "on": "turn", "wait": 2, "action": "drop" }
   ],
   "skill": [{ "on": "turn", "wait": 0, "action": "drop" }],
-  "search": [{ "on": "turn", "wait": 10, "action": "drop" }],
+  "tool_search": [{ "on": "turn", "wait": 10, "action": "drop" }],
   "reasoning": [{ "on": "turn", "wait": 0, "action": "drop" }]
 }

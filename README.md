@@ -82,7 +82,7 @@ drop over stub. A kind with no rules is never trimmed.
 | --- | --- | --- |
 | `tool` | A tool call with its results | `stub`, `drop` |
 | `skill` | A `Skill` call, its result and the skill's text beside it | `drop` |
-| `search` | A `ToolSearch` call and its result | `drop` |
+| `tool_search` | A `ToolSearch` call and its result | `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |
 
 The proxy reads the file when it starts; restart it after editing.
