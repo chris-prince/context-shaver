@@ -4,12 +4,25 @@ import { test } from 'node:test'
 import { clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { parsePolicy, treatment, type Policy } from '../src/policy.ts'
-import { apply, decide, isStubbed, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { apply, decide, isStubbed, LOOKBACK, positionsOf, readThrough, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'stub' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
 const dropAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'drop' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
 const committed = parsePolicy(JSON.parse(readFileSync(new URL('../policy.json', import.meta.url), 'utf8')))
+
+// The messages with a breakpoint on the last block, as Claude Code sends them.
+const tailed = (msgs: readonly ApiMsg[]): ApiMsg[] =>
+  msgs.map((m, i) => {
+    if (i < msgs.length - 1) return m
+    const c = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content
+    return { ...m, content: c.map((b, j) => (j < c.length - 1 ? b : { ...b, cache_control: { type: 'ephemeral', ttl: '1h' } })) }
+  })
+// Gating with a breakpoint on the last block, against a cache that holds an
+// entry at every block of `cached` (none, for a cold one), so either request
+// can read up to its first change.
+const gate = (before: readonly ApiMsg[], after: readonly ApiMsg[], cached: readonly ApiMsg[], model = 'claude-haiku-5-5', thinking = new Map<string, number>()) =>
+  decide(tailed(before), tailed(after), new Set(positionsOf(cached, 's', thinking).map((p) => p.prefix)), 's', model, thinking)
 
 // The items an application changed, counted by kind and treatment.
 const counts = (a: Applied) => transitions({ msgs: [], origin: [], treated: new Map() }, a)
@@ -123,7 +136,7 @@ test('a tool call is stubbed, then dropped, as the conversation goes on', () => 
       let sent = apply(prefix, p, clock)
       if (gated) {
         const keep = apply(prefix, p, applied)
-        if (decide(keep.msgs, sent.msgs, false, 'claude-haiku-5-5').advanced) applied = clock
+        if (gate(keep.msgs, sent.msgs, keep.msgs).advanced) applied = clock
         else sent = keep
       }
       const result = sent.msgs.flatMap((m) => (typeof m.content === 'string' ? [] : m.content)).find((b) => b.tool_use_id === 'toolu_1')
@@ -208,28 +221,29 @@ test('applying is idempotent', () => {
 test('cold always advances; warm only when savings outweigh the rewrite', () => {
   const keep = apply(msgs, stubAll, { steps: 0, turns: 0 }).msgs
   const adv = apply(msgs, stubAll, { steps: 5, turns: 2 }).msgs
-  assert.equal(decide(keep, adv, true, 'claude-haiku-5-5').advanced, true)
-  assert.equal(decide(keep, adv, false, 'claude-haiku-5-5').advanced, true) // the results are most of the history
+  assert.equal(gate(keep, adv, []).advanced, true)
+  assert.equal(gate(keep, adv, keep).advanced, true) // the results are most of the history
   // Saving a few characters at the start of a long history does not pay.
   const big: ApiMsg[] = [{ role: 'user', content: 'pp' }, { role: 'user', content: long.repeat(40) }]
   const tiny: ApiMsg[] = [{ role: 'user', content: 'p' }, big[1]]
-  assert.equal(decide(big, tiny, false, 'claude-haiku-5-5').advanced, false)
-  assert.equal(decide(big, tiny, true, 'claude-haiku-5-5').advanced, true)
-  assert.equal(decide(msgs, msgs, true, 'claude-haiku-5-5').advanced, false)
+  assert.equal(gate(big, tiny, big).advanced, false)
+  assert.equal(gate(big, tiny, []).advanced, true)
+  assert.equal(gate(msgs, msgs, []).advanced, false)
 })
 
 test('a thinking block is sized by the tokens it bills, not its signature', () => {
   const sig = 's'.repeat(2000)
-  const think = (sg: string): ApiMsg => ({ role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: sg }, { type: 'text', text: 'a' }] })
+  const block = { type: 'thinking', thinking: '', signature: sig }
+  const think = (sg: string): ApiMsg => ({ role: 'assistant', content: [{ ...block, signature: sg }, { type: 'text', text: 'a' }] })
   const tail: ApiMsg[] = [{ role: 'user', content: 'x'.repeat(3000) }]
   const keep = [{ role: 'user', content: 'p' } as ApiMsg, think(sig), ...tail]
   const drop = [keep[0], { role: 'assistant', content: [{ type: 'text', text: 'a' }] } as ApiMsg, ...tail]
   // Unknown, it is put at 0.13 tokens a signature character: 2000 chars of
   // signature size as 667 of text.
-  assert.equal(sizeOf(keep[1], new Map()) - sizeOf(drop[1], new Map()), 667 - 2000 + JSON.stringify(think(sig)).length - JSON.stringify(drop[1]).length)
+  assert.equal(sizeOf(block, new Map()), 667 - 2000 + JSON.stringify(block).length)
   // A block that billed little is not worth the rewrite; one that billed much is.
-  assert.equal(decide(keep, drop, false, 'claude-haiku-5-5', new Map([[hash(sig), 50]])).advanced, false)
-  assert.equal(decide(keep, drop, false, 'claude-haiku-5-5', new Map([[hash(sig), 3000]])).advanced, true)
+  assert.equal(gate(keep, drop, keep, 'claude-haiku-5-5', new Map([[hash(sig), 50]])).advanced, false)
+  assert.equal(gate(keep, drop, keep, 'claude-haiku-5-5', new Map([[hash(sig), 3000]])).advanced, true)
 })
 
 test('a model with cheaper reads makes a rewrite cost more of them', () => {
@@ -240,6 +254,38 @@ test('a model with cheaper reads makes a rewrite cost more of them', () => {
   const drop = [...head, { role: 'user', content: '' } as ApiMsg, keep[2]]
   assert.equal(writeCost('claude-haiku-5-5'), 19)
   assert.equal(writeCost('claude-opus-5-5'), 39)
-  assert.equal(decide(keep, drop, false, 'claude-haiku-5-5').advanced, true)
-  assert.equal(decide(keep, drop, false, 'claude-opus-5-5').advanced, false)
+  assert.equal(gate(keep, drop, keep).advanced, true)
+  assert.equal(gate(keep, drop, keep, 'claude-opus-5-5').advanced, false)
+})
+
+test('advancing reads only through an entry the cache holds', () => {
+  // A long head, a 1000-character change, then a 2000-character tail. With an
+  // entry at every block, advancing rewrites 3000 characters to save 1000; with
+  // one only where the last request ended, it rewrites the head as well.
+  const head: ApiMsg[] = [{ role: 'user', content: 'h'.repeat(20000) }, { role: 'user', content: 'p' }]
+  const keep = [...head, { role: 'user', content: 'x'.repeat(1000) } as ApiMsg, { role: 'user', content: 'y'.repeat(2000) } as ApiMsg]
+  const drop = [...head, { role: 'user', content: '' } as ApiMsg, keep[3]]
+  const atHead = gate(keep, drop, keep)
+  assert.equal(atHead.advanced, true)
+  assert.equal(atHead.rewriteChars, positionsOf(tailed(keep), 's', new Map()).slice(2).reduce((n, p) => n + p.size, 0))
+  const live = new Set(positionsOf(tailed(keep), 's', new Map()).filter((p) => p.breakpoint).map((p) => p.prefix))
+  const atEnd = decide(tailed(keep), tailed(drop), live, 's', 'claude-haiku-5-5')
+  assert.equal(atEnd.cold, false)
+  assert.equal(atEnd.advanced, false)
+  assert.ok(atEnd.rewriteChars > 23000)
+})
+
+test('an entry more than LOOKBACK blocks before every breakpoint is not read', () => {
+  const msgs = Array.from({ length: LOOKBACK + 3 }, (_, i): ApiMsg => ({ role: 'user', content: `m${i}` }))
+  const first = msgs.slice(0, 2)
+  assert.equal(decide(tailed(msgs), tailed(msgs.slice(1)), new Set(positionsOf(first, 's', new Map()).map((p) => p.prefix)), 's', 'claude-haiku-5-5').cold, true)
+  const near = msgs.slice(0, 3)
+  assert.equal(decide(tailed(msgs), tailed(msgs.slice(1)), new Set(positionsOf(near, 's', new Map()).map((p) => p.prefix)), 's', 'claude-haiku-5-5').cold, false)
+})
+
+test('a run of tool calls or results is one lookback position', () => {
+  const calls: ApiMsg = { role: 'assistant', content: Array.from({ length: LOOKBACK + 5 }, (_, i) => ({ type: 'tool_use', id: `t${i}`, name: 'Read', input: {} })) }
+  const results: ApiMsg = { role: 'user', content: Array.from({ length: LOOKBACK + 5 }, (_, i) => ({ type: 'tool_result', tool_use_id: `t${i}`, content: 'x' })) }
+  const pos = positionsOf(tailed([{ role: 'user', content: 'go' }, calls, results]), 's', new Map())
+  assert.equal(readThrough(pos, new Set([pos[0].prefix])), 0)
 })

@@ -118,15 +118,23 @@ came and logs the refusal to stderr.
 On each request the proxy prices moving the applied clock up to the
 conversation's (`src/trim.ts`, `decide`). Everything due by then goes in one
 batch: a call the clock skipped past both rules for goes straight to dropped.
-Let R be the
-characters from the first changed message onward, and S the characters saved.
-Advancing costs M·R − (M+1)·S extra cache-read characters on this request,
-with M = 19, because a 1-hour cache write is 2× and a read is 0.1×. Advancing
-pays when that extra is at most K·S, with K = 40.
+It prices each candidate, keeping and advancing, against the cache
+entries the conversation's earlier requests left. They are saved in the
+state with the time each was last written or read, and they expire after the
+TTL. Each breakpoint (a block with `cache_control`) leaves an entry for the
+prefix through it. A request reads the longest live entry it finds by looking
+back at most 20 positions from each of its breakpoints. A position is a block,
+or a message's run of `tool_use` or `tool_result` blocks. The request writes
+from there to its last breakpoint. A written character costs M + 1 reads, where
+M + 1 = 2 / read cost, because a 1-hour write is 2× input. So M = 19 at the
+usual 0.1× read, 39 on Opus 5.5, and 79 on Fable and Mythos 5.1.
 
-The cache is cold when the conversation's last answered request is older than
-the TTL, was for another model, or is unknown. Nothing is cached then, so
-trimming is free and the rule always advances.
+Advancing pays when its extra cost on this request is at most K·S read
+characters, where S is the characters it saves every later request and K = 40.
+Advancing reads no further than its first change. It reads less when no
+entry ends there, and nothing when every entry is out of the breakpoints'
+reach. When nothing is cached (the TTL lapsed, or the model, tools or system
+prompt changed), both candidates write everything, so advancing always pays.
 
 ## Logs
 
@@ -137,7 +145,9 @@ With `--log-step-events`, logs go to
   - a `request` line for each answered request: usage, and the request's
     messages as sent, by hash. Of the usage, `writtenTokens60m` and
     `writtenTokens5m` are the tokens written to the cache for an hour and for
-    5 minutes; an hour's write costs more;
+    5 minutes; an hour's write costs more. `predictedCachedChars` is the
+    message characters the proxy expected the cache to serve, to check the
+    model against `cachedTokens`;
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind

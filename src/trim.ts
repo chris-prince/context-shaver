@@ -7,7 +7,7 @@
 // trimmed prefix and the prompt cache keeps reading it; decide says when moving
 // it pays. The latest step and the current turn are never touched.
 
-import { heldTo, isSkillBody, isThinking, itemsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Kind } from './items.ts'
+import { blocks, heldTo, isSkillBody, isThinking, itemsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Kind } from './items.ts'
 import { hash } from './log.ts'
 import { treatment, type Action, type Policy } from './policy.ts'
 
@@ -180,53 +180,100 @@ const READ_COST: Record<string, number> = { 'claude-opus-5-5': 0.05, 'claude-fab
 export const writeCost = (model: string) => 2 / (READ_COST[model] ?? 0.1) - 1 // M
 export const K = 40
 
-export type Decision = {
-  advanced: boolean
-  cold: boolean
-  savedChars: number // what this and every later request no longer sends, sized by sizeOf
-  rewriteChars: number // what keeping would read from the cache that advancing sends again, sized by sizeOf
-  extraChars: number // this request's extra cost, in cache-read characters
-}
-
 // What a thinking block bills, which its length does not show: Claude Code
 // sends it back with its thinking empty and the reasoning encrypted in its
 // signature, and the API bills it as the reasoning, about the output tokens it
 // took to generate. `thinking` holds those, by the signature's hash, for the
 // blocks the proxy saw generated; any other is put at SIGNATURE_TOKENS a
-// signature character. A message's size is its characters with each thinking
-// block counted as its tokens' worth of text, at TEXT_TOKENS a character
-// (both measured; notes.md, "Reasoning drops").
+// signature character. A block's size is its characters with a thinking block
+// counted as its tokens' worth of text, at TEXT_TOKENS a character (both
+// measured; notes.md, "Reasoning drops").
 export const TEXT_TOKENS = 0.39
 export const SIGNATURE_TOKENS = 0.13
 export type Thinking = ReadonlyMap<string, number>
 
-export function sizeOf(m: ApiMsg, thinking: Thinking): number {
-  let n = JSON.stringify(m).length
-  if (typeof m.content !== 'string')
-    for (const b of m.content)
-      if (b.type === 'thinking' && typeof b.signature === 'string') {
-        const tokens = thinking.get(hash(b.signature)) ?? SIGNATURE_TOKENS * b.signature.length
-        n += Math.round(tokens / TEXT_TOKENS) - b.signature.length
-      }
-  return n
+export function sizeOf(b: Block, thinking: Thinking): number {
+  const n = JSON.stringify(b).length
+  if (b.type !== 'thinking' || typeof b.signature !== 'string') return n
+  const tokens = thinking.get(hash(b.signature)) ?? SIGNATURE_TOKENS * b.signature.length
+  return n + Math.round(tokens / TEXT_TOKENS) - b.signature.length
 }
 
-// Prices advancing against keeping, on this request. Keeping reads the whole
-// history; advancing reads up to the first changed message and writes the
-// rest, less what it saved. With R the characters from the first change on and
-// S the characters saved, both sized by sizeOf, the extra cost is
-//   (M + 1)(R - S) - R = M R - (M + 1) S
-// and advancing pays when it is at most K S. On a cold cache both requests
-// write everything, so advancing always pays: its extra is -(M + 1) S.
-export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], cold: boolean, model: string, thinking: Thinking = new Map()): Decision {
+// The prompt cache keeps an entry for each prefix a request ended a breakpoint
+// (a block with cache_control) at, for the TTL from when it was last written or
+// read. A request reads the longest entry it finds by looking back from each
+// of its breakpoints over at most LOOKBACK positions (a block, or a run of a
+// message's tool_use or tool_result blocks), and writes from there to its
+// last breakpoint; what follows that is plain input. Only the messages are
+// tracked: a conversation's tools and system go in the seed, so changing them,
+// or the model, finds no entry.
+export const LOOKBACK = 20
+
+// Each block of the messages: the hash of the prefix through it, which names
+// its entry (cache_control left out, since it moves from request to request
+// over the same prefix), its size, whether it is a breakpoint, and whether it
+// continues the previous block's position, in a run of tool calls or results.
+export type Position = { prefix: string; size: number; breakpoint: boolean; joined: boolean }
+
+const uncontrolled = (k: string, v: unknown) => (k === 'cache_control' ? undefined : v)
+export const seedOf = (model: string, tools: unknown, system: unknown) => hash(JSON.stringify([model, tools, system], uncontrolled))
+
+export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking): Position[] {
+  let prefix = seed
+  return msgs.flatMap((m) =>
+    blocks(m).map((b, i, bs) => {
+      prefix = hash(prefix + m.role + JSON.stringify(b, uncontrolled))
+      const joined = (b.type === 'tool_use' || b.type === 'tool_result') && bs[i - 1]?.type === b.type
+      return { prefix, size: sizeOf(b, thinking), breakpoint: b.cache_control !== undefined, joined }
+    }),
+  )
+}
+
+// The position the request reads through, given the live entries; -1 for none.
+export function readThrough(pos: readonly Position[], live: ReadonlySet<string>): number {
+  let r = -1
+  pos.forEach((p, b) => {
+    if (!p.breakpoint) return
+    for (let j = b, n = 0; j > r && n <= LOOKBACK; n += pos[j--].joined ? 0 : 1)
+      if (live.has(pos[j].prefix)) {
+        r = j
+        break
+      }
+  })
+  return r
+}
+
+// What a request's messages cost, in cache reads: a written character costs
+// M + 1 reads, and plain input half that (a 1-hour write is 2x input).
+function costOf(pos: readonly Position[], r: number, M: number): number {
+  const last = pos.findLastIndex((p) => p.breakpoint)
+  return pos.reduce((n, p, i) => n + p.size * (i <= r ? 1 : i <= last ? M + 1 : (M + 1) / 2), 0)
+}
+
+export type Decision = {
+  advanced: boolean
+  cold: boolean // keeping reads nothing from the cache
+  savedChars: number // what this and every later request no longer sends, sized by sizeOf
+  rewriteChars: number // what keeping would read from the cache that advancing does not
+  extraChars: number // this request's extra cost, in cache-read characters
+}
+
+// Prices advancing against keeping, on this request: each reads the longest
+// live entry it finds and writes the rest (readThrough, costOf). Advancing
+// pays when its extra cost is at most K S, with S the characters it saves
+// every later request. Advancing reads no further than the first change, and
+// less when no entry ends there or none is in reach of its breakpoints. With
+// nothing cached both write everything, so advancing always pays.
+export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: string, thinking: Thinking = new Map()): Decision {
   const M = writeCost(model)
-  const a = before.map((m) => sizeOf(m, thinking))
-  const b = after.map((m) => sizeOf(m, thinking))
-  const first = before.findIndex((m, i) => JSON.stringify(m) !== JSON.stringify(after[i]))
-  const sum = (xs: number[]) => xs.reduce((x, y) => x + y, 0)
+  const a = positionsOf(before, seed, thinking)
+  const b = positionsOf(after, seed, thinking)
+  const sum = (ps: Position[]) => ps.reduce((n, p) => n + p.size, 0)
   const savedChars = sum(a) - sum(b)
-  const rewriteChars = first < 0 ? 0 : sum(a.slice(first))
-  if (first < 0 || savedChars <= 0) return { advanced: false, cold, savedChars: 0, rewriteChars: 0, extraChars: 0 }
-  const extraChars = cold ? -(M + 1) * savedChars : M * rewriteChars - (M + 1) * savedChars
+  const [ra, rb] = [readThrough(a, live), readThrough(b, live)]
+  const cold = ra < 0
+  if (a.at(-1)?.prefix === b.at(-1)?.prefix || savedChars <= 0) return { advanced: false, cold, savedChars: 0, rewriteChars: 0, extraChars: 0 }
+  const rewriteChars = sum(a.slice(0, ra + 1)) - sum(b.slice(0, rb + 1))
+  const extraChars = costOf(b, rb, M) - costOf(a, ra, M)
   return { advanced: extraChars <= K * savedChars, cold, savedChars, rewriteChars, extraChars }
 }

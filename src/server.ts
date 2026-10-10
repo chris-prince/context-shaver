@@ -9,7 +9,7 @@
 // steps and turns every request is trimmed at. On each request the cost rule
 // (trim.ts, decide) says whether moving it up to the conversation's clock pays:
 // always on a cold cache, and on a warm one when what it saves outweighs what it
-// rewrites.
+// rewrites, priced against the cache entries the conversation's requests left.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -18,7 +18,7 @@ import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { loadPolicy } from './policy.ts'
-import { apply, decide, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
+import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
 const { values: a } = parseArgs({
   allowNegative: true,
@@ -41,11 +41,11 @@ const stateDir = path.join(a.dir, 'state')
 const logRoot = path.join(a.dir, LOG_DIR)
 mkdirSync(stateDir, { recursive: true })
 
-// A conversation's applied clock; the model and time of its last answered
-// request, which say whether its cache is still warm; and the tokens each
-// thinking block it was answered with bills, by the signature's hash (trim.ts,
-// sizeOf).
-type State = { applied: Clock; model: string; lastAt: number; thinking?: Record<string, number> }
+// A conversation's applied clock; the cache entries its answered requests
+// wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
+// tokens each thinking block it was answered with bills, by the signature's
+// hash (trim.ts, sizeOf).
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number> }
 
 // A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
@@ -61,7 +61,7 @@ const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; applied: Clock; model: string; thinking: Record<string, number>; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a /v1/messages request. Only requests with tools are trimmed: those
 // are the main loop and subagents. Claude Code's side requests are sent as
@@ -74,6 +74,10 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const s = load(key)
   const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
   const clock = clockOf(msgs)
+  const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= ttlMs))
+  const live = new Set(Object.keys(entries))
+  const seed = seedOf(body.model, body.tools, body.system)
+  const thinking = new Map(Object.entries(s?.thinking ?? {}))
   const keep = apply(msgs, policy, held)
   let sent = keep
   let applied = held
@@ -81,11 +85,16 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   let d: Decision | undefined
   if (clock.steps > held.steps || clock.turns > held.turns) {
     next = apply(msgs, policy, clock)
-    d = decide(keep.msgs, next.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs, body.model, new Map(Object.entries(s?.thinking ?? {})))
+    d = decide(keep.msgs, next.msgs, live, seed, body.model, thinking)
     if (d.advanced) [sent, applied] = [next, clock]
   }
   body.messages = sent.msgs
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, model: body.model, thinking: s?.thinking ?? {} }
+  // The entries this request writes or reads: one at each breakpoint, and the
+  // one it reads through.
+  const pos = positionsOf(sent.msgs, seed, thinking)
+  const r = readThrough(pos, live)
+  const touched = pos.filter((q, i) => q.breakpoint || i === r).map((q) => q.prefix)
+  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {} }
   if (a['log-step-events']) {
     let session = 'unknown'
     try {
@@ -113,7 +122,8 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
     // Where trimming ends in the messages as sent, which drops shorten.
     const ends = trimmedEnd(msgs, policy, applied)
     const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
-    p.logLine = { event: 'request', time, model: body.model, trimmedEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs) }
+    const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
+    p.logLine = { event: 'request', time, model: body.model, predictedCachedChars, trimmedEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs) }
   }
   return p
 }
@@ -235,7 +245,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   res.end()
   if (!p || up.status !== 200) return
   const { usage: u, transformations, content } = usage.end()
-  save(p.key, { applied: p.applied, model: p.model, lastAt: Date.now(), thinking: { ...p.thinking, ...thinkingOf(u, content) } })
+  const now = Date.now()
+  const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) } })
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
       ...p.logLine,
