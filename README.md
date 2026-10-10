@@ -122,8 +122,9 @@ The API constrains what can go:
 
   The drops are made together and only then checked against this, so two
   pairs that are each due can go together when what remains is allowed. Where
-  it isn't, the pair just before the system message (or just after) is kept
-  and gets a stub, if one is due;
+  it isn't, the pair just before the system message (or just after) is
+  stubbed instead, whatever the policy's stub rules say: a stub moves no
+  message;
 - a message whose only content is thinking keeps it, since an empty message is
   refused. One left empty by dropped calls is removed.
 

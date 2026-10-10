@@ -88,7 +88,7 @@ export type Applied = {
 //   skill's body beside its result. The drops are made together, then the
 //   messages checked against where the API takes a system message (README,
 //   "What it trims"). A pair whose drop leaves one out of place, the pair just
-//   before it or just after, is kept and gets what else is due to it, a stub.
+//   before it or just after, is kept and stubbed instead.
 //   So a drop is only refused for what the drops around it actually leave.
 // - Dropped reasoning is the message's thinking, unless that would leave it
 //   empty: an empty message is refused. One left empty by dropped calls is
@@ -122,7 +122,9 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: 
   for (const it of items.values()) {
     const rules = policy[it.kind]
     let a = treatment(rules, it, c)
-    if (a === 'drop' && undroppable.has(it.id)) a = treatment(rules?.filter((r) => r.action !== 'drop'), it, c)
+    // A stub leaves every message where it was, so it is allowed where the drop
+    // was refused.
+    if (a === 'drop' && undroppable.has(it.id)) a = 'stub'
     if (a) due.set(it.id, a)
   }
   const out: Applied = { msgs: [], origin: [], treated: new Map() }
