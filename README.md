@@ -28,7 +28,9 @@ bin/claude-mini [claude args ...]
 or `MINI_CTX_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy.log`. It starts the proxy with logging on and the repo's
-`policy.json`.
+`policy.json`. It also sets `ENABLE_TOOL_SEARCH=true`: Claude Code turns its
+tool search off when the base URL isn't Anthropic's, which sends every tool's
+definition on every request (about 26k more tokens).
 
 To pick up changes to the proxy's code, restart it:
 

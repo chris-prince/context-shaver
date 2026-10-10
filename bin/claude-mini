@@ -1,9 +1,10 @@
 #!/bin/bash
 # Runs claude through the mini-context proxy, starting the proxy first if
 # nothing is listening on its port (bin/start-proxy). Arguments are passed to
-# claude.
+# claude. Claude Code turns tool search off behind a proxy unless told the proxy
+# forwards it; this one does.
 set -euo pipefail
 
 bin=$(dirname "$(readlink -f "$0")")
 "$bin/start-proxy"
-ANTHROPIC_BASE_URL=http://127.0.0.1:${MINI_CTX_PORT:-8787} exec claude "$@"
+ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-true} ANTHROPIC_BASE_URL=http://127.0.0.1:${MINI_CTX_PORT:-8787} exec claude "$@"
