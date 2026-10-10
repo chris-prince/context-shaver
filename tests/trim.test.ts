@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
+import { hash } from '../src/log.ts'
 import { parsePolicy, treatment, type Policy } from '../src/policy.ts'
-import { apply, decide, isStubbed, stub, stubHeredocs, transitions, trimmedEnd, type Applied } from '../src/trim.ts'
+import { apply, decide, isStubbed, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied } from '../src/trim.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'stub' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
@@ -215,4 +216,18 @@ test('cold always advances; warm only when savings outweigh the rewrite', () => 
   assert.equal(decide(big, tiny, false).advanced, false)
   assert.equal(decide(big, tiny, true).advanced, true)
   assert.equal(decide(msgs, msgs, true).advanced, false)
+})
+
+test('a thinking block is sized by the tokens it bills, not its signature', () => {
+  const sig = 's'.repeat(2000)
+  const think = (sg: string): ApiMsg => ({ role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: sg }, { type: 'text', text: 'a' }] })
+  const tail: ApiMsg[] = [{ role: 'user', content: 'x'.repeat(3000) }]
+  const keep = [{ role: 'user', content: 'p' } as ApiMsg, think(sig), ...tail]
+  const drop = [keep[0], { role: 'assistant', content: [{ type: 'text', text: 'a' }] } as ApiMsg, ...tail]
+  // Unknown, it is put at 0.13 tokens a signature character: 2000 chars of
+  // signature size as 667 of text.
+  assert.equal(sizeOf(keep[1], new Map()) - sizeOf(drop[1], new Map()), 667 - 2000 + JSON.stringify(think(sig)).length - JSON.stringify(drop[1]).length)
+  // A block that billed little is not worth the rewrite; one that billed much is.
+  assert.equal(decide(keep, drop, false, new Map([[hash(sig), 50]])).advanced, false)
+  assert.equal(decide(keep, drop, false, new Map([[hash(sig), 3000]])).advanced, true)
 })

@@ -8,6 +8,7 @@
 // it pays. The latest step and the current turn are never touched.
 
 import { heldTo, isSkillBody, isThinking, itemsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Kind } from './items.ts'
+import { hash } from './log.ts'
 import { treatment, type Action, type Policy } from './policy.ts'
 
 // Where trimming ends in the messages: the index of the first message past
@@ -180,22 +181,45 @@ export const K = 40
 export type Decision = {
   advanced: boolean
   cold: boolean
-  savedChars: number // what this and every later request no longer sends
-  rewriteChars: number // what keeping would read from the cache that advancing sends again
+  savedChars: number // what this and every later request no longer sends, sized by sizeOf
+  rewriteChars: number // what keeping would read from the cache that advancing sends again, sized by sizeOf
   extraChars: number // this request's extra cost, in cache-read characters
+}
+
+// What a thinking block bills, which its length does not show: Claude Code
+// sends it back with its thinking empty and the reasoning encrypted in its
+// signature, and the API bills it as the reasoning, about the output tokens it
+// took to generate. `thinking` holds those, by the signature's hash, for the
+// blocks the proxy saw generated; any other is put at SIGNATURE_TOKENS a
+// signature character. A message's size is its characters with each thinking
+// block counted as its tokens' worth of text, at TEXT_TOKENS a character
+// (both measured; notes.md, "Reasoning drops").
+export const TEXT_TOKENS = 0.39
+export const SIGNATURE_TOKENS = 0.13
+export type Thinking = ReadonlyMap<string, number>
+
+export function sizeOf(m: ApiMsg, thinking: Thinking): number {
+  let n = JSON.stringify(m).length
+  if (typeof m.content !== 'string')
+    for (const b of m.content)
+      if (b.type === 'thinking' && typeof b.signature === 'string') {
+        const tokens = thinking.get(hash(b.signature)) ?? SIGNATURE_TOKENS * b.signature.length
+        n += Math.round(tokens / TEXT_TOKENS) - b.signature.length
+      }
+  return n
 }
 
 // Prices advancing against keeping, on this request. Keeping reads the whole
 // history; advancing reads up to the first changed message and writes the
 // rest, less what it saved. With R the characters from the first change on and
-// S the characters saved, the extra cost is
+// S the characters saved, both sized by sizeOf, the extra cost is
 //   (M + 1)(R - S) - R = M R - (M + 1) S
 // and advancing pays when it is at most K S. On a cold cache both requests
 // write everything, so advancing always pays: its extra is -(M + 1) S.
-export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], cold: boolean): Decision {
-  const a = before.map((m) => JSON.stringify(m).length)
-  const b = after.map((m) => JSON.stringify(m).length)
-  const first = a.findIndex((n, i) => JSON.stringify(before[i]) !== JSON.stringify(after[i]))
+export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], cold: boolean, thinking: Thinking = new Map()): Decision {
+  const a = before.map((m) => sizeOf(m, thinking))
+  const b = after.map((m) => sizeOf(m, thinking))
+  const first = before.findIndex((m, i) => JSON.stringify(m) !== JSON.stringify(after[i]))
   const sum = (xs: number[]) => xs.reduce((x, y) => x + y, 0)
   const savedChars = sum(a) - sum(b)
   const rewriteChars = first < 0 ? 0 : sum(a.slice(first))

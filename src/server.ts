@@ -18,7 +18,7 @@ import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { loadPolicy } from './policy.ts'
-import { apply, decide, transitions, trimmedEnd, type Decision } from './trim.ts'
+import { apply, decide, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
 const { values: a } = parseArgs({
   allowNegative: true,
@@ -41,9 +41,11 @@ const stateDir = path.join(a.dir, 'state')
 const logRoot = path.join(a.dir, LOG_DIR)
 mkdirSync(stateDir, { recursive: true })
 
-// A conversation's applied clock, and the model and time of its last answered
-// request, which say whether its cache is still warm.
-type State = { applied: Clock; model: string; lastAt: number }
+// A conversation's applied clock; the model and time of its last answered
+// request, which say whether its cache is still warm; and the tokens each
+// thinking block it was answered with bills, by the signature's hash (trim.ts,
+// sizeOf).
+type State = { applied: Clock; model: string; lastAt: number; thinking?: Record<string, number> }
 
 // A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
@@ -59,7 +61,7 @@ const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; applied: Clock; model: string; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; applied: Clock; model: string; thinking: Record<string, number>; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a /v1/messages request. Only requests with tools are trimmed: those
 // are the main loop and subagents. Claude Code's side requests are sent as
@@ -79,11 +81,11 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   let d: Decision | undefined
   if (clock.steps > held.steps || clock.turns > held.turns) {
     next = apply(msgs, policy, clock)
-    d = decide(keep.msgs, next.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs)
+    d = decide(keep.msgs, next.msgs, !s || s.model !== body.model || now - s.lastAt > ttlMs, new Map(Object.entries(s?.thinking ?? {})))
     if (d.advanced) [sent, applied] = [next, clock]
   }
   body.messages = sent.msgs
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, model: body.model }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, model: body.model, thinking: s?.thinking ?? {} }
   if (a['log-step-events']) {
     let session = 'unknown'
     try {
@@ -118,12 +120,17 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
 
 // The usage a response reports: message_start's, with message_delta's output
 // tokens, for a stream; the body's for a plain response. Also the
-// input_transformations it reports, which --check-thinking-binding asks for.
+// input_transformations it reports, which --check-thinking-binding asks for,
+// and its content's lengths: each thinking block's signature and the
+// characters of everything else.
 type Usage = { input_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number }; output_tokens?: number }
+
+type Content = { signatures: string[]; visibleChars: number }
 
 function usageReader() {
   let usage: Usage | undefined
   let transformations: unknown
+  const content: Content = { signatures: [], visibleChars: 0 }
   let buf = ''
   const dec = new TextDecoder()
   const line = (l: string) => {
@@ -132,6 +139,14 @@ function usageReader() {
       const e = JSON.parse(l.slice(6))
       if (e.type === 'message_start') [usage, transformations] = [{ ...e.message?.usage }, e.message?.input_transformations]
       if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
+      if (e.type === 'content_block_start' && e.content_block?.type === 'thinking') content.signatures.push('')
+      if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use') content.visibleChars += JSON.stringify(e.content_block.name).length
+      if (e.type === 'content_block_delta') {
+        const d = e.delta ?? {}
+        if (d.type === 'signature_delta' && content.signatures.length) content.signatures[content.signatures.length - 1] += d.signature
+        if (d.type === 'text_delta') content.visibleChars += d.text.length
+        if (d.type === 'input_json_delta') content.visibleChars += d.partial_json.length
+      }
     } catch {}
   }
   return {
@@ -141,16 +156,30 @@ function usageReader() {
       buf = lines.pop() ?? ''
       lines.forEach(line)
     },
-    end(): { usage?: Usage; transformations?: unknown } {
-      if (usage) return { usage, transformations }
+    end(): { usage?: Usage; transformations?: unknown; content: Content } {
+      if (usage) return { usage, transformations, content }
       try {
         const b = JSON.parse(buf)
-        return { usage: b.usage, transformations: b.input_transformations }
+        for (const c of b.content ?? [])
+          if (c.type === 'thinking') content.signatures.push(c.signature ?? '')
+          else content.visibleChars += c.type === 'text' ? c.text.length : c.type === 'tool_use' ? JSON.stringify(c.name).length + JSON.stringify(c.input).length : 0
+        return { usage: b.usage, transformations: b.input_transformations, content }
       } catch {
-        return {}
+        return { content }
       }
     },
   }
+}
+
+// What each thinking block of a response bills when sent back: the output
+// tokens less the visible content's worth, shared among its blocks by
+// signature length.
+function thinkingOf(u: Usage | undefined, c: Content): Record<string, number> {
+  const sigs = c.signatures.filter(Boolean)
+  const total = sigs.reduce((n, sg) => n + sg.length, 0)
+  if (!u?.output_tokens || !total) return {}
+  const tokens = Math.max(0, u.output_tokens - TEXT_TOKENS * c.visibleChars)
+  return Object.fromEntries(sigs.map((sg) => [hash(sg), Math.round((tokens * sg.length) / total)]))
 }
 
 const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive'])
@@ -205,9 +234,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   res.end()
   if (!p || up.status !== 200) return
-  save(p.key, { applied: p.applied, model: p.model, lastAt: Date.now() })
+  const { usage: u, transformations, content } = usage.end()
+  save(p.key, { applied: p.applied, model: p.model, lastAt: Date.now(), thinking: { ...p.thinking, ...thinkingOf(u, content) } })
   if (p.logDir && p.logLine) {
-    const { usage: u, transformations } = usage.end()
     writeLine(p.logDir, {
       ...p.logLine,
       ...(transformations !== undefined && { inputTransformations: transformations }),
