@@ -13,8 +13,9 @@ import type { Policy } from '../src/policy.ts'
 
 const [dir, from = '', to = '9999'] = process.argv.slice(2)
 const TTL = 3600e3
-const reqs = readFileSync(dir + '/step_events.jsonl', 'utf8').trim().split('\n').map((l) => JSON.parse(l))
-  .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.tools && e.time >= from && e.time < to)
+const all = readFileSync(dir + '/step_events.jsonl', 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.tools)
+const reqs = all.filter((e) => e.time >= from && e.time < to)
 const load = (h: string): ApiMsg => JSON.parse(readFileSync(`${dir}/parts/${h}.json`, 'utf8'))
 // A message as sent without breakpoints. Claude Code sends a lone text block
 // carrying one as an array, and as a string once the breakpoint moves on.
@@ -87,11 +88,32 @@ function defsSize(e: { system: Def[]; tools: Def[] }, msgs: ApiMsg[]): number {
   return sum(e.system) + sum(e.tools.filter((t) => !t.deferred || loaded.has(t.name!)))
 }
 
-// Tokens = rate x characters, the rate being the requests' tokens over all
-// they sent.
+// The base, the system blocks, the tools sent in full and the preamble (what
+// Claude Code injects before the first response, the kind src/log.ts calls
+// `system`), takes its tokens from the conversation's first request, as the
+// API reported them, less that request's other parts, shared by bytes.
+const sig = (e: { system: (Def & { hash: string })[]; tools: (Def & { hash: string })[] }) =>
+  JSON.stringify([e.system.map((d) => d.hash), e.tools.filter((t) => !t.deferred).map((t) => t.hash)])
+if (all[0].parts.some((p: { part: string }) => p.part === 'assistant')) throw new Error(`${dir} was logged from partway through, so its base has no exact count`)
+if (all.some((e) => sig(e) !== sig(all[0]))) throw new Error(`${dir} sent other system blocks or tools than its first request, so its base has no exact count`)
+const kindsOf = (p: { hash: string; part: string; bytes: number }): Record<string, number> => {
+  try { return JSON.parse(readFileSync(`${dir}/parts/${p.hash}.kinds.json`, 'utf8')).kinds ?? { [p.part]: p.bytes } } catch { return { [p.part]: p.bytes } }
+}
+const firstKinds = all[0].parts.flatMap((p: { hash: string; part: string; bytes: number }) => Object.entries(kindsOf(p)))
+const pre = firstKinds.filter(([k]: [string, number]) => k === 'system').reduce((x: number, [, n]: [string, number]) => x + n, 0)
+const sum = (ds: Def[]) => ds.reduce((x, d) => x + d.bytes, 0)
+const fixed = sum(all[0].system) + sum(all[0].tools.filter((t: Def) => !t.deferred))
+const firstOther = firstKinds.reduce((x: number, [k, n]: [string, number]) => x + (k === 'system' ? 0 : n), 0)
+const BASE = (all[0].inputTokens * (fixed + pre)) / (fixed + pre + firstOther)
+
+// Tokens = rate x characters past the base, the rate being the requests'
+// tokens less the base over what they sent besides it. A request's messages
+// carry the preamble, so what it sends besides them costs the base less the
+// preamble at that rate, plus the deferred tools it has loaded.
 const sz = (ps: Position[]) => ps.reduce((x, p) => x + p.size, 0)
-const xs = sent.map((s, n) => defsSize(reqs[n], s) + sz(positionsOf(s, 's', thinking)))
-const rate = reqs.reduce((a, e) => a + e.inputTokens, 0) / xs.reduce((a, b) => a + b)
+const xs = sent.map((s, n) => defsSize(reqs[n], s) + sz(positionsOf(s, 's', thinking)) - fixed - pre)
+const rate = reqs.reduce((a, e) => a + e.inputTokens - BASE, 0) / xs.reduce((a, b) => a + b)
+const defsTokens = (e: { system: Def[]; tools: Def[] }, msgs: ApiMsg[]) => BASE - rate * pre + rate * (defsSize(e, msgs) - fixed)
 
 // Opus 5.5: $4 input, read 0.05x, 1-hour write 2x, output 5x.
 const P = 4 / 1e6
@@ -108,7 +130,7 @@ function run(policy: Policy | 'sent', actual?: Policy): Run {
   let found: Clock = { steps: 0, turns: 0 }
   const entries = new Map<string, number>()
   // The tools and system are cached already when the first request read them.
-  let lastAt = reqs[0].cachedTokens >= 0.9 * rate * defsSize(reqs[0], sent[0]) ? Date.parse(reqs[0].time) : -Infinity
+  let lastAt = reqs[0].cachedTokens >= 0.9 * defsTokens(reqs[0], sent[0]) ? Date.parse(reqs[0].time) : -Infinity
   const out: Run = { cost: 0, rd: 0, wr: 0, ctx: 0, advanced: 0, mismatch: 0 }
   reqs.forEach((e, n) => {
     const t = Date.parse(e.time)
@@ -142,7 +164,7 @@ function run(policy: Policy | 'sent', actual?: Policy): Run {
     }
     const pos = positionsOf(body, 's', thinking)
     const r = readThrough(pos, live)
-    const c = price(rate * defsSize(e, body), pos, r, t - lastAt <= TTL)
+    const c = price(defsTokens(e, body), pos, r, t - lastAt <= TTL)
     out.rd += c.rd; out.wr += c.wr; out.ctx = Math.max(out.ctx, c.rd + c.wr + c.plain)
     out.cost += P * (0.05 * c.rd + 2 * c.wr + c.plain + 5 * e.outputTokens)
     for (const [i, p] of pos.entries()) if (p.breakpoint || i === r) entries.set(p.prefix, t)
@@ -156,7 +178,7 @@ const logged = reqs.reduce((x, e) => {
   return x + P * (0.05 * e.cachedTokens + 2 * w + (e.inputTokens - e.cachedTokens - w) + 5 * e.outputTokens)
 }, 0)
 const fmt = (name: string, r: Run) => console.log(`${name.padEnd(14)} $${r.cost.toFixed(2)}  read ${(r.rd / 1e6).toFixed(2)}M  write ${(r.wr / 1e3).toFixed(0)}k  peak ${(r.ctx / 1e3).toFixed(0)}k  trims ${r.advanced}`)
-console.log(`${dir.replace(/\/$/, '').split('/').at(-1)}: ${reqs.length} requests, rebuild breaks ${broken}, rate ${rate.toFixed(3)} tok/char, base ${(rate * defsSize(reqs[0], sent[0])).toFixed(0)}`)
+console.log(`${dir.replace(/\/$/, '').split('/').at(-1)}: ${reqs.length} requests, rebuild breaks ${broken}, rate ${rate.toFixed(3)} tok/char, base ${BASE.toFixed(0)}`)
 console.log(`logged         $${logged.toFixed(2)}`)
 const actualWait = Number(process.env.WAIT)
 const pol = (w: number): Policy => ({ tool: [{ on: 'step', wait: w, action: 'drop' }], skill: [{ on: 'turn', wait: 0, action: 'drop' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] })

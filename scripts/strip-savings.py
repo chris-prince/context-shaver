@@ -5,8 +5,9 @@ Reads proxy-data/logs/<conversation>/step_events.jsonl under each dir
 given (default the current one, the proxy's default --dir when run from the
 repo): its `request` lines (usage) and `compaction` lines (each decision, with
 savedChars and rewriteChars). Characters become tokens at the session's rate:
-its requests' tokens over all they sent, system prompt, tools and messages, in
-bytes. Sessions logged before the system blocks and tools were are left out.
+its requests' tokens less their base (scripts/defs.py), over what they sent
+besides it, in bytes. Sessions logged before the system blocks and tools were,
+or from partway through, are left out.
 
   savings  Each request after an advance no longer sends what it saved: the
            characters saved so far, at the cache-read price when the request
@@ -36,7 +37,7 @@ import json
 import os
 import sys
 
-from defs import def_bytes
+import defs
 
 LOGS = "proxy-data/logs"
 
@@ -66,9 +67,9 @@ def write_price(l: dict) -> float:
 
 
 def session_rate(session_dir: str, reqs: list[dict]) -> float:
-    """Tokens per byte sent, over the session's requests."""
-    sent = sum(sum(def_bytes(session_dir, r).values()) + sum(p["bytes"] for p in r["parts"]) for r in reqs)
-    return sum(r["inputTokens"] for r in reqs) / sent
+    """Tokens per byte sent besides the base, over the session's requests."""
+    base, _ = defs.base(session_dir, reqs)
+    return sum(r["inputTokens"] - base for r in reqs) / sum(defs.rest_bytes(session_dir, r) for r in reqs)
 
 
 def session_row(session_dir: str) -> dict | None:
@@ -84,7 +85,11 @@ def session_row(session_dir: str) -> dict | None:
     reqs = [l for l in lines if l.get("event") == "request" and l.get("inputTokens") and l.get("tools") is not None]
     if not reqs:
         return None
-    rate = session_rate(session_dir, reqs)
+    try:
+        rate = session_rate(session_dir, reqs)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return None
     cost = savings = rewrite = 0.0
     saved_tokens = 0.0  # what the advances so far took out of every request
     pending_rewrite = 0.0  # tokens the next request writes instead of reading

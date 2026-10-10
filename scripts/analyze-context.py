@@ -49,7 +49,7 @@ import os
 import sys
 from collections import defaultdict
 
-from defs import def_bytes
+import defs
 
 # The kinds the frontier holds back, each with the frontier that trims it.
 FRONTIER = {"reasoning": "reasoning", "toolCalls": "tools", "toolResults": "tools"}
@@ -71,11 +71,6 @@ def requests(session_dir: str) -> list[dict]:
         if e.get("event") == "request" and e.get("inputTokens") and e.get("tools") is not None:
             out.append(e)
     return out
-
-
-def base_defs(request: dict) -> tuple:
-    """The system blocks and the tools sent in full, by hash."""
-    return tuple(s["hash"] for s in request["system"]), tuple(t["hash"] for t in request["tools"] if not t.get("deferred"))
 
 
 def newest_session(logs: str) -> str | None:
@@ -127,24 +122,15 @@ def main() -> int:
     total = float(request["inputTokens"])
     parts_dir = os.path.join(session, "parts")
 
-    first = reqs[0]
-    if any(p["part"] == "assistant" for p in first["parts"]):
-        print(f"{session} was logged from partway through, so its base has no exact count", file=sys.stderr)
+    try:
+        base, base_bytes = defs.base(session, reqs[: index + 1])
+    except ValueError as e:
+        print(e, file=sys.stderr)
         return 1
-    if base_defs(first) != base_defs(request):
-        print(f"request {index} sent other system blocks or tools than the first, so its base has no exact count", file=sys.stderr)
-        return 1
-    first_defs = def_bytes(session, first)
-    first_kinds = [(k, n) for p in first["parts"] for k, n in (sidecar(parts_dir, p["hash"]).get("kinds") or {p["part"]: p["bytes"]}).items()]
-    base_bytes = {"systemPrompt": first_defs["systemPrompt"], "tools": first_defs["tools"], "preamble": sum(n for k, n in first_kinds if k == "system")}
-    prompt_bytes = sum(n for k, n in first_kinds if k != "system")
-    base = first["inputTokens"] * sum(base_bytes.values()) / (sum(base_bytes.values()) + prompt_bytes)
     by_type: dict[str, float] = defaultdict(float, {k: n * base / sum(base_bytes.values()) for k, n in base_bytes.items()})
-
-    defs = def_bytes(session, request)
-    rest_bytes = defs["toolsLoaded"] + sum(n for p in request["parts"] for k, n in (sidecar(parts_dir, p["hash"]).get("kinds") or {p["part"]: p["bytes"]}).items() if k != "system")
+    rest_bytes = defs.rest_bytes(session, request)
     rate = (total - base) / rest_bytes
-    by_type["toolsLoaded"] = defs["toolsLoaded"] * rate
+    by_type["toolsLoaded"] = defs.def_bytes(session, request)["toolsLoaded"] * rate
 
     seen: dict[str, str] = {}
     for r in reqs:
