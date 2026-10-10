@@ -216,6 +216,19 @@ those fields.
   The usage the API reports counts what was sent.
 - **Changes to Claude Code's request shape can make it trim less**: it only
   edits the block types it knows.
+- **Claude Code has its own context clearing, off behind server-side flags.**
+  Version 2.1.289 contains two kinds. Either would trim the same content
+  this does if Anthropic turned it on for an account:
+  - API-side: beta `context-management-2025-06-27` with
+    `clear_tool_uses_20250919` and `clear_thinking_20251015`, gated by
+    `tengu_zany_pike`. Once the cache is cold (65 minutes idle), it clears
+    all but the last 5 tool results, if at least 20k tokens can go.
+  - Client-side microcompact, gated by `tengu_time_based_microcompact`: old
+    results become `[Old tool result content cleared]` once more than 20k
+    tokens can be cleared.
+
+  Signs it's on: a `context_management` field in requests, or those
+  placeholders in tool results.
 
 ## Tests
 

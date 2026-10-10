@@ -4,3 +4,4 @@ __pycache__/
 proxy.log
 debug.log
 latest
+old/

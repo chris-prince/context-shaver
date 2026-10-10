@@ -30,7 +30,6 @@ const { values: a } = parseArgs({
     policy: { type: 'string', default: path.resolve(import.meta.dirname, '..', 'policy.json') },
     'log-step-events': { type: 'boolean', default: false },
     'cache-ttl-seconds': { type: 'string', default: '3600' },
-    'check-thinking-binding': { type: 'boolean', default: false },
   },
 })
 
@@ -131,17 +130,15 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
 }
 
 // The usage a response reports: message_start's, with message_delta's output
-// tokens, for a stream; the body's for a plain response. Also the
-// input_transformations it reports, which --check-thinking-binding asks for,
-// and its content's lengths: each thinking block's signature and the
-// characters of everything else.
+// tokens, for a stream; the body's for a plain response. Also its content's
+// lengths: each thinking block's signature and the characters of everything
+// else.
 type Usage = { input_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number }; output_tokens?: number }
 
 type Content = { signatures: string[]; visibleChars: number }
 
 function usageReader() {
   let usage: Usage | undefined
-  let transformations: unknown
   const content: Content = { signatures: [], visibleChars: 0 }
   let buf = ''
   const dec = new TextDecoder()
@@ -149,7 +146,7 @@ function usageReader() {
     if (!l.startsWith('data: ')) return
     try {
       const e = JSON.parse(l.slice(6))
-      if (e.type === 'message_start') [usage, transformations] = [{ ...e.message?.usage }, e.message?.input_transformations]
+      if (e.type === 'message_start') usage = { ...e.message?.usage }
       if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
       if (e.type === 'content_block_start' && e.content_block?.type === 'thinking') content.signatures.push('')
       if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use') content.visibleChars += JSON.stringify(e.content_block.name).length
@@ -168,14 +165,14 @@ function usageReader() {
       buf = lines.pop() ?? ''
       lines.forEach(line)
     },
-    end(): { usage?: Usage; transformations?: unknown; content: Content } {
-      if (usage) return { usage, transformations, content }
+    end(): { usage?: Usage; content: Content } {
+      if (usage) return { usage, content }
       try {
         const b = JSON.parse(buf)
         for (const c of b.content ?? [])
           if (c.type === 'thinking') content.signatures.push(c.signature ?? '')
           else content.visibleChars += c.type === 'text' ? c.text.length : c.type === 'tool_use' ? JSON.stringify(c.name).length + JSON.stringify(c.input).length : 0
-        return { usage: b.usage, transformations: b.input_transformations, content }
+        return { usage: b.usage, content }
       } catch {
         return { content }
       }
@@ -217,15 +214,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && v !== undefined) headers[k] = Array.isArray(v) ? v.join(', ') : v
   const abort = new AbortController()
   res.on('close', () => res.writableFinished || abort.abort())
-  const send = (body: Buffer | undefined, h = headers) =>
-    fetch(a.upstream + url, { method: req.method, headers: h, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
-  // The check: with this beta, a response lists in input_transformations each
-  // thinking block whose signed prefix no longer matches what was sent
-  // (thinking_mismatch_allowed, on an account that isn't enforced). Asked of
-  // trimmed requests only, and dropped from the retry below.
-  const beta = 'thinking-binding-controls-2026-08-01'
-  const checked = { ...headers, 'anthropic-beta': [headers['anthropic-beta'], beta].filter(Boolean).join(',') }
-  let up = await send(p?.body ?? raw, p && a['check-thinking-binding'] ? checked : headers)
+  const send = (body: Buffer | undefined) =>
+    fetch(a.upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
+  let up = await send(p?.body ?? raw)
   // A trimmed request the API refuses is sent again as it came, so a trim
   // never costs the user a turn.
   if (p && up.status === 400) {
@@ -246,14 +237,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   res.end()
   if (!p || up.status !== 200) return
-  const { usage: u, transformations, content } = usage.end()
+  const { usage: u, content } = usage.end()
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) } })
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
       ...p.logLine,
-      ...(transformations !== undefined && { inputTransformations: transformations }),
       ...(u && {
         inputTokens: u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
         cachedTokens: u.cache_read_input_tokens ?? 0,
