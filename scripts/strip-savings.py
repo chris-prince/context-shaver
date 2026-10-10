@@ -18,9 +18,9 @@ the session's fitted rate, as in analyze-context.py.
   net      savings - rewrite; the percent is of what the session would have
            cost without trimming.
 
-Prices are per million input tokens: Haiku $1, Sonnet $3, Opus $5 (default $5).
-A cache read is 0.1x, a 1-hour cache write 2x, a 5-minute one 1.25x, output
-5x. A request's write price is its writes' mix of the two, by writtenTokens60m
+Prices are per million input tokens: Opus 5.5 $4, Haiku 5.5 $0.10, Haiku $1,
+Sonnet $3, Opus $5 (default $5). A cache read is 0.1x (0.05x on Opus 5.5), a
+1-hour cache write 2x, a 5-minute one 1.25x, output 5x. A request's write price is its writes' mix of the two, by writtenTokens60m
 and writtenTokens5m. Older logs have only a total, writtenTokens, priced as all
 1-hour, or that total with written1hTokens.
 
@@ -38,12 +38,13 @@ import sys
 LOGS = "logs-mini-ctx-claude"
 
 
-def input_price(model: str | None) -> float:
+def input_price(model: str | None) -> tuple[float, float]:
+    """A model's price per input token, and its cache-read multiplier."""
     m = (model or "").lower()
-    for name, usd in (("haiku", 1.0), ("sonnet", 3.0), ("opus", 5.0)):
+    for name, usd, read in (("opus-5-5", 4.0, 0.05), ("haiku-5-5", 0.10, 0.1), ("haiku", 1.0, 0.1), ("sonnet", 3.0, 0.1), ("opus", 5.0, 0.1)):
         if name in m:
-            return usd / 1e6
-    return 5.0 / 1e6
+            return usd / 1e6, read
+    return 5.0 / 1e6, 0.1
 
 
 def written(l: dict) -> tuple[int, int]:
@@ -97,14 +98,14 @@ def session_row(session_dir: str) -> dict | None:
             if l.get("cacheState") == "warm":
                 pending_rewrite += (l["rewriteChars"] - l["savedChars"]) * rate
         elif l in reqs:
-            p = input_price(l.get("model"))
+            p, read = input_price(l.get("model"))
             cached, (hour, five) = l.get("cachedTokens", 0), written(l)
             fresh = l["inputTokens"] - cached - hour - five
             w = write_price(l)
-            cost += p * (fresh + 0.1 * cached + 2 * hour + 1.25 * five + 5 * l.get("outputTokens", 0))
+            cost += p * (fresh + read * cached + 2 * hour + 1.25 * five + 5 * l.get("outputTokens", 0))
             warm = cached > l["inputTokens"] / 2
-            savings += saved_tokens * p * (0.1 if warm else w)
-            rewrite += pending_rewrite * p * (w - 0.1)
+            savings += saved_tokens * p * (read if warm else w)
+            rewrite += pending_rewrite * p * (w - read)
             pending_rewrite = 0.0
     return {
         "session": os.path.basename(session_dir),
