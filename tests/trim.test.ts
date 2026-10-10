@@ -112,12 +112,33 @@ test('dropping removes calls with their results, and messages left empty', () =>
   assert.deepEqual(all.msgs.slice(8), msgs.slice(13))
 })
 
-test('a pair whose results a system message follows is stubbed, not dropped', () => {
+test('a pair whose drop would leave a system message after an assistant one is stubbed, not dropped', () => {
   const sys: ApiMsg[] = [...msgs.slice(0, 3), { role: 'system', content: 'reminder' }, ...msgs.slice(3)]
   const c: Clock = { steps: 1, turns: 0 }
+  // The call's message keeps its thinking, which the system message would follow.
   assert.deepEqual(apply(sys, { tool: dropAll.tool }, c).msgs, sys)
   const s = apply(sys, { tool: [...stubAll.tool!, ...dropAll.tool!] }, c)
   assert.deepEqual(counts(s), { 'tool:stub': 1 })
+  // With its thinking dropped too, the call's message goes, and the system
+  // message follows the prompt.
+  const both = apply(sys, dropAll, { steps: 1, turns: 1 })
+  assert.deepEqual(counts(both), { 'reasoning:drop': 2, 'tool:drop': 1 })
+  assert.deepEqual(both.origin.slice(0, 3), [0, 3, 4])
+})
+
+test('of two pairs before a system message, one is kept so that it follows a user message', () => {
+  // A response with text and a call, then a call alone, then a system message.
+  // Dropping both leaves the system message after the text, so the second
+  // pair, the one beside it, is kept; the first still goes, its text staying.
+  const call = (n: number, text?: string): ApiMsg[] => [
+    { role: 'assistant', content: [...(text ? [{ type: 'text', text }] : []), { type: 'tool_use', id: `toolu_${n}`, name: 'Bash', input: { command: 'ls' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${n}`, content: long }] },
+  ]
+  const convo: ApiMsg[] = [{ role: 'user', content: 'prompt' }, ...call(1, 'looking'), ...call(2), { role: 'system', content: 'reminder' }, ...call(3), { role: 'assistant', content: 'done' }]
+  const s = apply(convo, { tool: dropAll.tool }, { steps: 2, turns: 0 })
+  assert.deepEqual(counts(s), { 'tool:drop': 1 })
+  assert.deepEqual(s.origin, [0, 1, 3, 4, 5, 6, 7, 8])
+  assert.deepEqual(s.msgs[1].content, [{ type: 'text', text: 'looking' }])
 })
 
 test('a tool search is its own kind, dropped by its own rules', () => {

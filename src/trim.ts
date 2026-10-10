@@ -7,7 +7,7 @@
 // trimmed prefix and the prompt cache keeps reading it; decide says when moving
 // it pays. The latest step and the current turn are never touched.
 
-import { blocks, heldTo, isSkillBody, isThinking, itemsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Kind } from './items.ts'
+import { blocks, heldTo, isSkillBody, isThinking, itemsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
 import { treatment, type Action, type Policy } from './policy.ts'
 
@@ -85,20 +85,40 @@ export type Applied = {
 //
 // - A stubbed tool call has its result and long inputs stubbed.
 // - A dropped tool call goes with its results; a dropped skill also takes the
-//   skill's body beside its result. A pair whose results a system message
-//   follows is kept, since a system message must follow a user one: it gets
-//   what else is due to it, a stub.
+//   skill's body beside its result. The drops are made together, then the
+//   messages checked against where the API takes a system message (README,
+//   "The API constrains what can go"). A pair whose drop leaves one out of
+//   place, the pair just before it or just after, is kept and gets what else
+//   is due to it, a stub. So a drop is only refused for what the drops around
+//   it actually leave.
 // - Dropped reasoning is the message's thinking, unless that would leave it
 //   empty: an empty message is refused. One left empty by dropped calls is
 //   removed; the API joins the neighbours that leaves in the same role.
 export function apply(msgs: readonly ApiMsg[], policy: Policy, clock: Clock): Applied {
   const c = heldTo(clock, msgs)
-  const undroppable = new Set<unknown>()
-  msgs.forEach((m, i) => {
-    if (m.role === 'user' && typeof m.content !== 'string' && msgs[i + 1]?.role === 'system')
-      for (const b of m.content) if (b.type === 'tool_result') undroppable.add(b.tool_use_id)
-  })
   const items = new Map(itemsOf(msgs).map((it) => [it.id, it]))
+  const undroppable = new Set<unknown>()
+  for (;;) {
+    const out = applyKeeping(msgs, policy, c, items, undroppable)
+    const n = undroppable.size
+    out.msgs.forEach((m, j) => {
+      if (m.role !== 'system') return
+      const i = out.origin[j]
+      if (!['user', 'system'].includes(out.msgs[j - 1]?.role ?? 'user')) pairsOf(msgs[i - 1], undroppable)
+      if (!['assistant', 'system', undefined].includes(out.msgs[j + 1]?.role)) pairsOf(msgs[i + 1], undroppable)
+    })
+    if (undroppable.size === n) return out
+  }
+}
+
+// Adds the tool calls a message makes or answers.
+function pairsOf(m: ApiMsg | undefined, to: Set<unknown>) {
+  if (m && typeof m.content !== 'string')
+    for (const b of m.content) if (b.type === 'tool_use') to.add(b.id)
+    else if (b.type === 'tool_result') to.add(b.tool_use_id)
+}
+
+function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: Map<string, Item>, undroppable: ReadonlySet<unknown>): Applied {
   const due = new Map<unknown, Action>()
   for (const it of items.values()) {
     const rules = policy[it.kind]
