@@ -2,17 +2,16 @@
 """Break down a request's context by age, then by part type.
 
 Reads the proxy's logs under logs-mini-ctx-claude/<conversation>/: the `request`
-lines of step_events.jsonl, each listing the request's messages by hash, and
-beside each message its parts/<hash>.kinds.json, the message's bytes split by
-kind (src/log.ts).
+lines of step_events.jsonl, each listing the request's system blocks, tool
+definitions and messages with their bytes, and beside each message its
+parts/<hash>.kinds.json, the message's bytes split by kind (src/log.ts).
 
-The base is the session's first request's tokens, as the API reported them:
-the system prompt and tools, which the log does not hold, and the messages
-Claude Code injects before the first response (CLAUDE.md and the environment
-block among them) with the first prompt. What the request has beyond that is
-shared among its other messages by their bytes by kind. That includes any
-tools loaded after the first request, deferred ones fetched by tool search.
-What Claude Code injects later shows as `harness`.
+The request's tokens, as the API reported them, are shared among all it sent
+by bytes. The base is the system prompt, the tools sent in full, and the
+preamble: what Claude Code injects before the first response (CLAUDE.md and
+the environment block among them), the kind src/log.ts calls `system`. Deferred tools a tool search has loaded since are `toolsLoaded`. What
+Claude Code injects later shows as `harness`. Requests logged before the system
+blocks and tools were sit outside the analysis.
 
 By age: base, then the message content grouped by how many calendar days (local
 time) before the request each message first appeared -- oldest first, then
@@ -46,9 +45,11 @@ import os
 import sys
 from collections import defaultdict
 
+from defs import def_bytes
+
 # The kinds the frontier holds back, each with the frontier that trims it.
 FRONTIER = {"reasoning": "reasoning", "toolCalls": "tools", "toolResults": "tools"}
-TYPE_ORDER = ["base", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "toolResultsSkill", "reasoning", "other"]
+TYPE_ORDER = ["systemPrompt", "tools", "preamble", "toolsLoaded", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "toolResultsSkill", "reasoning", "other"]
 
 
 def requests(session_dir: str) -> list[dict]:
@@ -63,7 +64,7 @@ def requests(session_dir: str) -> list[dict]:
             e = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if e.get("event") == "request" and e.get("inputTokens") and e.get("parts") is not None:
+        if e.get("event") == "request" and e.get("inputTokens") and e.get("tools") is not None:
             out.append(e)
     return out
 
@@ -114,13 +115,11 @@ def main() -> int:
         return 1
     request = reqs[index]
     model = request.get("model")
-    first = next(r for r in reqs if r.get("model") == model)
-    base = float(first["inputTokens"])
-    in_base = {p["hash"] for p in first["parts"]}
     total = float(request["inputTokens"])
-    rest = [p for p in request["parts"] if p["hash"] not in in_base]
-    rest_bytes = sum(p["bytes"] for p in rest)
-    rate = (total - base) / rest_bytes if rest_bytes else 0.0
+    defs = def_bytes(session, request)
+    sent_bytes = sum(defs.values()) + sum(p["bytes"] for p in request["parts"])
+    rate = total / sent_bytes
+    by_type: dict[str, float] = defaultdict(float, {k: n * rate for k, n in defs.items()})
 
     parts_dir = os.path.join(session, "parts")
     seen: dict[str, str] = {}
@@ -136,18 +135,18 @@ def main() -> int:
 
     ref = local_date(request["time"])
     by_day: dict[int, float] = defaultdict(float)
-    by_type: dict[str, float] = defaultdict(float)
     frontier = 0.0
     ends = request.get("trimmedEnd") or request.get("frontierEnd")
     for i, p in enumerate(request["parts"]):
         h = p["hash"]
-        if h in in_base:
-            continue
         kinds = side[h].get("kinds") or {p["part"]: p["bytes"]}
         key = side[h].get("lineage")
         day = local_date(born_by_lineage.get(key, seen[h]) if key else seen[h])
         for kind, n in kinds.items():
             tokens = n * rate
+            if kind == "system":
+                by_type["preamble"] += tokens
+                continue
             if kind in FRONTIER and not (ends and i < ends[FRONTIER[kind]]):
                 frontier += tokens
                 continue
@@ -155,14 +154,17 @@ def main() -> int:
             by_day[(ref - day).days] += tokens
 
     persist = total - frontier
+    base = by_type["systemPrompt"] + by_type["tools"] + by_type["preamble"]
 
     print(f"Date: {ref}")
     print(f"Request #{index} of {len(reqs)} in session {os.path.basename(session)}")
     print(f"Model: {model}")
-    print(f"Base: request #{reqs.index(first)}, {base:,.0f} tokens; the rest at {rate:.3f} tokens per byte ({rest_bytes:,} message bytes)")
+    print(f"{total:,.0f} tokens over {sent_bytes:,} bytes sent: {rate:.3f} tokens per byte")
 
     print("\nTokens by age (in calendar days, local time)")
     print(row("base", base, total))
+    if by_type["toolsLoaded"]:
+        print(row("tools loaded", by_type["toolsLoaded"], total))
     for d in sorted((d for d in by_day if d > 0), reverse=True):
         print(row(f"{d} day{'s' if d != 1 else ''} ago", by_day[d], total))
     if by_day.get(0):
@@ -173,8 +175,8 @@ def main() -> int:
 
     print("\nTokens by part type (frontier left out)")
     for key in TYPE_ORDER:
-        value = base if key == "base" else by_type.get(key, 0.0)
-        if key in ("reasoning", "other") and not value:
+        value = by_type.get(key, 0.0)
+        if key in ("toolsLoaded", "reasoning", "other") and not value:
             continue
         print(row(key, value, persist))
     print(row("TOTAL", persist, persist, show_percent=False))

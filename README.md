@@ -186,7 +186,11 @@ Scripts:
   it, and prices the result with the cache model. WAIT, the drop wait the run
   used, also checks that the rebuild reproduces what the proxy sent.
 
-Tokens are estimated from a per-conversation fit: inputTokens = base + rate·bytes.
+Each request line logs the size of every part sent: its messages (`parts`),
+system blocks (`system`) and tool definitions (`tools`, deferred ones marked).
+The scripts turn bytes into tokens at the conversation's rate, its requests'
+tokens over all the bytes they sent, and read only conversations logged with
+those fields.
 
 ## Limits
 

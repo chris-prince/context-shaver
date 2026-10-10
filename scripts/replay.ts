@@ -14,7 +14,7 @@ import type { Policy } from '../src/policy.ts'
 const [dir, from = '', to = '9999'] = process.argv.slice(2)
 const TTL = 3600e3
 const reqs = readFileSync(dir + '/step_events.jsonl', 'utf8').trim().split('\n').map((l) => JSON.parse(l))
-  .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.time >= from && e.time < to)
+  .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.tools && e.time >= from && e.time < to)
 const load = (h: string): ApiMsg => JSON.parse(readFileSync(`${dir}/parts/${h}.json`, 'utf8'))
 // A message as sent without breakpoints. Claude Code sends a lone text block
 // carrying one as an array, and as a string once the breakpoint moves on.
@@ -74,17 +74,28 @@ reqs.forEach((e, n) => {
   for (const s of sigs) thinking.set(hash(s), Math.round((tokens * s.length) / total))
 })
 
-// Tokens = base + rate x characters, fitted to what was actually sent.
+// What a request sends besides its messages, in characters: the system
+// blocks, the tools sent in full, and the deferred tools its messages load by
+// tool_reference, which the API expands to their definitions.
+type Def = { name?: string; bytes: number; deferred?: boolean }
+function defsSize(e: { system: Def[]; tools: Def[] }, msgs: ApiMsg[]): number {
+  const loaded = new Set<string>()
+  for (const m of msgs)
+    if (typeof m.content !== 'string')
+      for (const b of m.content) if (b.type === 'tool_result' && Array.isArray(b.content)) for (const c of b.content) if (c?.type === 'tool_reference') loaded.add(c.tool_name)
+  const sum = (ds: Def[]) => ds.reduce((x, d) => x + d.bytes, 0)
+  return sum(e.system) + sum(e.tools.filter((t) => !t.deferred || loaded.has(t.name!)))
+}
+
+// Tokens = rate x characters, the rate being the requests' tokens over all
+// they sent.
 const sz = (ps: Position[]) => ps.reduce((x, p) => x + p.size, 0)
-const xs = sent.map((s) => sz(positionsOf(s, 's', thinking)))
-const ys = reqs.map((e) => e.inputTokens)
-const mx = xs.reduce((a, b) => a + b) / xs.length, my = ys.reduce((a, b) => a + b) / ys.length
-const rate = xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0) / xs.reduce((a, x) => a + (x - mx) ** 2, 0)
-const base = my - rate * mx
+const xs = sent.map((s, n) => defsSize(reqs[n], s) + sz(positionsOf(s, 's', thinking)))
+const rate = reqs.reduce((a, e) => a + e.inputTokens, 0) / xs.reduce((a, b) => a + b)
 
 // Opus 5.5: $4 input, read 0.05x, 1-hour write 2x, output 5x.
 const P = 4 / 1e6
-function price(pos: Position[], r: number, warm: boolean) {
+function price(base: number, pos: Position[], r: number, warm: boolean) {
   const last = pos.findLastIndex((p) => p.breakpoint)
   let rd = warm ? base : 0, wr = warm ? 0 : base, plain = 0
   pos.forEach((p, i) => { const t = p.size * rate; if (i <= r) rd += t; else if (i <= last) wr += t; else plain += t })
@@ -97,7 +108,7 @@ function run(policy: Policy | 'sent', actual?: Policy): Run {
   let found: Clock = { steps: 0, turns: 0 }
   const entries = new Map<string, number>()
   // The tools and system are cached already when the first request read them.
-  let lastAt = reqs[0].cachedTokens >= 0.9 * base ? Date.parse(reqs[0].time) : -Infinity
+  let lastAt = reqs[0].cachedTokens >= 0.9 * rate * defsSize(reqs[0], sent[0]) ? Date.parse(reqs[0].time) : -Infinity
   const out: Run = { cost: 0, rd: 0, wr: 0, ctx: 0, advanced: 0, mismatch: 0 }
   reqs.forEach((e, n) => {
     const t = Date.parse(e.time)
@@ -131,7 +142,7 @@ function run(policy: Policy | 'sent', actual?: Policy): Run {
     }
     const pos = positionsOf(body, 's', thinking)
     const r = readThrough(pos, live)
-    const c = price(pos, r, t - lastAt <= TTL)
+    const c = price(rate * defsSize(e, body), pos, r, t - lastAt <= TTL)
     out.rd += c.rd; out.wr += c.wr; out.ctx = Math.max(out.ctx, c.rd + c.wr + c.plain)
     out.cost += P * (0.05 * c.rd + 2 * c.wr + c.plain + 5 * e.outputTokens)
     for (const [i, p] of pos.entries()) if (p.breakpoint || i === r) entries.set(p.prefix, t)
@@ -145,7 +156,7 @@ const logged = reqs.reduce((x, e) => {
   return x + P * (0.05 * e.cachedTokens + 2 * w + (e.inputTokens - e.cachedTokens - w) + 5 * e.outputTokens)
 }, 0)
 const fmt = (name: string, r: Run) => console.log(`${name.padEnd(14)} $${r.cost.toFixed(2)}  read ${(r.rd / 1e6).toFixed(2)}M  write ${(r.wr / 1e3).toFixed(0)}k  peak ${(r.ctx / 1e3).toFixed(0)}k  trims ${r.advanced}`)
-console.log(`${dir.replace(/\/$/, '').split('/').at(-1)}: ${reqs.length} requests, rebuild breaks ${broken}, rate ${rate.toFixed(3)} tok/char, base ${base.toFixed(0)}`)
+console.log(`${dir.replace(/\/$/, '').split('/').at(-1)}: ${reqs.length} requests, rebuild breaks ${broken}, rate ${rate.toFixed(3)} tok/char, base ${(rate * defsSize(reqs[0], sent[0])).toFixed(0)}`)
 console.log(`logged         $${logged.toFixed(2)}`)
 const actualWait = Number(process.env.WAIT)
 const pol = (w: number): Policy => ({ tool: [{ on: 'step', wait: w, action: 'drop' }], skill: [{ on: 'turn', wait: 0, action: 'drop' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] })

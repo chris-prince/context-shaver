@@ -4,8 +4,9 @@
 Reads logs-mini-ctx-claude/<conversation>/step_events.jsonl under each dir
 given (default the current one, the proxy's default --dir when run from the
 repo): its `request` lines (usage) and `compaction` lines (each decision, with
-savedChars and rewriteChars). Characters become tokens at
-the session's fitted rate.
+savedChars and rewriteChars). Characters become tokens at the session's rate:
+its requests' tokens over all they sent, system prompt, tools and messages, in
+bytes. Sessions logged before the system blocks and tools were are left out.
 
   savings  Each request after an advance no longer sends what it saved: the
            characters saved so far, at the cache-read price when the request
@@ -35,6 +36,8 @@ import json
 import os
 import sys
 
+from defs import def_bytes
+
 LOGS = "logs-mini-ctx-claude"
 
 
@@ -62,15 +65,10 @@ def write_price(l: dict) -> float:
     return (2 * hour + 1.25 * five) / (hour + five) if hour + five else 2.0
 
 
-def fit_rate(reqs: list[dict]) -> float | None:
-    """Tokens per message byte, fitting inputTokens = base + rate x bytes."""
-    xs = [sum(p["bytes"] for p in r["parts"]) for r in reqs]
-    ys = [r["inputTokens"] for r in reqs]
-    if len(xs) < 2:
-        return None
-    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
-    sxx = sum((x - mx) ** 2 for x in xs)
-    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx if sxx else None
+def session_rate(session_dir: str, reqs: list[dict]) -> float:
+    """Tokens per byte sent, over the session's requests."""
+    sent = sum(sum(def_bytes(session_dir, r).values()) + sum(p["bytes"] for p in r["parts"]) for r in reqs)
+    return sum(r["inputTokens"] for r in reqs) / sent
 
 
 def session_row(session_dir: str) -> dict | None:
@@ -83,10 +81,10 @@ def session_row(session_dir: str) -> dict | None:
     # A turn's last request line is written after the turn's decision; each is
     # stamped when it happened (a request when sent).
     lines.sort(key=lambda l: l.get("time", ""))
-    reqs = [l for l in lines if l.get("event") == "request" and l.get("inputTokens") and l.get("parts") is not None]
-    rate = fit_rate(reqs)
-    if not reqs or not rate:
+    reqs = [l for l in lines if l.get("event") == "request" and l.get("inputTokens") and l.get("tools") is not None]
+    if not reqs:
         return None
+    rate = session_rate(session_dir, reqs)
     cost = savings = rewrite = 0.0
     saved_tokens = 0.0  # what the advances so far took out of every request
     pending_rewrite = 0.0  # tokens the next request writes instead of reading
