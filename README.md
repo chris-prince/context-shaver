@@ -169,6 +169,10 @@ Scripts:
   were in earlier results stubbed or removed from the request they answered,
   and in none still whole. With each, the step wait that would have avoided it,
   and a histogram of those: what trimming too much costs.
+- `scripts/prompt-cost.py "<prompt start>" <session id> ...` compares one
+  user prompt across sessions, such as runs of the same prompt under different
+  policies: from the prompt to the next one, its steps, duration, cost, tool
+  calls, trims applied and peak context.
 
 Tokens are estimated from a per-conversation fit: inputTokens = base + rate·bytes.
 
