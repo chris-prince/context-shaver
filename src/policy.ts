@@ -8,7 +8,7 @@ import type { Clock, Item, Kind } from './items.ts'
 export type Action = 'stub' | 'drop'
 // Due once the item's step (or turn) is among the completed ones, leaving out
 // the latest `wait`.
-export type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
+type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 // `tools_force_deferred` names tools to defer that Claude Code sends in full
 // (defer.ts).
 export type Policy = Partial<Record<Kind, Rule[]>> & { tools_force_deferred?: string[] }

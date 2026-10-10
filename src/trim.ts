@@ -14,7 +14,7 @@ import { treatment, type Action, type Policy } from './policy.ts'
 // Where trimming ends in the messages: the index of the first message past
 // the steps (or turns) the furthest-reaching rule covers, for tool calls and
 // for reasoning.
-export type Ends = { tools: number; reasoning: number }
+type Ends = { tools: number; reasoning: number }
 
 // What stands in for trimmed content, a tool result or a long input: how many
 // UTF-8 bytes of it were cut.
@@ -208,7 +208,7 @@ export const K = 40
 // counted as its tokens' worth of text, at TEXT_TOKENS a character (both
 // measured; notes.md, "Reasoning drops").
 export const TEXT_TOKENS = 0.39
-export const SIGNATURE_TOKENS = 0.13
+const SIGNATURE_TOKENS = 0.13
 export type Thinking = ReadonlyMap<string, number>
 
 export function sizeOf(b: Block, thinking: Thinking): number {
