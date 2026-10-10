@@ -29,7 +29,8 @@ lineage (role and tool id), and the earliest first appearance among the hashes
 carrying it wins.
 
 By part type: the same kinds, the frontier left out, since it is what the next
-trims remove. What persists whole behind the frontier shows under its own kind:
+trims remove, under base and non-base; every percentage is of the section's
+total. What persists whole behind the frontier shows under its own kind:
 toolCalls, toolResults and reasoning.
 
 Usage:
@@ -52,7 +53,8 @@ import defs
 
 # The kinds the frontier holds back, each with the frontier that trims it.
 FRONTIER = {"reasoning": "reasoning", "toolCalls": "tools", "toolResults": "tools"}
-TYPE_ORDER = ["systemPrompt", "tools", "preamble", "toolsLoaded", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "toolResultsSkill", "reasoning", "other"]
+BASE_TYPES = ["systemPrompt", "tools", "preamble"]
+REST_TYPES = ["toolsLoaded", "user", "harness", "assistant", "toolCalls", "toolCallsStubbed", "toolResults", "toolResultsStubbed", "toolResultsSkill", "reasoning", "other"]
 
 
 def requests(session_dir: str) -> list[dict]:
@@ -95,8 +97,8 @@ def percent(value: float, total: float) -> int:
     return int(value / total * 100 + 0.5) if total else 0
 
 
-def row(label: str, value: float, total: float, show_percent: bool = True) -> str:
-    line = f"  {label:<20}{value:>12,.0f}"
+def row(label: str, value: float, total: float, show_percent: bool = True, indent: int = 0) -> str:
+    line = f"  {' ' * indent}{label:<{20 - indent}}{value:>12,.0f}"
     return line + f"  ({percent(value, total):>2}%)" if show_percent else line
 
 
@@ -181,11 +183,15 @@ def main() -> int:
     print(row("TOTAL", total, total, show_percent=False))
 
     print("\nTokens by part type (frontier left out)")
-    for key in TYPE_ORDER:
+    print(row("base", base, persist))
+    for key in BASE_TYPES:
+        print(row(key, by_type[key], persist, indent=2))
+    print(row("non-base", persist - base, persist))
+    for key in REST_TYPES:
         value = by_type.get(key, 0.0)
         if key in ("toolsLoaded", "reasoning", "other") and not value:
             continue
-        print(row(key, value, persist))
+        print(row(key, value, persist, indent=2))
     print(row("TOTAL", persist, persist, show_percent=False))
     return 0
 
