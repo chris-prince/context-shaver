@@ -7,7 +7,7 @@
 // trimmed prefix and the prompt cache keeps reading it; decide says when moving
 // it pays. The latest step and the current turn are never touched.
 
-import { blocks, heldTo, isSkillBody, isThinking, itemsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Item, type Kind } from './items.ts'
+import { blocks, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
 import { treatment, type Action, type Policy } from './policy.ts'
 
@@ -132,7 +132,11 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: 
   const idOf = (b: Block) => (b.type === 'tool_use' ? b.id : b.type === 'tool_result' ? b.tool_use_id : undefined)
   msgs.forEach((m, i) => {
     const push = (m: ApiMsg) => (out.msgs.push(m), out.origin.push(i))
-    if (typeof m.content === 'string' || m.role === 'system') return push(m)
+    if (m.role === 'system') {
+      const r = readsOf(m) ? withReads(m, i, due, mark) : m
+      return r && push(r)
+    }
+    if (typeof m.content === 'string') return push(m)
     let content = m.content
     if (m.role === 'assistant' && due.get(String(i)) === 'drop') {
       const kept = content.filter((b) => !isThinking(b))
@@ -162,6 +166,31 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: 
     push(content === m.content ? m : { ...m, content })
   })
   return out
+}
+
+// A system message with each Read in its text given what is due to it: a
+// stubbed one has its lines stubbed, a dropped one goes with the blank lines
+// after it. A text left blank goes, and the message when nothing is left; a
+// system message goes wherever one was allowed, so that needs no check.
+function withReads(m: ApiMsg, i: number, due: ReadonlyMap<unknown, Action>, mark: (id: unknown, a: Action) => void): ApiMsg | undefined {
+  let n = 0
+  const bs = blocks(m)
+  const content = bs.flatMap((b) => {
+    if (b.type !== 'text') return [b]
+    const text = String(b.text).replace(READ, (read, head: string, lines: string, gap: string) => {
+      const id = `read:${i}:${n++}`
+      const a = due.get(id)
+      if (a === 'drop') return mark(id, a), ''
+      const k = bytes(lines)
+      if (a !== 'stub' || k <= stub(k).length) return read
+      mark(id, a)
+      return `${head}${stub(k)}\n${gap}`
+    })
+    return text === b.text ? [b] : text.trim() ? [{ ...b, text }] : []
+  })
+  if (!content.length) return undefined
+  if (content.length === bs.length && content.every((b, j) => b === bs[j])) return m
+  return typeof m.content === 'string' ? { ...m, content: String(content[0].text) } : { ...m, content }
 }
 
 // The items whose treatment differs between two applications, counted by

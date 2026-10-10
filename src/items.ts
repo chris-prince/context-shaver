@@ -52,7 +52,8 @@ export function heldTo(c: Clock, msgs: readonly ApiMsg[]): Clock {
 }
 
 // What a policy decides about:
-// - tool: a tool call with its results, by the call's id;
+// - tool: a tool call with its results, by the call's id, or a Read sent as
+//   system text (READ);
 // - skill: a Skill call with its result and the skill's body, which Claude Code
 //   sends as a text block beside the result;
 // - tool_search: a ToolSearch call with its result, which loads the tools it found
@@ -66,13 +67,22 @@ export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 
 
 const KINDS: Record<string, Kind> = { Skill: 'skill', ToolSearch: 'tool_search' }
 
+// A Read that Claude Code sends as a system message's text, as when it
+// re-attaches the files read before a compaction: the call's input, then the
+// result, the file's numbered lines, then the blank lines before what follows.
+// Each is a tool call, `read:<message>:<n>`, the message's nth.
+export const READ = /^(Called the Read tool with the following input: [^\n]*\nResult of calling the Read tool:\n)((?:\d+\t[^\n]*\n?)*)(\n*)/gm
+export const readsOf = (m: ApiMsg): number => blocks(m).reduce((n, b) => n + (b.type === 'text' ? String(b.text).match(READ)?.length ?? 0 : 0), 0)
+
 export function itemsOf(msgs: readonly ApiMsg[]): Item[] {
   const { stepOf } = stepsOf(msgs)
   const { turnOf } = turnsOf(msgs)
   const out: Item[] = []
   msgs.forEach((m, i) => {
-    if (m.role !== 'assistant' || typeof m.content === 'string') return
     const at = { step: stepOf[i], turn: turnOf[i] }
+    // Before the first response, a system message is the base.
+    if (m.role === 'system' && at.step > 0) for (let n = 0; n < readsOf(m); n++) out.push({ kind: 'tool', id: `read:${i}:${n}`, ...at })
+    if (m.role !== 'assistant' || typeof m.content === 'string') return
     if (m.content.some(isThinking)) out.push({ kind: 'reasoning', id: String(i), ...at })
     for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: KINDS[String(b.name)] ?? 'tool', id: String(b.id), ...at })
   })

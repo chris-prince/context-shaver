@@ -85,6 +85,13 @@ drop over stub. A kind with no rules is never trimmed.
 | `tool_search` | A `ToolSearch` call and its result | `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |
 
+A Read that Claude Code sends as a system message's text is a `tool` item too:
+after a compaction it re-attaches the files read before, each as `Called the
+Read tool with the following input: …` with the file's numbered lines after.
+A stub replaces the lines, a drop the whole Read; the rest of the message (the
+skills list, the environment block) stays. In the base, before the first
+response, it is left alone.
+
 `tools_force_deferred` lists tools to defer that Claude Code sends in full.
 Each is marked `defer_loading` and added to the deferred tools Claude Code
 lists in its environment message, so the model loads it with `ToolSearch` when

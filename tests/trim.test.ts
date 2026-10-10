@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
+import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { parsePolicy, treatment, type Policy } from '../src/policy.ts'
 import { apply, decide, isStubbed, LOOKBACK, positionsOf, readThrough, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
@@ -153,6 +153,29 @@ test('a tool search is its own kind, dropped by its own rules', () => {
   assert.deepEqual(counts(kept), { 'tool:drop': 2 })
   assert.ok(kept.msgs.some((m) => typeof m.content !== 'string' && m.content.some((b) => b.tool_use_id === 'toolu_1')))
   assert.deepEqual(counts(apply(convo, p, { steps: 5, turns: 2 })), { 'tool:drop': 2, 'tool_search:drop': 1 })
+})
+
+test('a Read sent as system text is a tool call; the rest of its message stays', () => {
+  const lines = Array.from({ length: 40 }, (_, i) => `${i + 1}\tline ${i + 1}\n`).join('')
+  const read = (f: string, body = lines) => `Called the Read tool with the following input: {"file_path":"${f}"}\nResult of calling the Read tool:\n${body}\n`
+  const env = '# Environment\nYou have been invoked in the following environment.'
+  const attached: ApiMsg = { role: 'system', content: [{ type: 'text', text: read('a.ts') + read('b.ts') + env, cache_control: { type: 'ephemeral' } }] }
+  const convo = [...msgs.slice(0, 3), attached, ...msgs.slice(3)]
+  const at = (a: Applied) => a.msgs[a.origin.indexOf(3)]
+
+  const stubbed = apply(convo, stubAll, clockOf(convo))
+  assert.deepEqual(stubbed.treated.get('read:3:1'), { kind: 'tool', action: 'stub' })
+  const s = `${stub(Buffer.byteLength(lines))}\n`
+  assert.deepEqual(at(stubbed).content, [{ type: 'text', text: read('a.ts', s) + read('b.ts', s) + env, cache_control: { type: 'ephemeral' } }])
+
+  const dropped = apply(convo, dropAll, clockOf(convo))
+  assert.deepEqual(blocks(at(dropped)), [{ type: 'text', text: env, cache_control: { type: 'ephemeral' } }])
+  // A message holding only Reads goes whole.
+  const alone = [...msgs.slice(0, 3), { role: 'system', content: read('a.ts') } as ApiMsg, ...msgs.slice(3)]
+  assert.equal(apply(alone, dropAll, clockOf(alone)).origin.includes(3), false)
+  // Before the first response, it is the base.
+  const base = [msgs[0], { role: 'system', content: read('a.ts') } as ApiMsg, ...msgs.slice(1)]
+  assert.equal(apply(base, dropAll, clockOf(base)).msgs[1], base[1])
 })
 
 test('a tool call is stubbed, then dropped, as the conversation goes on', () => {
