@@ -6,12 +6,16 @@ lines of step_events.jsonl, each listing the request's system blocks, tool
 definitions and messages with their bytes, and beside each message its
 parts/<hash>.kinds.json, the message's bytes split by kind (src/log.ts).
 
-The request's tokens, as the API reported them, are shared among all it sent
-by bytes. The base is the system prompt, the tools sent in full, and the
-preamble: what Claude Code injects before the first response (CLAUDE.md and
-the environment block among them), the kind src/log.ts calls `system`. Deferred tools a tool search has loaded since are `toolsLoaded`. What
-Claude Code injects later shows as `harness`. Requests logged before the system
-blocks and tools were sit outside the analysis.
+The base is the system prompt, the tools sent in full, and the preamble: what
+Claude Code injects before the first response (CLAUDE.md and the environment
+block among them), the kind src/log.ts calls `system`. Its tokens are the
+conversation's first request's, as the API reported them, less its other
+parts (the prompt among them, about 5%, shared by bytes); within the base,
+they are split among those three by bytes. The rest of a request's reported tokens are
+shared among the rest it sent by bytes. Deferred tools a tool search has
+loaded since are `toolsLoaded`. What Claude Code injects later shows as
+`harness`. Conversations logged from partway through, or before the system
+blocks and tools were, sit outside the analysis.
 
 By age: base, then the message content grouped by how many calendar days (local
 time) before the request each message first appeared -- oldest first, then
@@ -69,6 +73,11 @@ def requests(session_dir: str) -> list[dict]:
     return out
 
 
+def base_defs(request: dict) -> tuple:
+    """The system blocks and the tools sent in full, by hash."""
+    return tuple(s["hash"] for s in request["system"]), tuple(t["hash"] for t in request["tools"] if not t.get("deferred"))
+
+
 def newest_session(logs: str) -> str | None:
     files = glob.glob(os.path.join(logs, "*", "step_events.jsonl"))
     return os.path.dirname(max(files, key=os.path.getmtime)) if files else None
@@ -116,12 +125,27 @@ def main() -> int:
     request = reqs[index]
     model = request.get("model")
     total = float(request["inputTokens"])
-    defs = def_bytes(session, request)
-    sent_bytes = sum(defs.values()) + sum(p["bytes"] for p in request["parts"])
-    rate = total / sent_bytes
-    by_type: dict[str, float] = defaultdict(float, {k: n * rate for k, n in defs.items()})
-
     parts_dir = os.path.join(session, "parts")
+
+    first = reqs[0]
+    if any(p["part"] == "assistant" for p in first["parts"]):
+        print(f"{session} was logged from partway through, so its base has no exact count", file=sys.stderr)
+        return 1
+    if base_defs(first) != base_defs(request):
+        print(f"request {index} sent other system blocks or tools than the first, so its base has no exact count", file=sys.stderr)
+        return 1
+    first_defs = def_bytes(session, first)
+    first_kinds = [(k, n) for p in first["parts"] for k, n in (sidecar(parts_dir, p["hash"]).get("kinds") or {p["part"]: p["bytes"]}).items()]
+    base_bytes = {"systemPrompt": first_defs["systemPrompt"], "tools": first_defs["tools"], "preamble": sum(n for k, n in first_kinds if k == "system")}
+    prompt_bytes = sum(n for k, n in first_kinds if k != "system")
+    base = first["inputTokens"] * sum(base_bytes.values()) / (sum(base_bytes.values()) + prompt_bytes)
+    by_type: dict[str, float] = defaultdict(float, {k: n * base / sum(base_bytes.values()) for k, n in base_bytes.items()})
+
+    defs = def_bytes(session, request)
+    rest_bytes = defs["toolsLoaded"] + sum(n for p in request["parts"] for k, n in (sidecar(parts_dir, p["hash"]).get("kinds") or {p["part"]: p["bytes"]}).items() if k != "system")
+    rate = (total - base) / rest_bytes
+    by_type["toolsLoaded"] = defs["toolsLoaded"] * rate
+
     seen: dict[str, str] = {}
     for r in reqs:
         for p in r["parts"]:
@@ -143,10 +167,9 @@ def main() -> int:
         key = side[h].get("lineage")
         day = local_date(born_by_lineage.get(key, seen[h]) if key else seen[h])
         for kind, n in kinds.items():
-            tokens = n * rate
             if kind == "system":
-                by_type["preamble"] += tokens
                 continue
+            tokens = n * rate
             if kind in FRONTIER and not (ends and i < ends[FRONTIER[kind]]):
                 frontier += tokens
                 continue
@@ -154,12 +177,11 @@ def main() -> int:
             by_day[(ref - day).days] += tokens
 
     persist = total - frontier
-    base = by_type["systemPrompt"] + by_type["tools"] + by_type["preamble"]
 
     print(f"Date: {ref}")
     print(f"Request #{index} of {len(reqs)} in session {os.path.basename(session)}")
     print(f"Model: {model}")
-    print(f"{total:,.0f} tokens over {sent_bytes:,} bytes sent: {rate:.3f} tokens per byte")
+    print(f"{total:,.0f} tokens: a base of {base:,.0f} (from the first request's count), and {total - base:,.0f} over {rest_bytes:,} bytes after it: {rate:.3f} tokens per byte")
 
     print("\nTokens by age (in calendar days, local time)")
     print(row("base", base, total))
