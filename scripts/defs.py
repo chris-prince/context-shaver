@@ -1,4 +1,4 @@
-"""What a logged request sent besides its messages, in bytes.
+"""What a logged request sent besides its messages, in bytes, and each part's tokens.
 
 A request line lists the top-level system blocks and the tool definitions
 (src/log.ts). A deferred tool costs nothing until a tool search loads it: from
@@ -80,3 +80,64 @@ def base(session_dir: str, reqs: list[dict]) -> tuple[float, dict[str, int]]:
 def rest_bytes(session_dir: str, request: dict) -> int:
     """What a request sent besides its base, in bytes."""
     return def_bytes(session_dir, request)["toolsLoaded"] + sum(n for k, n in kind_bytes(session_dir, request).items() if k != "system")
+
+
+def _plain(m: dict) -> str:
+    """A message as JSON without breakpoints. Claude Code sends a lone text
+    block carrying one as an array, and as a string once the breakpoint moves
+    on, so that becomes the string."""
+    c = m["content"]
+    if isinstance(c, list):
+        c = [{k: v for k, v in b.items() if k != "cache_control"} for b in c]
+        if len(c) == 1 and c[0].get("type") == "text" and len(c[0]) == 2:
+            c = c[0]["text"]
+    return json.dumps([m["role"], c], sort_keys=True)
+
+
+def part_tokens(session_dir: str, reqs: list[dict]) -> dict[str, float]:
+    """Each part's tokens, by hash, from the requests' reported counts.
+
+    Taken in order, a request's count less what its parts already counted is
+    what its new parts cost together. A new assistant message costs the output
+    count of the request that answered with it (its input cost is within about
+    15 tokens of that); the other new parts share what is left by bytes. The
+    parts are the messages, keyed by hash; the system blocks and tools sent in
+    full together, keyed `defs:` and their hashes; and each loaded deferred
+    tool, keyed `tool:` and its hash. A message whose breakpoint moved is the
+    same part under another hash.
+    """
+    parts = os.path.join(session_dir, "parts")
+    plain = {h: _plain(json.load(open(os.path.join(parts, h + ".json"), encoding="utf-8"))) for r in reqs for h in {p["hash"] for p in r["parts"]}}
+    known: dict[str, float] = {}  # by plain message, or defs:/tool: key
+    answered: set[int] = set()  # requests whose answer has its count
+    out: dict[str, float] = {}
+    for n, r in enumerate(reqs):
+        msgs = [plain[p["hash"]] for p in r["parts"]]
+        loaded = set().union(*(referenced(os.path.join(parts, p["hash"] + ".json")) for p in r["parts"]))
+        sizes: dict[str, int] = {}
+        count: dict[str, int] = {}
+        for k, p in zip(msgs, r["parts"]):
+            sizes[k] = p["bytes"]
+            count[k] = count.get(k, 0) + 1
+        full = [t for t in r["tools"] if not t.get("deferred")]
+        sizes["defs:" + json.dumps(base_defs(r))] = sum(s["bytes"] for s in r["system"]) + sum(t["bytes"] for t in full)
+        sizes.update({"tool:" + t["hash"]: t["bytes"] for t in r["tools"] if t.get("deferred") and t["name"] in loaded})
+        left = r["inputTokens"] - sum(known[k] * count.get(k, 1) for k in sizes if k in known)
+        new = [k for k in sizes if k not in known]
+        for i, k in enumerate(msgs):
+            if k in new and k.startswith('["assistant"') and i:
+                # Answered by the latest request ending with the message before
+                # it. A later, trimmed version of that answer is not the answer.
+                by = next((j for j in range(n - 1, -1, -1) if reqs[j]["parts"] and plain[reqs[j]["parts"][-1]["hash"]] == msgs[i - 1]), None)
+                if by is not None and by not in answered and reqs[by].get("outputTokens"):
+                    answered.add(by)
+                    known[k] = reqs[by]["outputTokens"]
+                    left -= known[k] * count[k]
+                    new.remove(k)
+        rest = sum(sizes[k] * count.get(k, 1) for k in new)
+        for k in new:
+            known[k] = left * sizes[k] / rest
+        for p, k in zip(r["parts"], msgs):
+            out[p["hash"]] = known[k]
+        out.update({k: known[k] for k in sizes if not k.startswith("[")})
+    return out

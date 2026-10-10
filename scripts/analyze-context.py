@@ -6,16 +6,15 @@ lines of step_events.jsonl, each listing the request's system blocks, tool
 definitions and messages with their bytes, and beside each message its
 parts/<hash>.kinds.json, the message's bytes split by kind (src/log.ts).
 
-The base is the system prompt, the tools sent in full, and the preamble: what
-Claude Code injects before the first response (CLAUDE.md and the environment
-block among them), the kind src/log.ts calls `system`. Its tokens are the
-conversation's first request's, as the API reported them, less its other
-parts (the prompt among them, about 5%, shared by bytes); within the base,
-they are split among those three by bytes. The rest of a request's reported tokens are
-shared among the rest it sent by bytes. Deferred tools a tool search has
+Each part's tokens come from the requests' reported counts, taken in order
+(scripts/defs.py, part_tokens); within a part, its kinds share them by bytes,
+as the system prompt and the tools sent in full share theirs. The base is the
+system prompt, the tools sent in full, and the preamble: what Claude Code
+injects before the first response (CLAUDE.md and the environment block among
+them), the kind src/log.ts calls `system`. Deferred tools a tool search has
 loaded since are `toolsLoaded`. What Claude Code injects later shows as
-`harness`. Conversations logged from partway through, or before the system
-blocks and tools were, sit outside the analysis.
+`harness`. Requests logged before the system blocks and tools were sit outside
+the analysis.
 
 By age: base, then the message content grouped by how many calendar days (local
 time) before the request each message first appeared -- oldest first, then
@@ -122,15 +121,13 @@ def main() -> int:
     total = float(request["inputTokens"])
     parts_dir = os.path.join(session, "parts")
 
-    try:
-        base, base_bytes = defs.base(session, reqs[: index + 1])
-    except ValueError as e:
-        print(e, file=sys.stderr)
-        return 1
-    by_type: dict[str, float] = defaultdict(float, {k: n * base / sum(base_bytes.values()) for k, n in base_bytes.items()})
-    rest_bytes = defs.rest_bytes(session, request)
-    rate = (total - base) / rest_bytes
-    by_type["toolsLoaded"] = defs.def_bytes(session, request)["toolsLoaded"] * rate
+    tokens = defs.part_tokens(session, reqs[: index + 1])
+    d = defs.def_bytes(session, request)
+    fixed = tokens["defs:" + json.dumps(defs.base_defs(request))]
+    by_type: dict[str, float] = defaultdict(float)
+    by_type["systemPrompt"] = fixed * d["systemPrompt"] / (d["systemPrompt"] + d["tools"])
+    by_type["tools"] = fixed * d["tools"] / (d["systemPrompt"] + d["tools"])
+    by_type["toolsLoaded"] = sum(tokens["tool:" + t["hash"]] for t in request["tools"] if "tool:" + t["hash"] in tokens)
 
     seen: dict[str, str] = {}
     for r in reqs:
@@ -153,21 +150,23 @@ def main() -> int:
         key = side[h].get("lineage")
         day = local_date(born_by_lineage.get(key, seen[h]) if key else seen[h])
         for kind, n in kinds.items():
+            share = tokens[h] * n / sum(kinds.values())
             if kind == "system":
+                by_type["preamble"] += share
                 continue
-            tokens = n * rate
             if kind in FRONTIER and not (ends and i < ends[FRONTIER[kind]]):
-                frontier += tokens
+                frontier += share
                 continue
-            by_type[kind] += tokens
-            by_day[(ref - day).days] += tokens
+            by_type[kind] += share
+            by_day[(ref - day).days] += share
 
     persist = total - frontier
+    base = by_type["systemPrompt"] + by_type["tools"] + by_type["preamble"]
 
     print(f"Date: {ref}")
     print(f"Request #{index} of {len(reqs)} in session {os.path.basename(session)}")
     print(f"Model: {model}")
-    print(f"{total:,.0f} tokens: a base of {base:,.0f} (from the first request's count), and {total - base:,.0f} over {rest_bytes:,} bytes after it: {rate:.3f} tokens per byte")
+    print(f"{total:,.0f} tokens")
 
     print("\nTokens by age (in calendar days, local time)")
     print(row("base", base, total))
