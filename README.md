@@ -4,13 +4,11 @@ A local proxy between Claude Code and the Anthropic API. On each request it
 forwards, it trims old content as its policy file says. The committed
 `policy.json`:
 
-- stubs a tool call once it is a step old: its result, and long Edit/Write
-  inputs (`old_string`, `new_string`, `content`) and Bash here-document
-  bodies, each replaced with a stub that gives their size,
-  `[CULLED 1234 B FROM CTX]`;
-- drops a tool call, with its result, once it is 10 steps old;
+- drops a tool call, with its result, once it is 4 steps or 2 turns old;
 - drops a loaded skill (the `Skill` call, its result and the skill's text) once
   its turn is over;
+- drops a tool search (a `ToolSearch` call and its result, which loads the
+  tools it found) once it is 10 turns old;
 - drops reasoning (thinking blocks) from completed turns.
 
 Only what is sent changes. The stored session and the TUI are untouched, and
@@ -84,6 +82,7 @@ drop over stub. A kind with no rules is never trimmed.
 | --- | --- | --- |
 | `tool` | A tool call with its results | `stub`, `drop` |
 | `skill` | A `Skill` call, its result and the skill's text beside it | `drop` |
+| `search` | A `ToolSearch` call and its result | `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |
 
 The proxy reads the file when it starts; restart it after editing.

@@ -12,7 +12,7 @@ export type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 export type Policy = Partial<Record<Kind, Rule[]>>
 
 // What each kind can be given. Only tool calls have a stub.
-const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['drop'], reasoning: ['drop'] }
+const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['drop'], search: ['drop'], reasoning: ['drop'] }
 
 export function parsePolicy(v: unknown): Policy {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('a policy is an object of rule lists by kind')

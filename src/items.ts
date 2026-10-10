@@ -55,12 +55,16 @@ export function heldTo(c: Clock, msgs: readonly ApiMsg[]): Clock {
 // - tool: a tool call with its results, by the call's id;
 // - skill: a Skill call with its result and the skill's body, which Claude Code
 //   sends as a text block beside the result;
+// - search: a ToolSearch call with its result, which loads the tools it found
+//   (their definitions go with it);
 // - reasoning: an assistant message's thinking, by the message's index.
-export type Kind = 'tool' | 'skill' | 'reasoning'
+export type Kind = 'tool' | 'skill' | 'search' | 'reasoning'
 export type Item = { kind: Kind; id: string; step: number; turn: number }
 
 export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'redacted_thinking'
 export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
+
+const KINDS: Record<string, Kind> = { Skill: 'skill', ToolSearch: 'search' }
 
 export function itemsOf(msgs: readonly ApiMsg[]): Item[] {
   const { stepOf } = stepsOf(msgs)
@@ -70,7 +74,7 @@ export function itemsOf(msgs: readonly ApiMsg[]): Item[] {
     if (m.role !== 'assistant' || typeof m.content === 'string') return
     const at = { step: stepOf[i], turn: turnOf[i] }
     if (m.content.some(isThinking)) out.push({ kind: 'reasoning', id: String(i), ...at })
-    for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: b.name === 'Skill' ? 'skill' : 'tool', id: String(b.id), ...at })
+    for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: KINDS[String(b.name)] ?? 'tool', id: String(b.id), ...at })
   })
   return out
 }

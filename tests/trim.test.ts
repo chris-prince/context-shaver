@@ -65,7 +65,7 @@ test('a rule is due once its unit is completed, past the wait', () => {
 })
 
 test('a policy file is checked', () => {
-  assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'reasoning'])
+  assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'search', 'reasoning'])
   for (const bad of [[], { tools: [] }, { tool: {} }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }])
     assert.throws(() => parsePolicy(bad))
 })
@@ -118,6 +118,15 @@ test('a pair whose results a system message follows is stubbed, not dropped', ()
   assert.deepEqual(apply(sys, { tool: dropAll.tool }, c).msgs, sys)
   const s = apply(sys, { tool: [...stubAll.tool!, ...dropAll.tool!] }, c)
   assert.deepEqual(counts(s), { 'tool:stub': 1 })
+})
+
+test('a tool search is its own kind, dropped by its own rules', () => {
+  const convo = [1, 2, 3].flatMap((n) => turn(n, n === 1 ? 'ToolSearch' : 'Bash', { query: 'select:CronList' }))
+  const p: Policy = { tool: [{ on: 'step', wait: 0, action: 'drop' }], search: [{ on: 'turn', wait: 1, action: 'drop' }] }
+  const kept = apply(convo, p, { steps: 5, turns: 1 })
+  assert.deepEqual(counts(kept), { 'tool:drop': 2 })
+  assert.ok(kept.msgs.some((m) => typeof m.content !== 'string' && m.content.some((b) => b.tool_use_id === 'toolu_1')))
+  assert.deepEqual(counts(apply(convo, p, { steps: 5, turns: 2 })), { 'tool:drop': 2, 'search:drop': 1 })
 })
 
 test('a tool call is stubbed, then dropped, as the conversation goes on', () => {
