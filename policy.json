@@ -1,6 +1,6 @@
 {
   "tool": [
-    { "on": "step", "wait": 8, "action": "drop" },
+    { "on": "step", "wait": 4, "action": "drop" },
     { "on": "turn", "wait": 2, "action": "drop" }
   ],
   "skill": [{ "on": "turn", "wait": 0, "action": "drop" }],
