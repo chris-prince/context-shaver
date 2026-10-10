@@ -87,10 +87,9 @@ export type Applied = {
 // - A dropped tool call goes with its results; a dropped skill also takes the
 //   skill's body beside its result. The drops are made together, then the
 //   messages checked against where the API takes a system message (README,
-//   "The API constrains what can go"). A pair whose drop leaves one out of
-//   place, the pair just before it or just after, is kept and gets what else
-//   is due to it, a stub. So a drop is only refused for what the drops around
-//   it actually leave.
+//   "What it trims"). A pair whose drop leaves one out of place, the pair just
+//   before it or just after, is kept and gets what else is due to it, a stub.
+//   So a drop is only refused for what the drops around it actually leave.
 // - Dropped reasoning is the message's thinking, unless that would leave it
 //   empty: an empty message is refused. One left empty by dropped calls is
 //   removed; the API joins the neighbours that leaves in the same role.

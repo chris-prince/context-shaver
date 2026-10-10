@@ -107,8 +107,23 @@ command row). The current turn, from the last prompt on, is never touched.
 The API constrains what can go:
 
 - a dropped call goes with its results;
-- a pair whose results a system message follows is not dropped, since a system
-  message must follow a user one; it gets a stub, if one is due;
+- a system message (`role: "system"`, which Claude Code sends mid-conversation)
+  must come after a user or a system message, and before an assistant message
+  or at the end. Tested against the API on 2026-10-10:
+
+  | Messages | Result |
+  |---|---|
+  | user, system | allowed |
+  | user, system, system | allowed |
+  | user, call, result, system | allowed |
+  | user, assistant, system | 400: must follow a user message |
+  | user, system, system, user | 400: must precede an assistant message |
+  | user, call, result, system, user | 400: must precede an assistant message |
+
+  The drops are made together and only then checked against this, so two
+  pairs that are each due can go together when what remains is allowed. Where
+  it isn't, the pair just before the system message (or just after) is kept
+  and gets a stub, if one is due;
 - a message whose only content is thinking keeps it, since an empty message is
   refused. One left empty by dropped calls is removed.
 
