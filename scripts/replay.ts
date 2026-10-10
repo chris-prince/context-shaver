@@ -1,0 +1,157 @@
+// Replays one logged conversation's requests, rebuilt untrimmed, through the
+// proxy's logic under several policies, and prices each with the cache model.
+// The model's actions are held fixed: same requests, same outputs, so it can't
+// show a model fetching again what a trim took. WAIT, the step wait of the drop
+// policy the run used, also checks the rebuild: what the proxy sent should be
+// what that policy gives the rebuilt request at some clock.
+// Usage: [WAIT=<n>] node scripts/replay.ts logs-mini-ctx-claude/<conversation> [from ISO] [to ISO]
+import { readFileSync } from 'node:fs'
+import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
+import { hash } from '../src/log.ts'
+import { apply, decide, positionsOf, readThrough, TEXT_TOKENS, type Position } from '../src/trim.ts'
+import type { Policy } from '../src/policy.ts'
+
+const [dir, from = '', to = '9999'] = process.argv.slice(2)
+const TTL = 3600e3
+const reqs = readFileSync(dir + '/step_events.jsonl', 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.time >= from && e.time < to)
+const load = (h: string): ApiMsg => JSON.parse(readFileSync(`${dir}/parts/${h}.json`, 'utf8'))
+// A message as sent without breakpoints. Claude Code sends a lone text block
+// carrying one as an array, and as a string once the breakpoint moves on.
+function strip(m: ApiMsg): ApiMsg {
+  if (typeof m.content === 'string') return m
+  const c = m.content
+  if (c.length === 1 && c[0].type === 'text' && c[0].cache_control && Object.keys(c[0]).length === 3) return { ...m, content: String(c[0].text) }
+  return { ...m, content: c.map(({ cache_control, ...b }) => b as Block) }
+}
+const same = (x: ApiMsg, y: ApiMsg) => JSON.stringify(strip(x)) === JSON.stringify(strip(y))
+
+// 1. Rebuild: each request is the original of the latest earlier request it
+// extends, plus what follows that request's last message in what it sent.
+// Claude Code's prompt suggestions fork the conversation, so the request after
+// one extends the request before it.
+const sent: ApiMsg[][] = reqs.map((e) => e.parts.map((p: { hash: string }) => load(p.hash)))
+const orig: ApiMsg[][] = []
+let broken = 0
+sent.forEach((s, n) => {
+  for (let k = n - 1; k >= 0; k--) {
+    const j = s.findLastIndex((m) => same(m, sent[k].at(-1)!))
+    if (j >= 0) return orig.push([...orig[k], ...s.slice(j + 1).map(strip)])
+  }
+  if (n) broken++
+  orig.push(s.map(strip))
+})
+
+// Breakpoints go where the request had them, counted from the end, which is
+// never trimmed.
+function marked(o: ApiMsg[], s: ApiMsg[]): ApiMsg[] {
+  const out = o.map((m) => m)
+  for (let k = 1; k <= Math.min(4, s.length, o.length); k++) {
+    const sm = s.at(-k)!
+    if (typeof sm.content === 'string' || !sm.content.some((b) => b.cache_control)) continue
+    const om = out.at(-k)!
+    if (typeof om.content === 'string') { out[out.length - k] = sm; continue }
+    out[out.length - k] = { ...om, content: om.content.map((b, i) => (sm.content[i] as Block)?.cache_control ? { ...b, cache_control: (sm.content[i] as Block).cache_control } : b) }
+  }
+  return out
+}
+
+// Thinking tokens, as the proxy records them: the response's output less its
+// visible content, by signature.
+const thinking = new Map<string, number>()
+reqs.forEach((e, n) => {
+  const next = orig[n + 1]
+  if (!next) return
+  const a = next[orig[n].length]
+  if (!a || a.role !== 'assistant' || typeof a.content === 'string') return
+  let visible = 0
+  const sigs: string[] = []
+  for (const b of a.content)
+    if (b.type === 'thinking' && typeof b.signature === 'string') sigs.push(b.signature)
+    else visible += b.type === 'text' ? String(b.text).length : b.type === 'tool_use' ? JSON.stringify(b.name).length + JSON.stringify(b.input).length : 0
+  const total = sigs.reduce((x, s) => x + s.length, 0)
+  const tokens = Math.max(0, e.outputTokens - TEXT_TOKENS * visible)
+  for (const s of sigs) thinking.set(hash(s), Math.round((tokens * s.length) / total))
+})
+
+// Tokens = base + rate x characters, fitted to what was actually sent.
+const sz = (ps: Position[]) => ps.reduce((x, p) => x + p.size, 0)
+const xs = sent.map((s) => sz(positionsOf(s, 's', thinking)))
+const ys = reqs.map((e) => e.inputTokens)
+const mx = xs.reduce((a, b) => a + b) / xs.length, my = ys.reduce((a, b) => a + b) / ys.length
+const rate = xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0) / xs.reduce((a, x) => a + (x - mx) ** 2, 0)
+const base = my - rate * mx
+
+// Opus 5.5: $4 input, read 0.05x, 1-hour write 2x, output 5x.
+const P = 4 / 1e6
+function price(pos: Position[], r: number, warm: boolean) {
+  const last = pos.findLastIndex((p) => p.breakpoint)
+  let rd = warm ? base : 0, wr = warm ? 0 : base, plain = 0
+  pos.forEach((p, i) => { const t = p.size * rate; if (i <= r) rd += t; else if (i <= last) wr += t; else plain += t })
+  return { rd, wr, plain }
+}
+
+type Run = { cost: number; rd: number; wr: number; ctx: number; advanced: number; mismatch: number; firstMiss?: string }
+function run(policy: Policy | 'sent', actual?: Policy): Run {
+  let applied: Clock = { steps: 0, turns: 0 }
+  let found: Clock = { steps: 0, turns: 0 }
+  const entries = new Map<string, number>()
+  // The tools and system are cached already when the first request read them.
+  let lastAt = reqs[0].cachedTokens >= 0.9 * base ? Date.parse(reqs[0].time) : -Infinity
+  const out: Run = { cost: 0, rd: 0, wr: 0, ctx: 0, advanced: 0, mismatch: 0 }
+  reqs.forEach((e, n) => {
+    const t = Date.parse(e.time)
+    for (const [h, at] of entries) if (t - at > TTL) entries.delete(h)
+    const live = new Set(entries.keys())
+    const msgs = marked(orig[n], sent[n])
+    let body: ApiMsg[]
+    if (policy === 'sent') {
+      body = sent[n]
+      if (actual) {
+        // Does some clock reproduce what was sent from the rebuilt request?
+        const c = clockOf(msgs)
+        // The applied clock only moves forward, so search from the last one found.
+        const want = JSON.stringify(sent[n].map(strip))
+        let ok = false
+        for (let tu = found.turns; tu <= c.turns && !ok; tu++)
+          for (let st = 0; st <= c.steps && !ok; st++)
+            if (JSON.stringify(apply(msgs, actual, heldTo({ steps: st, turns: tu }, msgs)).msgs.map(strip)) === want) [ok, found] = [true, { steps: st, turns: tu }]
+        if (!ok && !out.mismatch++) out.firstMiss = `#${n} ${e.time}`
+      }
+    } else {
+      const held = heldTo(applied, msgs)
+      const clock = clockOf(msgs)
+      const keep = apply(msgs, policy, held)
+      body = keep.msgs
+      if (clock.steps > held.steps || clock.turns > held.turns) {
+        const next = apply(msgs, policy, clock)
+        const d = decide(keep.msgs, next.msgs, live, 's', e.model, thinking)
+        if (d.advanced) { body = next.msgs; applied = clock; if (d.savedChars) out.advanced++ }
+      }
+    }
+    const pos = positionsOf(body, 's', thinking)
+    const r = readThrough(pos, live)
+    const c = price(pos, r, t - lastAt <= TTL)
+    out.rd += c.rd; out.wr += c.wr; out.ctx = Math.max(out.ctx, c.rd + c.wr + c.plain)
+    out.cost += P * (0.05 * c.rd + 2 * c.wr + c.plain + 5 * e.outputTokens)
+    for (const [i, p] of pos.entries()) if (p.breakpoint || i === r) entries.set(p.prefix, t)
+    lastAt = t
+  })
+  return out
+}
+
+const logged = reqs.reduce((x, e) => {
+  const w = (e.writtenTokens60m ?? e.writtenTokens ?? 0) + (e.writtenTokens5m ?? 0)
+  return x + P * (0.05 * e.cachedTokens + 2 * w + (e.inputTokens - e.cachedTokens - w) + 5 * e.outputTokens)
+}, 0)
+const fmt = (name: string, r: Run) => console.log(`${name.padEnd(14)} $${r.cost.toFixed(2)}  read ${(r.rd / 1e6).toFixed(2)}M  write ${(r.wr / 1e3).toFixed(0)}k  peak ${(r.ctx / 1e3).toFixed(0)}k  trims ${r.advanced}`)
+console.log(`${dir.replace(/\/$/, '').split('/').at(-1)}: ${reqs.length} requests, rebuild breaks ${broken}, rate ${rate.toFixed(3)} tok/char, base ${base.toFixed(0)}`)
+console.log(`logged         $${logged.toFixed(2)}`)
+const actualWait = Number(process.env.WAIT)
+const pol = (w: number): Policy => ({ tool: [{ on: 'step', wait: w, action: 'drop' }], skill: [{ on: 'turn', wait: 0, action: 'drop' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] })
+const s = run('sent', actualWait ? pol(actualWait) : undefined)
+fmt('sent, repriced', s)
+if (actualWait) console.log(`  rebuilt requests the real policy doesn't reproduce: ${s.mismatch} of ${reqs.length}${s.firstMiss ? `, from ${s.firstMiss}` : ''}`)
+fmt('no trimming', run({}))
+for (const w of [2, 4, 8, 16]) fmt(`drop wait ${w}`, run(pol(w)))
+fmt('8 + 2 turns', run({ ...pol(8), tool: [{ on: 'step', wait: 8, action: 'drop' }, { on: 'turn', wait: 2, action: 'drop' }] }))

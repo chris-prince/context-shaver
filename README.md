@@ -173,6 +173,11 @@ Scripts:
   user prompt across sessions, such as runs of the same prompt under different
   policies: from the prompt to the next one, its steps, duration, cost, tool
   calls, trims applied and peak context.
+- `[WAIT=<n>] node scripts/replay.ts <conversation dir> [from] [to]` replays
+  one logged conversation under several policies with the model's actions
+  held fixed: it rebuilds each request untrimmed, runs the proxy's logic on
+  it, and prices the result with the cache model. WAIT, the drop wait the run
+  used, also checks that the rebuild reproduces what the proxy sent.
 
 Tokens are estimated from a per-conversation fit: inputTokens = base + rate·bytes.
 
