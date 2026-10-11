@@ -190,11 +190,18 @@ With `--log-step-events`, logs go to
 Scripts:
 
 - `python3 scripts/analyze-context.py [conversation dir] [--request N]` breaks one
-  request's tokens down by age and by part type. Typing `:shaver stats` as a
-  prompt shows it for the session's latest request: the proxy answers it
-  without calling the model, and strips the command and its answer from every
-  later request (`src/command.ts`). `:shaver policy` shows the policy file the
-  same way, as it is on disk now.
+  request's tokens down by age and by part type.
+- Typing `:shaver stats` as a prompt shows the same breakdown for the
+  session's latest request, logged or not: after each request the proxy
+  counts its parts' tokens into the conversation's state (`src/stats.ts`),
+  and answers from that. It answers without calling the model, and strips the
+  command and its answer from every later request (`src/command.ts`).
+  `:shaver policy` shows the policy file the same way, as it is on disk now.
+  Counting starts when the state does, so a conversation begun under an older
+  proxy counts its earlier messages by bytes.
+- `node scripts/stats-from-logs.ts <conversation dir> [--request N]` replays a
+  logged conversation through `src/stats.ts`, to check its output against
+  `analyze-context.py`'s.
 - `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
 - `node scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's

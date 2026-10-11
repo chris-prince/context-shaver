@@ -12,7 +12,6 @@
 // outweighs what it rewrites, priced against the cache entries the
 // conversation's requests left.
 
-import { execFileSync } from 'node:child_process'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -21,6 +20,7 @@ import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { commandOf, reply, stripCommands } from './command.ts'
+import { describe, observe, render, type Sent, type Stats } from './stats.ts'
 import { loadPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
@@ -47,8 +47,9 @@ mkdirSync(stateDir, { recursive: true })
 // A conversation's applied clock; the cache entries its answered requests
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
 // tokens each thinking block it was answered with bills, by the signature's
-// hash (trim.ts, sizeOf).
-type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number> }
+// hash (trim.ts, sizeOf); and its parts' token counts, for `:shaver stats`
+// (stats.ts).
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; stats?: Stats }
 
 // A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
@@ -64,7 +65,7 @@ const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; stats?: Stats; sent: Sent; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a /v1/messages request. Only requests with tools are trimmed: those
 // are the main loop and subagents. Claude Code's side requests are sent as
@@ -98,10 +99,14 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const pos = positionsOf(sent.msgs, seed, thinking)
   const r = readThrough(pos, live)
   const touched = pos.filter((q, i) => q.breakpoint || i === r).map((q) => q.prefix)
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {} }
+  // Where trimming ends in the messages as sent, which drops shorten.
+  const ends = trimmedEnd(msgs, policy, applied)
+  const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
+  const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
+  const time = new Date(now).toISOString()
+  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: s?.stats, sent: describe(body, trimmed, time) }
   if (a['log-step-events']) {
     p.logDir = logDirOf(body)
-    const time = new Date(now).toISOString()
     if (d?.savedChars) {
       const context: Record<string, number> = {}
       for (const m of keep.msgs) for (const [k, n] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + n
@@ -119,11 +124,8 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
         context,
       })
     }
-    // Where trimming ends in the messages as sent, which drops shorten.
-    const ends = trimmedEnd(msgs, policy, applied)
-    const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, predictedCachedChars, trimmedEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
+    p.logLine = { event: 'request', time, model: body.model, predictedCachedChars, trimmedEnd: trimmed, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
   }
   return p
 }
@@ -147,19 +149,12 @@ function policyText(): string {
   }
 }
 
-// The answer to `:shaver stats`: scripts/analyze-context.py on the conversation's
-// latest logged request. The conversation's key is taken as prepare takes it,
-// after the forced deferrals.
+// The answer to `:shaver stats`: the conversation's latest answered request,
+// from its state (stats.ts).
 function stats(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
-  if (!a['log-step-events']) return 'mini-context: requests are not being logged (--log-step-events), so there are no stats.'
-  const b = structuredClone(body)
-  if (policy.tools_not_deferred) forceDefer(b, policy.tools_not_deferred)
-  try {
-    const out = execFileSync('python3', [path.resolve(import.meta.dirname, '..', 'scripts', 'analyze-context.py'), logDirOf(b)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-    return '```\n' + out.trimEnd() + '\n```'
-  } catch (err) {
-    return `mini-context: analyze-context.py failed: ${(err as { stderr?: string }).stderr?.trim() || err}`
-  }
+  const s = load(hash(JSON.stringify(body.messages[0])))?.stats
+  if (!s) return 'mini-context: no request in this conversation has been counted yet, so there are no stats.'
+  return '```\n' + render(s, path.basename(logDirOf(body))) + '\n```'
 }
 
 // The usage a response reports: message_start's, with message_delta's output
@@ -289,12 +284,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const { usage: u, content } = usage.end()
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) } })
+  const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
+  const stats = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, ...(stats && { stats }) })
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
       ...p.logLine,
       ...(u && {
-        inputTokens: u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+        inputTokens,
         cachedTokens: u.cache_read_input_tokens ?? 0,
         writtenTokens60m: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
         writtenTokens5m: (u.cache_creation_input_tokens ?? 0) - (u.cache_creation?.ephemeral_1h_input_tokens ?? 0),

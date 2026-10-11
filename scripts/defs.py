@@ -104,7 +104,7 @@ def part_tokens(session_dir: str, reqs: list[dict]) -> list[dict[str, float]]:
                     answered.add(by)
                     known[k] = reqs[by]["outputTokens"]
                     left -= known[k] * count[k]
-                    t = len(json.dumps([b for b in json.loads(k)[1] if isinstance(b, dict) and b.get("type") == "thinking"]))
+                    t = len(json.dumps([b for b in json.loads(k)[1] if isinstance(b, dict) and b.get("type") == "thinking"], separators=(",", ":"), ensure_ascii=False))
                     if t > 2:
                         thinking[k] = t
                     new.remove(k)
