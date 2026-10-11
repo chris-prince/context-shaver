@@ -1,7 +1,7 @@
-// mini-context for Claude Code: a local proxy between Claude Code and the
-// Anthropic API that trims old tool output, long Edit/Write inputs and
-// reasoning from each request it forwards. The stored session and the screen
-// are untouched; only what is sent changes. See README.md.
+// ctx-shaver: a local proxy between Claude Code and the Anthropic API that
+// trims old tool output, long Edit/Write inputs and reasoning from each request
+// it forwards. The stored session and the screen are untouched; only what is
+// sent changes. See README.md.
 //
 // What is trimmed, and when, is the policy file's (policy.ts); with none, it
 // passes requests through. Each conversation (keyed by its first message, so a
@@ -38,7 +38,7 @@ const { values: a } = parseArgs({
 })
 
 const loaded = loadPolicy(a.policy)
-if (!loaded) console.error(`mini-context: no policy at ${a.policy}, so requests pass through untrimmed`)
+if (!loaded) console.error(`ctx-shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
 const policy = loaded ?? {}
 const ttlMs = Number(a['cache-ttl-seconds']) * 1000
 const stateDir = path.join(a.dir, 'state')
@@ -154,7 +154,7 @@ function policyText(): string {
   try {
     return '`' + a.policy + '`:\n```json\n' + readFileSync(a.policy, 'utf8').trimEnd() + '\n```'
   } catch {
-    return `mini-context: no policy at ${a.policy}, so requests pass through untrimmed.`
+    return `ctx-shaver: no policy at ${a.policy}, so requests pass through untrimmed.`
   }
 }
 
@@ -162,7 +162,7 @@ function policyText(): string {
 // from its journal (stats.ts).
 function stats(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
   const s = latestOf(hash(JSON.stringify(body.messages[0])))
-  if (!s) return 'mini-context: no request in this conversation has been counted yet, so there are no stats.'
+  if (!s) return 'ctx-shaver: no request in this conversation has been counted yet, so there are no stats.'
   return '```\n' + render(s, path.basename(logDirOf(body))) + '\n```'
 }
 
@@ -256,12 +256,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         if (msgs.length < body.messages.length) raw = Buffer.from(JSON.stringify({ ...body, messages: msgs }))
       }
     } catch (err) {
-      console.error('mini-context: commands left in:', err)
+      console.error('ctx-shaver: commands left in:', err)
     }
     try {
       p = prepare(raw, Date.now())
     } catch (err) {
-      console.error('mini-context: request left untrimmed:', err)
+      console.error('ctx-shaver: request left untrimmed:', err)
     }
   }
   const headers: Record<string, string> = {}
@@ -274,7 +274,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // A changed request the API refuses is sent again as it came, so the proxy
   // never costs the user a turn.
   if ((p || raw !== original) && up.status === 400) {
-    console.error(`mini-context: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
+    console.error(`ctx-shaver: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
     p = undefined
     up = await send(original)
   }
@@ -318,12 +318,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 createServer((req, res) => {
   handle(req, res).catch((err) => {
     if (abortedBy(err)) return res.end()
-    console.error('mini-context:', err)
+    console.error('ctx-shaver:', err)
     if (!res.headersSent) {
       res.writeHead(502, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: `mini-context proxy: ${err}` } }))
+      res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: `ctx-shaver proxy: ${err}` } }))
     } else res.end()
   })
-}).listen(Number(a.port), '127.0.0.1', () => console.error(`mini-context: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
+}).listen(Number(a.port), '127.0.0.1', () => console.error(`ctx-shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
 
 const abortedBy = (err: unknown) => err instanceof Error && err.name === 'AbortError'

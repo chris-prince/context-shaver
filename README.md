@@ -1,4 +1,4 @@
-# mini-context for Claude Code
+# ctx-shaver
 
 A local proxy between Claude Code and the Anthropic API. On each request it
 forwards, it trims old content as its policy file says. The committed
@@ -19,14 +19,14 @@ inside OpenCode.
 ## Running
 
 ```bash
-bin/claude-mini [claude args ...]
+bin/ctx-shaver [claude args ...]
 ```
 
-`bin/claude-mini` starts the proxy if nothing is listening on its port (8787,
-or `MINI_CTX_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
+`bin/ctx-shaver` starts the proxy if nothing is listening on its port (8787,
+or `CTX_SHAVER_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json`, and
-with logging off unless `MINI_CTX_LOG=1` is set (see [Logs](#logs)). It also
+with logging off unless `CTX_SHAVER_LOG=1` is set (see [Logs](#logs)). It also
 sets `ENABLE_TOOL_SEARCH=true`: Claude Code turns its tool search off when the
 base URL isn't Anthropic's, which sends every tool's definition on every
 request (about 26k more tokens).
@@ -171,7 +171,7 @@ prompt changed), both candidates write everything, so advancing always pays.
 
 ## Logs
 
-With `--log-step-events` (which `bin/start-proxy` passes when `MINI_CTX_LOG=1`
+With `--log-step-events` (which `bin/start-proxy` passes when `CTX_SHAVER_LOG=1`
 is set), logs go to
 `proxy-data/logs/<session>-<conversation>/`:
 

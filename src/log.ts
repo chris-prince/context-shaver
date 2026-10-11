@@ -34,7 +34,7 @@ export function hash(s: string): string {
 }
 
 // A message's bytes by kind, summing to its JSON length, in the buckets
-// mini-context's analyze-context reads: user, assistant, reasoning, tool calls
+// ctx-shaver's analyze-context reads: user, assistant, reasoning, tool calls
 // and results each split into stubbed and not, what Claude Code injects, and
 // other (content of an unknown type). The role/content wrapper rides with the
 // role, a system message's with its text. A skill's body, which Claude Code
