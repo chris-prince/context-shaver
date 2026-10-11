@@ -185,8 +185,8 @@ def main() -> int:
     print(f"Model: {model}")
     print()
     print(local_time(request["time"]))
-    print(f"{total:,.0f} tokens")
     print(f"{index + 1:,} requests over {span(reqs[0]['time'], request['time'])}")
+    print(f"{total:,.0f} tokens")
 
     print("\nTokens by age (in calendar days, local time)")
     print(row("base", base, total))
