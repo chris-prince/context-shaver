@@ -32,7 +32,15 @@ const reqs = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8')
       return []
     }
   })
+if (!reqs.length) {
+  console.error(`no request lines with usage under ${dir}`)
+  process.exit(1)
+}
 const last = values.request === undefined ? reqs.length - 1 : Number(values.request)
+if (!(Number.isInteger(last) && 0 <= last && last < reqs.length)) {
+  console.error(`request ${last} is out of range (0-${reqs.length - 1})`)
+  process.exit(1)
+}
 const count = (s: Stats | undefined, r: any) => {
   const body = { model: r.model, messages: r.parts.map((p: { hash: string }) => part(p.hash)), system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
   return observe(s, describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time), r.inputTokens, r.outputTokens ?? 0)
@@ -70,8 +78,4 @@ if (values['check-journal']) {
   }
   console.error(`journal replay matches the observed stats at all ${i} requests (${readFileSync(journal).length.toLocaleString('en-US')} bytes)`)
 }
-if (!s) {
-  console.error(`no request lines with usage under ${dir}`)
-  process.exit(1)
-}
-console.log(render(s, path.basename(dir)))
+console.log(render(s!, path.basename(dir)))
