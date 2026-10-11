@@ -7,19 +7,19 @@ const system = (text: string) => ({ role: 'system', content: text })
 const assistant = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] })
 
 test('the command is a user message whose only text is it', () => {
-  assert.ok(isCommand(user(' :proxy stats\n')))
-  assert.ok(isCommand({ role: 'user', content: ':proxy stats' }))
-  assert.ok(!isCommand(user(':proxy stats please')))
-  assert.ok(!isCommand(assistant(':proxy stats')))
+  assert.ok(isCommand(user(' :shaver stats\n')))
+  assert.ok(isCommand({ role: 'user', content: ':shaver stats' }))
+  assert.ok(!isCommand(user(':shaver stats please')))
+  assert.ok(!isCommand(assistant(':shaver stats')))
 })
 
 test('an answered command, the system messages after it and its reply are stripped', () => {
-  const msgs = [user('a'), assistant('A'), user(':proxy stats'), system('nudge'), assistant('stats'), user('b')]
+  const msgs = [user('a'), assistant('A'), user(':shaver stats'), system('nudge'), assistant('stats'), user('b')]
   assert.deepEqual(stripCommands(msgs), [user('a'), assistant('A'), user('b')])
 })
 
 test('a command not yet answered stays', () => {
-  const msgs = [user('a'), assistant('A'), user(':proxy stats'), system('nudge')]
+  const msgs = [user('a'), assistant('A'), user(':shaver stats'), system('nudge')]
   assert.deepEqual(stripCommands(msgs), msgs)
 })
 

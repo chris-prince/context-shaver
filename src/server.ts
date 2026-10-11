@@ -137,7 +137,7 @@ function logDirOf(body: { messages: ApiMsg[]; metadata?: { user_id?: string } })
   return path.join(logRoot, `${session}-${hash(JSON.stringify(body.messages[0])).slice(0, 8)}`)
 }
 
-// The answer to `:proxy stats`: scripts/analyze-context.py on the conversation's
+// The answer to `:shaver stats`: scripts/analyze-context.py on the conversation's
 // latest logged request. The conversation's key is taken as prepare takes it,
 // after the forced deferrals.
 function stats(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
@@ -227,7 +227,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const url = req.url ?? '/'
   let p: Prepared | undefined
   if (req.method === 'POST' && url.split('?')[0] === '/v1/messages' && raw.length) {
-    // `:proxy stats` is answered here; answered ones are stripped (command.ts).
+    // `:shaver stats` is answered here; answered ones are stripped (command.ts).
     try {
       const body = JSON.parse(raw.toString('utf8'))
       if (Array.isArray(body.messages) && body.messages.length) {

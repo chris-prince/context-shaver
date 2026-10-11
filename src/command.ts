@@ -1,11 +1,11 @@
-// `:proxy stats`, typed as a prompt, is answered by the proxy and never reaches
-// the model. Claude Code keeps the command and the proxy's reply in its
+// `:shaver stats`, typed as a prompt, is answered by the proxy and never
+// reaches the model. Claude Code keeps the command and the proxy's reply in its
 // history and sends them again with every later request, so the proxy strips
 // each command, the system messages after it and the reply from every request
 // it forwards. Dropping them leaves what came before next to what came after,
 // a prompt or the end, so no system message is left after an assistant one.
 
-export const COMMAND = ':proxy stats'
+export const COMMAND = ':shaver stats'
 
 type Block = { type: string; text?: string }
 type Msg = { role: string; content: string | Block[] }
