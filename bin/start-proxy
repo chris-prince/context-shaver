@@ -2,11 +2,14 @@
 # Starts the mini-context proxy if nothing is listening on its port, and leaves
 # it running; its output goes to proxy-data/proxy.log. With --restart, stops whatever is
 # listening there first, so the proxy picks up code changes. Sessions running
-# through it resume with their next request, once it is back up.
+# through it resume with their next request, once it is back up. With
+# MINI_CTX_LOG=1, it logs every request under proxy-data/logs/.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 port=${MINI_CTX_PORT:-8787}
+log=()
+[[ ${MINI_CTX_LOG:-} == 1 ]] && log=(--log-step-events)
 up() { nc -z 127.0.0.1 "$port" 2>/dev/null; }
 
 if [[ ${1:-} == --restart ]] && up; then
@@ -17,7 +20,7 @@ fi
 
 if ! up; then
   mkdir -p "$repo/proxy-data"
-  nohup node "$repo/src/server.ts" --port "$port" --log-step-events \
+  nohup node "$repo/src/server.ts" --port "$port" ${log[@]+"${log[@]}"} \
     >>"$repo/proxy-data/proxy.log" 2>&1 &
   for _ in $(seq 50); do up && break; sleep 0.1; done
   up || { echo "start-proxy: the proxy did not start; see $repo/proxy-data/proxy.log" >&2; exit 1; }
