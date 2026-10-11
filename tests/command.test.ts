@@ -1,16 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isCommand, reply, stripCommands } from '../src/command.ts'
+import { commandOf, reply, stripCommands } from '../src/command.ts'
 
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] })
 const system = (text: string) => ({ role: 'system', content: text })
 const assistant = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] })
 
-test('the command is a user message whose only text is it', () => {
-  assert.ok(isCommand(user(' :shaver stats\n')))
-  assert.ok(isCommand({ role: 'user', content: ':shaver stats' }))
-  assert.ok(!isCommand(user(':shaver stats please')))
-  assert.ok(!isCommand(assistant(':shaver stats')))
+test('a command is a user message whose only text is one', () => {
+  assert.equal(commandOf(user(' :shaver stats\n')), ':shaver stats')
+  assert.equal(commandOf({ role: 'user', content: ':shaver policy' }), ':shaver policy')
+  assert.equal(commandOf(user(':shaver stats please')), undefined)
+  assert.equal(commandOf(user(':shaver other')), undefined)
+  assert.equal(commandOf(assistant(':shaver stats')), undefined)
 })
 
 test('an answered command, the system messages after it and its reply are stripped', () => {

@@ -20,7 +20,7 @@ import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
-import { isCommand, reply, stripCommands } from './command.ts'
+import { commandOf, reply, stripCommands } from './command.ts'
 import { loadPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
@@ -137,6 +137,16 @@ function logDirOf(body: { messages: ApiMsg[]; metadata?: { user_id?: string } })
   return path.join(logRoot, `${session}-${hash(JSON.stringify(body.messages[0])).slice(0, 8)}`)
 }
 
+// The answer to `:shaver policy`: the policy file as it is now, which may differ
+// from what was loaded at startup if it was edited since.
+function policyText(): string {
+  try {
+    return '`' + a.policy + '`:\n```json\n' + readFileSync(a.policy, 'utf8').trimEnd() + '\n```'
+  } catch {
+    return `mini-context: no policy at ${a.policy}, so requests pass through untrimmed.`
+  }
+}
+
 // The answer to `:shaver stats`: scripts/analyze-context.py on the conversation's
 // latest logged request. The conversation's key is taken as prepare takes it,
 // after the forced deferrals.
@@ -227,14 +237,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const url = req.url ?? '/'
   let p: Prepared | undefined
   if (req.method === 'POST' && url.split('?')[0] === '/v1/messages' && raw.length) {
-    // `:shaver stats` is answered here; answered ones are stripped (command.ts).
+    // `:shaver` commands are answered here; answered ones are stripped (command.ts).
     try {
       const body = JSON.parse(raw.toString('utf8'))
       if (Array.isArray(body.messages) && body.messages.length) {
         const msgs = stripCommands(body.messages)
-        if (body.tools?.length && isCommand(msgs[msgs.length - 1])) {
+        const command = body.tools?.length && commandOf(msgs[msgs.length - 1])
+        if (command) {
+          const text = command === ':shaver policy' ? policyText() : stats({ ...body, messages: msgs })
           res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
-          return void res.end(reply(stats({ ...body, messages: msgs }), body.model, !!body.stream))
+          return void res.end(reply(text, body.model, !!body.stream))
         }
         if (msgs.length < body.messages.length) raw = Buffer.from(JSON.stringify({ ...body, messages: msgs }))
       }

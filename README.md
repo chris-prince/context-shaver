@@ -191,7 +191,8 @@ Scripts:
   request's tokens down by age and by part type. Typing `:shaver stats` as a
   prompt shows it for the session's latest request: the proxy answers it
   without calling the model, and strips the command and its answer from every
-  later request (`src/command.ts`).
+  later request (`src/command.ts`). `:shaver policy` shows the policy file the
+  same way, as it is on disk now.
 - `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
 - `node scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's

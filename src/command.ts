@@ -1,20 +1,21 @@
-// `:shaver stats`, typed as a prompt, is answered by the proxy and never
-// reaches the model. Claude Code keeps the command and the proxy's reply in its
-// history and sends them again with every later request, so the proxy strips
-// each command, the system messages after it and the reply from every request
-// it forwards. Dropping them leaves what came before next to what came after,
-// a prompt or the end, so no system message is left after an assistant one.
+// `:shaver stats` and `:shaver policy`, typed as a prompt, are answered by the
+// proxy and never reach the model. Claude Code keeps the command and the
+// proxy's reply in its history and sends them again with every later request,
+// so the proxy strips each command, the system messages after it and the reply
+// from every request it forwards. Dropping them leaves what came before next to
+// what came after, a prompt or the end, so no system message is left after an
+// assistant one.
 
-export const COMMAND = ':shaver stats'
+export const COMMANDS = [':shaver stats', ':shaver policy']
 
 type Block = { type: string; text?: string }
 type Msg = { role: string; content: string | Block[] }
 
-// Whether a message is the command: a user message whose only text is it.
-export function isCommand(m: Msg): boolean {
-  if (m.role !== 'user') return false
+// The command a message is, if any: a user message whose only text is one.
+export function commandOf(m: Msg): string | undefined {
+  if (m.role !== 'user') return undefined
   const texts = typeof m.content === 'string' ? [m.content] : m.content.filter((b) => b.type === 'text').map((b) => b.text ?? '')
-  return texts.length === 1 && texts[0].trim() === COMMAND
+  return texts.length === 1 ? COMMANDS.find((c) => c === texts[0].trim()) : undefined
 }
 
 // The messages with each answered command, the system messages after it and
@@ -22,7 +23,7 @@ export function isCommand(m: Msg): boolean {
 export function stripCommands<M extends Msg>(msgs: M[]): M[] {
   const out: M[] = []
   for (let i = 0; i < msgs.length; i++) {
-    if (!isCommand(msgs[i])) {
+    if (!commandOf(msgs[i])) {
       out.push(msgs[i])
       continue
     }
