@@ -3,7 +3,8 @@
 # it running; its output goes to proxy-data/proxy.log. With --restart, asks the
 # proxy there to stop first, so a new one picks up code and policy changes.
 # Sessions running through it resume with their next request, once it is back
-# up. With CTX_SHAVER_LOG=1, it logs every request under proxy-data/logs/.
+# up. With --stop, only stops it. With CTX_SHAVER_LOG=1, it logs every request
+# under proxy-data/logs/.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -19,16 +20,17 @@ stop() {
     while read -r -t 5 _ <&3; do :; done) 2>/dev/null || true
 }
 
-if [[ ${1:-} == --restart ]] && up; then
+if [[ ${1:-} == --restart || ${1:-} == --stop ]] && up; then
   stop
   for _ in $(seq 50); do up || break; sleep 0.1; done
-  ! up || { echo "start-proxy: the proxy on port $port did not stop" >&2; exit 1; }
+  ! up || { echo "run-proxy: the proxy on port $port did not stop" >&2; exit 1; }
 fi
+[[ ${1:-} == --stop ]] && exit 0
 
 if ! up; then
   mkdir -p "$repo/proxy-data"
   nohup node "$repo/src/server.ts" --port "$port" ${log[@]+"${log[@]}"} \
     >>"$repo/proxy-data/proxy.log" 2>&1 &
   for _ in $(seq 50); do up && break; sleep 0.1; done
-  up || { echo "start-proxy: the proxy did not start; see $repo/proxy-data/proxy.log" >&2; exit 1; }
+  up || { echo "run-proxy: the proxy did not start; see $repo/proxy-data/proxy.log" >&2; exit 1; }
 fi

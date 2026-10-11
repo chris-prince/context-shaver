@@ -34,10 +34,11 @@ request (about 26k more tokens).
 To pick up changes to the proxy's code, restart it:
 
 ```bash
-bin/start-proxy --restart
+bin/run-proxy --restart
 ```
 
-Sessions running through it carry on with their next request.
+Sessions running through it carry on with their next request. To stop it,
+run `bin/run-proxy --stop`.
 
 Claude Code cannot reach the API while the proxy is down, so a session started
 this way fails if the proxy is stopped.
@@ -171,7 +172,7 @@ prompt changed), both candidates write everything, so advancing always pays.
 
 ## Logs
 
-With `--log-step-events` (which `bin/start-proxy` passes when `CTX_SHAVER_LOG=1`
+With `--log-step-events` (which `bin/run-proxy` passes when `CTX_SHAVER_LOG=1`
 is set), logs go to
 `proxy-data/logs/<session>-<conversation>/`:
 

@@ -240,9 +240,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const original = await readBody(req)
   let raw = original
   const url = req.url ?? '/'
-  // bin/start-proxy --restart stops the proxy with this. The header keeps a web
-  // page from sending it: browsers send a custom header only after a CORS check
-  // this proxy doesn't answer.
+  // bin/run-proxy --restart and --stop stop the proxy with this. The header
+  // keeps a web page from sending it: browsers send a custom header only after a
+  // CORS check this proxy doesn't answer.
   if (req.method === 'POST' && url === '/ctx-shaver/shutdown' && req.headers['x-ctx-shaver'] === 'shutdown') {
     console.error('ctx-shaver: shutting down, as asked')
     return void res.end('stopping\n', () => process.exit(0))
