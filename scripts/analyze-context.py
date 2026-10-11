@@ -89,10 +89,10 @@ def local_date(stamp: str | None) -> dt.date | None:
 
 
 def span(start: str, end: str) -> str:
-    """The time between two ISO timestamps, like 1d 3h, or 17h under a day."""
-    hours = int((dt.datetime.fromisoformat(end.replace("Z", "+00:00")) - dt.datetime.fromisoformat(start.replace("Z", "+00:00"))).total_seconds() // 3600)
-    days, hours = divmod(hours, 24)
-    return f"{days}d {hours}h" if days else f"{hours}h"
+    """The time between two ISO timestamps, like 1d 3h, 17h under a day, or 42m under an hour."""
+    minutes = int((dt.datetime.fromisoformat(end.replace("Z", "+00:00")) - dt.datetime.fromisoformat(start.replace("Z", "+00:00"))).total_seconds() // 60)
+    days, hours = divmod(minutes // 60, 24)
+    return f"{days}d {hours}h" if days else f"{hours}h" if hours else f"{minutes}m"
 
 
 def local_time(stamp: str) -> str:
