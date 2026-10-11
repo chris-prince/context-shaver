@@ -21,6 +21,7 @@ import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { commandOf, reply, stripCommands } from './command.ts'
 import { describe, observe, render, type Sent, type Stats } from './stats.ts'
+import { record, replay } from './journal.ts'
 import { loadPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
@@ -62,6 +63,15 @@ function load(key: string): State | undefined {
 }
 
 const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify(s))
+
+// Each conversation's stats as its journal ends (journal.ts), replayed from the
+// journal the first time they're asked for.
+const latest = new Map<string, Stats | undefined>()
+const journalOf = (key: string) => path.join(stateDir, `${key}.journal.jsonl`)
+function latestOf(key: string): Stats | undefined {
+  if (!latest.has(key)) latest.set(key, replay(journalOf(key)).at(-1))
+  return latest.get(key)
+}
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
@@ -152,7 +162,7 @@ function policyText(): string {
 // The answer to `:shaver stats`: the conversation's latest answered request,
 // from its state (stats.ts).
 function stats(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
-  const s = load(hash(JSON.stringify(body.messages[0])))?.stats
+  const s = latestOf(hash(JSON.stringify(body.messages[0])))
   if (!s) return 'mini-context: no request in this conversation has been counted yet, so there are no stats.'
   return '```\n' + render(s, path.basename(logDirOf(body))) + '\n```'
 }
@@ -286,6 +296,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
   const stats = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
+  if (inputTokens && stats) {
+    record(journalOf(p.key), latestOf(p.key), stats)
+    latest.set(p.key, stats)
+  }
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, ...(stats && { stats }) })
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {

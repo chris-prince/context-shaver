@@ -198,10 +198,17 @@ Scripts:
   command and its answer from every later request (`src/command.ts`).
   `:shaver policy` shows the policy file the same way, as it is on disk now.
   Counting starts when the state does, so a conversation begun under an older
-  proxy counts its earlier messages by bytes.
-- `node scripts/stats-from-logs.ts <conversation dir> [--request N]` replays a
-  logged conversation through `src/stats.ts`, to check its output against
-  `analyze-context.py`'s.
+  proxy counts its earlier messages by bytes. Each counted request also
+  appends what it changed to `proxy-data/state/<key>.journal.jsonl`
+  (`src/journal.ts`), about 1 KB a request; replayed from the start, the
+  journal gives the stats after any request. The proxy keeps each
+  conversation's latest stats in memory, replaying the journal once after
+  a restart.
+- `node scripts/stats-from-logs.ts <conversation dir> [--request N]
+  [--check-journal]` replays a logged conversation through `src/stats.ts`,
+  to check its output against `analyze-context.py`'s. `--check-journal`
+  also checks that the journal replays to the same stats after every
+  request.
 - `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
 - `node scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's

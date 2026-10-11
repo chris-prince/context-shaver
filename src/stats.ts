@@ -43,10 +43,6 @@ export type Stats = {
   answers: Record<string, number>
   // When each part, and each lineage, first appeared.
   seen: Record<string, string>
-  // The request each key was last sent in, by number. A side request can fork
-  // from a few requests back, so a part is kept until KEEP requests have gone
-  // without it.
-  used: Record<string, number>
   parts: Array<{ key: string; kinds: Record<string, number>; lineage?: string }>
   defs: Sent['defs']
   loaded: string[]
@@ -99,8 +95,6 @@ export function describe(body: { model: string; messages: ApiMsg[]; system?: unk
   }
 }
 
-const KEEP = 100
-
 // The stats once a request is answered with these counts.
 export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number): Stats {
   const known = { ...prev?.tokens }
@@ -147,21 +141,16 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     if (p.lineage) seen['lineage:' + p.lineage] ??= r.time
   }
   const requests = (prev?.requests ?? 0) + 1
-  const used = { ...prev?.used }
-  for (const k of [...keys, r.defs.key, ...r.loaded.map((t) => t.key), ...r.parts.flatMap((p) => (p.lineage ? ['lineage:' + p.lineage] : []))]) used[k] = requests
-  const live = new Set(Object.keys(used).filter((k) => requests - used[k] < KEEP))
-  const only = <T>(o: Record<string, T>) => Object.fromEntries(Object.entries(o).filter(([k]) => live.has(k)))
   return {
     first: prev?.first ?? r.time,
     requests,
     time: r.time,
     model: r.model,
     inputTokens,
-    tokens: only(known),
-    bound: only(bound),
-    answers: only(answers),
-    seen: only(seen),
-    used: only(used),
+    tokens: known,
+    bound,
+    answers,
+    seen,
     parts: r.parts.map((p) => ({ key: p.key, kinds: p.kinds, ...(p.lineage ? { lineage: p.lineage } : {}) })),
     defs: r.defs,
     loaded: r.loaded.map((t) => t.key),
