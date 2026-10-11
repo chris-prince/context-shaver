@@ -9,7 +9,7 @@
 // and the keys deleted; and, when it changed, the part list, each run of parts
 // kept from the previous list as [from, to) and each other part whole.
 
-import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, renameSync } from 'node:fs'
 import type { Stats } from './stats.ts'
 
 const PLAIN = ['first', 'requests', 'time', 'model', 'inputTokens', 'defs', 'loaded', 'ends'] as const
@@ -78,9 +78,17 @@ export function* replay(file: string): Generator<Stats> {
   for (const line of readFileSync(file, 'utf8').split('\n')) if (line) yield (s = apply(s, JSON.parse(line)))
 }
 
-// The stats the journal ends with.
+// The stats the journal ends with. A journal that won't replay is moved aside
+// to <key>.journal.bad.jsonl and the stats start again, so trimming, which
+// counts from them, never depends on it.
 export function latest(file: string): Stats | undefined {
   let s: Stats | undefined
-  for (s of replay(file));
-  return s
+  try {
+    for (s of replay(file));
+    return s
+  } catch (err) {
+    renameSync(file, file.replace(/\.jsonl$/, '.bad.jsonl'))
+    console.error(`mini-context: journal moved aside, stats start again: ${file}:`, err)
+    return undefined
+  }
 }

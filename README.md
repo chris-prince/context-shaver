@@ -200,7 +200,9 @@ Scripts:
   `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a
   request; replayed from the start, the journal gives the stats after any
   request. The proxy keeps only each conversation's latest stats in memory,
-  replaying the journal once after a restart. Counting starts when the
+  replaying the journal once after a restart; a journal that won't replay
+  is moved aside to `<key>.journal.bad.jsonl` and the stats start again.
+  Counting starts when the
   journal does, so a conversation begun under an older proxy counts its
   earlier messages by bytes.
 - `node scripts/stats-from-logs.ts <conversation dir> [--request N]

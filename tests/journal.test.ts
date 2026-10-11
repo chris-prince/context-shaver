@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -45,4 +45,14 @@ test('a line keeps runs of unchanged parts as ranges', () => {
 test('there is no history without a journal', () => {
   assert.deepEqual([...replay(path.join(tmpdir(), 'no-such-journal.jsonl'))], [])
   assert.equal(latest(path.join(tmpdir(), 'no-such-journal.jsonl')), undefined)
+})
+
+test('a journal that will not replay is moved aside and the stats start again', () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
+  const s = observe(undefined, describe(body([user('a')]), ends, '2026-10-11T10:00:00Z'), 1000, 30)
+  record(file, undefined, s)
+  appendFileSync(file, '{"set":{"requ')
+  assert.equal(latest(file), undefined)
+  assert.equal(existsSync(file), false)
+  assert.match(readFileSync(file.replace(/\.jsonl$/, '.bad.jsonl'), 'utf8'), /"requ$/)
 })
