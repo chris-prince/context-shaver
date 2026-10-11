@@ -1,11 +1,11 @@
-// `:ctx stats`, typed as a prompt, is answered by the proxy and never reaches
+// `:proxy stats`, typed as a prompt, is answered by the proxy and never reaches
 // the model. Claude Code keeps the command and the proxy's reply in its
 // history and sends them again with every later request, so the proxy strips
 // each command, the system messages after it and the reply from every request
 // it forwards. Dropping them leaves what came before next to what came after,
 // a prompt or the end, so no system message is left after an assistant one.
 
-export const COMMAND = ':ctx stats'
+export const COMMAND = ':proxy stats'
 
 type Block = { type: string; text?: string }
 type Msg = { role: string; content: string | Block[] }
@@ -37,7 +37,7 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
 // A response holding just `text`, as a stream of events or a plain message,
 // with no usage, since no model ran.
 export function reply(text: string, model: string, stream: boolean): string {
-  const message = { id: `msg_ctx_${Date.now()}`, type: 'message', role: 'assistant', model, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } }
+  const message = { id: `msg_proxy_${Date.now()}`, type: 'message', role: 'assistant', model, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } }
   if (!stream) return JSON.stringify({ ...message, content: [{ type: 'text', text }], stop_reason: 'end_turn' })
   const events: Record<string, unknown>[] = [
     { type: 'message_start', message: { ...message, content: [], stop_reason: null } },

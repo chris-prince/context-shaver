@@ -188,7 +188,7 @@ With `--log-step-events`, logs go to
 Scripts:
 
 - `python3 scripts/analyze-context.py [conversation dir] [--request N]` breaks one
-  request's tokens down by age and by part type. Typing `:ctx stats` as a
+  request's tokens down by age and by part type. Typing `:proxy stats` as a
   prompt shows it for the session's latest request: the proxy answers it
   without calling the model, and strips the command and its answer from every
   later request (`src/command.ts`).
