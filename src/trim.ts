@@ -225,7 +225,7 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock
 // most models, so a written character costs M + 1 = 20 reads; the models in
 // READ_COST read for less, and a write costs them more reads. K is the warm
 // requests expected to read what a trim saved before the cache next goes cold:
-// 40 at an hour's TTL (mini-context's notes.md, "Light compaction").
+// 40 at an hour's TTL (mini-context's local/notes.md, "Light compaction").
 const READ_COST: Record<string, number> = { 'claude-opus-5-5': 0.05, 'claude-fable-5-1': 0.025, 'claude-mythos-5-1': 0.025 }
 export const writeCost = (model: string) => 2 / (READ_COST[model] ?? 0.1) - 1 // M
 export const K = 40
@@ -237,7 +237,7 @@ export const K = 40
 // blocks the proxy saw generated; any other is put at SIGNATURE_TOKENS a
 // signature character. A block's size is its characters with a thinking block
 // counted as its tokens' worth of text, at TEXT_TOKENS a character (both
-// measured; notes.md, "Reasoning drops").
+// measured; local/notes.md, "Reasoning drops").
 export const TEXT_TOKENS = 0.39
 const SIGNATURE_TOKENS = 0.13
 export type Thinking = ReadonlyMap<string, number>
