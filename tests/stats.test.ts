@@ -20,6 +20,17 @@ test('a request adds up to its count; a new reply costs its answer\'s output', (
   assert.equal(s.requests, 2)
 })
 
+test('a reply whose output is over what the request grew by gives back the excess', () => {
+  const prompt: ApiMsg = { role: 'user', content: 'hi' }
+  let s = observe(undefined, describe(body([prompt]), ends, '2026-10-11T10:00:00Z'), 1000, 40)
+  const reply: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'hello there' }] }
+  const next: ApiMsg = { role: 'user', content: 'ok' }
+  s = observe(s, describe(body([prompt, reply, next]), ends, '2026-10-11T10:01:00Z'), 1030, 0)
+  assert.equal(sum(s), 1030)
+  assert.equal(s.tokens[s.parts[1].key], 30)
+  assert.equal(s.tokens[s.parts[2].key], 0)
+})
+
 test('a part a side request left out keeps its count when it comes back', () => {
   const a: ApiMsg = { role: 'user', content: 'a' }
   const b: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b' }] }

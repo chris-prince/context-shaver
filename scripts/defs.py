@@ -57,8 +57,9 @@ def part_tokens(session_dir: str, reqs: list[dict]) -> list[dict[str, float]]:
 
     Taken in order, a request's count less what its parts already counted is
     what its new parts cost together. A new assistant message costs the output
-    count of the request that answered with it (its input cost is within about
-    15 tokens of that); the other new parts share what is left by bytes. The
+    count of the request that answered with it (its input cost is within a few
+    tens of tokens of that, and it gives back what would leave the other new
+    parts below zero); the other new parts share what is left by bytes. The
     parts are the messages, keyed by hash; the system blocks and tools sent in
     full together, keyed `defs:` and their hashes; and each loaded deferred
     tool, keyed `tool:` and its hash. A message whose breakpoint moved is the
@@ -92,6 +93,7 @@ def part_tokens(session_dir: str, reqs: list[dict]) -> list[dict[str, float]]:
             if k not in new and k in thinking:
                 new.append(k)
                 sizes[k] -= thinking.pop(k)
+        replies: list[str] = []
         left = r["inputTokens"] - sum(known[k] * count.get(k, 1) for k in sizes if k not in new)
         for i, k in enumerate(msgs):
             # A reply first sent with its thinking trimmed off costs less than
@@ -108,6 +110,15 @@ def part_tokens(session_dir: str, reqs: list[dict]) -> list[dict[str, float]]:
                     if t > 2:
                         thinking[k] = t
                     new.remove(k)
+                    replies.append(k)
+        # An output count can be a few tens of tokens over the reply's input
+        # cost; the replies give back what would leave the other new parts
+        # below zero.
+        counted = sum(known[k] * count[k] for k in replies)
+        if left < 0 and counted:
+            for k in replies:
+                known[k] *= max(0, counted + left) / counted
+            left = 0
         rest = sum(sizes[k] * count.get(k, 1) for k in new)
         for k in new:
             known[k] = left * sizes[k] / rest

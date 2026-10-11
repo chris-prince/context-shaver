@@ -122,6 +122,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
         sizes[k] -= bound[k]
         delete bound[k]
       }
+  const replies: string[] = []
   let left = inputTokens - Object.keys(sizes).filter((k) => !isNew.has(k)).reduce((n, k) => n + known[k] * (count[k] ?? 1), 0)
   r.parts.forEach((p, i) => {
     // A reply first sent with its thinking trimmed off costs less than its
@@ -134,7 +135,15 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     left -= out * count[p.key]
     if (p.thinking > 2) bound[p.key] = p.thinking
     isNew.delete(p.key)
+    replies.push(p.key)
   })
+  // An output count can be a few tens of tokens over the reply's input cost;
+  // the replies give back what would leave the other new parts below zero.
+  const counted = replies.reduce((n, k) => n + known[k] * count[k], 0)
+  if (left < 0 && counted) {
+    for (const k of replies) known[k] *= Math.max(0, counted + left) / counted
+    left = 0
+  }
   const rest = [...isNew].reduce((n, k) => n + sizes[k] * (count[k] ?? 1), 0)
   for (const k of isNew) known[k] = (left * sizes[k]) / rest
   if (outputTokens) answers[keys[keys.length - 1]] = outputTokens
