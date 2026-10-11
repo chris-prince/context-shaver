@@ -249,3 +249,7 @@ those fields.
 ```bash
 node --test tests/*.test.ts
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
