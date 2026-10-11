@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { diff, record, replay } from '../src/journal.ts'
+import { diff, latest, record, replay } from '../src/journal.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -30,7 +30,8 @@ test('replaying the journal gives the stats after every request', () => {
     record(file, s, next)
     observed.push((s = next))
   })
-  assert.deepEqual(replay(file), observed)
+  assert.deepEqual([...replay(file)], observed)
+  assert.deepEqual(latest(file), observed.at(-1))
 })
 
 test('a line keeps runs of unchanged parts as ranges', () => {
@@ -42,5 +43,6 @@ test('a line keeps runs of unchanged parts as ranges', () => {
 })
 
 test('there is no history without a journal', () => {
-  assert.deepEqual(replay(path.join(tmpdir(), 'no-such-journal.jsonl')), [])
+  assert.deepEqual([...replay(path.join(tmpdir(), 'no-such-journal.jsonl'))], [])
+  assert.equal(latest(path.join(tmpdir(), 'no-such-journal.jsonl')), undefined)
 })

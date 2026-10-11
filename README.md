@@ -193,17 +193,16 @@ Scripts:
   request's tokens down by age and by part type.
 - Typing `:shaver stats` as a prompt shows the same breakdown for the
   session's latest request, logged or not: after each request the proxy
-  counts its parts' tokens into the conversation's state (`src/stats.ts`),
-  and answers from that. It answers without calling the model, and strips the
+  counts its parts' tokens (`src/stats.ts`) and answers from those counts. It answers without calling the model, and strips the
   command and its answer from every later request (`src/command.ts`).
   `:shaver policy` shows the policy file the same way, as it is on disk now.
-  Counting starts when the state does, so a conversation begun under an older
-  proxy counts its earlier messages by bytes. Each counted request also
-  appends what it changed to `proxy-data/state/<key>.journal.jsonl`
-  (`src/journal.ts`), about 1 KB a request; replayed from the start, the
-  journal gives the stats after any request. The proxy keeps each
-  conversation's latest stats in memory, replaying the journal once after
-  a restart.
+  Each counted request appends what it changed to
+  `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a
+  request; replayed from the start, the journal gives the stats after any
+  request. The proxy keeps only each conversation's latest stats in memory,
+  replaying the journal once after a restart. Counting starts when the
+  journal does, so a conversation begun under an older proxy counts its
+  earlier messages by bytes.
 - `node scripts/stats-from-logs.ts <conversation dir> [--request N]
   [--check-journal]` replays a logged conversation through `src/stats.ts`,
   to check its output against `analyze-context.py`'s. `--check-journal`

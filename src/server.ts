@@ -21,7 +21,7 @@ import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { commandOf, reply, stripCommands } from './command.ts'
 import { describe, observe, render, type Sent, type Stats } from './stats.ts'
-import { record, replay } from './journal.ts'
+import { latest, record } from './journal.ts'
 import { loadPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
@@ -48,9 +48,8 @@ mkdirSync(stateDir, { recursive: true })
 // A conversation's applied clock; the cache entries its answered requests
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
 // tokens each thinking block it was answered with bills, by the signature's
-// hash (trim.ts, sizeOf); and its parts' token counts, for `:shaver stats`
-// (stats.ts).
-type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; stats?: Stats }
+// hash (trim.ts, sizeOf). Its stats, for `:shaver stats`, are in its journal.
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number> }
 
 // A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
@@ -66,11 +65,11 @@ const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key
 
 // Each conversation's stats as its journal ends (journal.ts), replayed from the
 // journal the first time they're asked for.
-const latest = new Map<string, Stats | undefined>()
+const current = new Map<string, Stats | undefined>()
 const journalOf = (key: string) => path.join(stateDir, `${key}.journal.jsonl`)
 function latestOf(key: string): Stats | undefined {
-  if (!latest.has(key)) latest.set(key, replay(journalOf(key)).at(-1))
-  return latest.get(key)
+  if (!current.has(key)) current.set(key, latest(journalOf(key)))
+  return current.get(key)
 }
 
 // What a request becomes: the body to send, and what to record once it is
@@ -114,7 +113,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: s?.stats, sent: describe(body, trimmed, time) }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: latestOf(key), sent: describe(body, trimmed, time) }
   if (a['log-step-events']) {
     p.logDir = logDirOf(body)
     if (d?.savedChars) {
@@ -160,7 +159,7 @@ function policyText(): string {
 }
 
 // The answer to `:shaver stats`: the conversation's latest answered request,
-// from its state (stats.ts).
+// from its journal (stats.ts).
 function stats(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
   const s = latestOf(hash(JSON.stringify(body.messages[0])))
   if (!s) return 'mini-context: no request in this conversation has been counted yet, so there are no stats.'
@@ -298,9 +297,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const stats = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
   if (inputTokens && stats) {
     record(journalOf(p.key), latestOf(p.key), stats)
-    latest.set(p.key, stats)
+    current.set(p.key, stats)
   }
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, ...(stats && { stats }) })
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) } })
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
       ...p.logLine,

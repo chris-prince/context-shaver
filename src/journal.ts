@@ -70,11 +70,17 @@ export function record(file: string, prev: Stats | undefined, next: Stats): void
   appendFileSync(file, JSON.stringify(diff(prev, next)) + '\n')
 }
 
-// The stats after each line of a journal, in order; none if there is none.
-export function replay(file: string): Stats[] {
-  const out: Stats[] = []
-  if (!existsSync(file)) return out
-  for (const line of readFileSync(file, 'utf8').split('\n'))
-    if (line) out.push(apply(out[out.length - 1], JSON.parse(line)))
-  return out
+// The stats after each line of a journal, in order, each built from the one
+// before; none if there is none.
+export function* replay(file: string): Generator<Stats> {
+  if (!existsSync(file)) return
+  let s: Stats | undefined
+  for (const line of readFileSync(file, 'utf8').split('\n')) if (line) yield (s = apply(s, JSON.parse(line)))
+}
+
+// The stats the journal ends with.
+export function latest(file: string): Stats | undefined {
+  let s: Stats | undefined
+  for (s of replay(file));
+  return s
 }

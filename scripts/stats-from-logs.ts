@@ -33,26 +33,35 @@ const reqs = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8')
     }
   })
 const last = values.request === undefined ? reqs.length - 1 : Number(values.request)
+const count = (s: Stats | undefined, r: any) => {
+  const body = { model: r.model, messages: r.parts.map((p: { hash: string }) => part(p.hash)), system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
+  return observe(s, describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time), r.inputTokens, r.outputTokens ?? 0)
+}
 const journal = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'journal.jsonl')
-const observed: Stats[] = []
 let s: Stats | undefined
 for (const r of reqs.slice(0, last + 1)) {
-  const body = { model: r.model, messages: r.parts.map((p: { hash: string }) => part(p.hash)), system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
-  const next = observe(s, describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time), r.inputTokens, r.outputTokens ?? 0)
-  if (values['check-journal']) {
-    record(journal, s, next)
-    observed.push(next)
-  }
+  const next = count(s, r)
+  if (values['check-journal']) record(journal, s, next)
   s = next
 }
+// Counts the requests again alongside the journal's replay, so that neither
+// side holds more than the stats after one request.
 if (values['check-journal']) {
-  const replayed = replay(journal)
-  const bad = observed.findIndex((o, i) => !isDeepStrictEqual(o, replayed[i]))
-  if (bad >= 0 || replayed.length !== observed.length) {
-    console.error(`journal replay differs from the observed stats at request ${bad >= 0 ? bad : replayed.length}`)
+  let again: Stats | undefined
+  let i = 0
+  for (const replayed of replay(journal)) {
+    again = count(again, reqs[i])
+    if (!isDeepStrictEqual(again, replayed)) {
+      console.error(`journal replay differs from the observed stats at request ${i}`)
+      process.exit(1)
+    }
+    i++
+  }
+  if (i !== last + 1) {
+    console.error(`journal replay ends at request ${i}, not ${last + 1}`)
     process.exit(1)
   }
-  console.error(`journal replay matches the observed stats at all ${observed.length} requests (${readFileSync(journal).length.toLocaleString('en-US')} bytes)`)
+  console.error(`journal replay matches the observed stats at all ${i} requests (${readFileSync(journal).length.toLocaleString('en-US')} bytes)`)
 }
 if (!s) {
   console.error(`no request lines with usage under ${dir}`)
