@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Starts the ctx-shaver proxy if nothing is listening on its port, and leaves
-# it running; its output goes to proxy-data/proxy.log. With --restart, stops whatever is
-# listening there first, so the proxy picks up code changes. Sessions running
-# through it resume with their next request, once it is back up. With
-# CTX_SHAVER_LOG=1, it logs every request under proxy-data/logs/.
+# it running; its output goes to proxy-data/proxy.log. With --restart, asks the
+# proxy there to stop first, so a new one picks up code and policy changes.
+# Sessions running through it resume with their next request, once it is back
+# up. With CTX_SHAVER_LOG=1, it logs every request under proxy-data/logs/.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -12,9 +12,15 @@ log=()
 [[ ${CTX_SHAVER_LOG:-} == 1 ]] && log=(--log-step-events)
 # True if anything accepts a connection, through bash's own /dev/tcp (no nc).
 up() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
+# Asks the proxy to exit (server.ts), so no lsof is needed to find its PID.
+stop() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$port" &&
+    printf 'POST /ctx-shaver/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nx-ctx-shaver: shutdown\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' >&3 &&
+    while read -r -t 5 _ <&3; do :; done) 2>/dev/null || true
+}
 
 if [[ ${1:-} == --restart ]] && up; then
-  kill $(lsof -ti "tcp:$port" -sTCP:LISTEN)
+  stop
   for _ in $(seq 50); do up || break; sleep 0.1; done
   ! up || { echo "start-proxy: the proxy on port $port did not stop" >&2; exit 1; }
 fi
