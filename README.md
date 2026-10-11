@@ -19,10 +19,10 @@ inside OpenCode.
 ## Running
 
 ```bash
-bin/ctx-shaver [claude args ...]
+bin/claude-via-shaver [claude args ...]
 ```
 
-`bin/ctx-shaver` starts the proxy if nothing is listening on its port (8787,
+`bin/claude-via-shaver` starts the proxy if nothing is listening on its port (8787,
 or `CTX_SHAVER_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json`, and
