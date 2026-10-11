@@ -132,7 +132,8 @@ def main() -> int:
     by_type: dict[str, float] = defaultdict(float)
     by_type["systemPrompt"] = fixed * d["systemPrompt"] / (d["systemPrompt"] + d["tools"])
     by_type["tools"] = fixed * d["tools"] / (d["systemPrompt"] + d["tools"])
-    by_type["toolsLoaded"] = sum(tokens["tool:" + t["hash"]] for t in request["tools"] if "tool:" + t["hash"] in tokens)
+    loaded = set().union(*(defs.referenced(os.path.join(session, "parts", p["hash"] + ".json")) for p in request["parts"]))
+    by_type["toolsLoaded"] = sum(tokens["tool:" + t["hash"]] for t in request["tools"] if t.get("deferred") and t["name"] in loaded)
 
     seen: dict[str, str] = {}
     for r in reqs:
