@@ -29,7 +29,7 @@ result too short to stub. Requests logged without `trimmedEnd` (the older
 lineage (role and tool id), and the earliest first appearance among the hashes
 carrying it wins.
 
-By part type: the same kinds, the frontier left out, since it is what the next
+By part type (pre-frontier only): the same kinds, the frontier left out, since it is what the next
 trims remove, under base and non-base; every percentage is of the section's
 total. What persists whole behind the frontier shows under its own kind:
 toolCalls, toolResults and reasoning.
@@ -170,14 +170,16 @@ def main() -> int:
     base = by_type["systemPrompt"] + by_type["tools"] + by_type["preamble"]
 
     print(f"Date: {ref}")
-    print(f"Request #{index} of {len(reqs)} in session {os.path.basename(session)}")
+    print(f"Session: {os.path.basename(session)}")
     print(f"Model: {model}")
+    print()
     print(f"{total:,.0f} tokens")
+    print(f"{index + 1:,} requests")
 
     print("\nTokens by age (in calendar days, local time)")
     print(row("base", base, total))
     if by_type["toolsLoaded"]:
-        print(row("tools loaded", by_type["toolsLoaded"], total))
+        print(row("toolsLoaded", by_type["toolsLoaded"], total))
     for d in sorted((d for d in by_day if d > 0), reverse=True):
         print(row(f"{d} day{'s' if d != 1 else ''} ago", by_day[d], total))
     if by_day.get(0):
@@ -186,12 +188,12 @@ def main() -> int:
         print(row("frontier", frontier, total))
     print(row("TOTAL", total, total, show_percent=False))
 
-    print("\nTokens by part type (frontier left out)")
+    print("\nTokens by part type (pre-frontier only)")
     print(row("base", base, persist))
-    for key in BASE_TYPES:
+    for key in sorted(BASE_TYPES, key=lambda k: LABELS.get(k, k)):
         print(row(LABELS.get(key, key), by_type[key], persist, indent=2))
     print(row("non-base", persist - base, persist))
-    for key in REST_TYPES:
+    for key in sorted(REST_TYPES, key=lambda k: LABELS.get(k, k)):
         value = by_type.get(key, 0.0)
         if key in ("toolsLoaded", "reasoning", "other") and not value:
             continue
