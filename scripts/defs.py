@@ -83,7 +83,9 @@ def part_tokens(session_dir: str, reqs: list[dict]) -> dict[str, float]:
         left = r["inputTokens"] - sum(known[k] * count.get(k, 1) for k in sizes if k in known)
         new = [k for k in sizes if k not in known]
         for i, k in enumerate(msgs):
-            if k in new and k.startswith('["assistant"') and i:
+            # A reply first sent with its thinking trimmed off costs less than
+            # its output, which counted the thinking.
+            if k in new and k.startswith('["assistant"') and i and i >= (r.get("trimmedEnd") or {}).get("reasoning", 0):
                 # Answered by the latest request ending with the message before
                 # it. A later, trimmed version of that answer is not the answer.
                 by = next((j for j in range(n - 1, -1, -1) if reqs[j]["parts"] and plain[reqs[j]["parts"][-1]["hash"]] == msgs[i - 1]), None)
