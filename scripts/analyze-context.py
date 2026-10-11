@@ -174,7 +174,7 @@ def main() -> int:
     persist = total - frontier
     base = by_type["systemPrompt"] + by_type["tools"] + by_type["preamble"]
 
-    print(f"Time: {local_time(request['time'])}")
+    print(f"Now: {local_time(request['time'])}")
     print(f"Session: {os.path.basename(session)}")
     print(f"Model: {model}")
     print()
