@@ -5,22 +5,28 @@
 // from every request it forwards. Dropping them leaves what came before next to
 // what came after, a prompt or the end, so no system message is left after an
 // assistant one. A command the model answered instead, with a tool call, stays,
-// since dropping the call would orphan its result.
+// since dropping the call would orphan its result. The first prompt of a session
+// comes with `<system-reminder>` blocks holding the instructions and context;
+// they don't stop it being a command, and stripping it keeps them.
 
 export const COMMANDS = [':shaver stats', ':shaver policy']
 
 type Block = { type: string; text?: string }
 type Msg = { role: string; content: string | Block[] }
 
-// The command a message is, if any: a user message whose only text is one.
+const isReminder = (b: Block) => b.type === 'text' && (b.text ?? '').trimStart().startsWith('<system-reminder>')
+
+// The command a message is, if any: a user message whose only text, besides
+// reminders, is one.
 export function commandOf(m: Msg): string | undefined {
   if (m.role !== 'user') return undefined
-  const texts = typeof m.content === 'string' ? [m.content] : m.content.filter((b) => b.type === 'text').map((b) => b.text ?? '')
+  const texts = typeof m.content === 'string' ? [m.content] : m.content.filter((b) => b.type === 'text' && !isReminder(b)).map((b) => b.text ?? '')
   return texts.length === 1 ? COMMANDS.find((c) => c === texts[0].trim()) : undefined
 }
 
 // The messages with each answered command, the system messages after it and
-// its reply removed. A command not yet answered, the last one, stays.
+// its reply removed, but for any reminders the command came with. A command not
+// yet answered, the last one, stays.
 export function stripCommands<M extends Msg>(msgs: M[]): M[] {
   const out: M[] = []
   for (let i = 0; i < msgs.length; i++) {
@@ -31,8 +37,11 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
     let j = i + 1
     while (j < msgs.length && msgs[j].role === 'system') j++
     const r = msgs[j]
-    if (r?.role === 'assistant' && !(Array.isArray(r.content) && r.content.some((b) => b.type === 'tool_use'))) i = j
-    else out.push(msgs[i])
+    if (r?.role === 'assistant' && !(Array.isArray(r.content) && r.content.some((b) => b.type === 'tool_use'))) {
+      const reminders = Array.isArray(msgs[i].content) ? (msgs[i].content as Block[]).filter(isReminder) : []
+      if (reminders.length) out.push({ ...msgs[i], content: reminders })
+      i = j
+    } else out.push(msgs[i])
   }
   return out
 }

@@ -14,6 +14,18 @@ test('a command is a user message whose only text is one', () => {
   assert.equal(commandOf(assistant(':shaver stats')), undefined)
 })
 
+const firstPrompt = (text: string) => ({ role: 'user', content: [{ type: 'text', text: '<system-reminder>\nAGENTS.md\n</system-reminder>' }, { type: 'text', text: '<system-reminder>\ngit status\n</system-reminder>\n' }, { type: 'text', text }] })
+
+test('a first prompt is a command despite the reminders before it', () => {
+  assert.equal(commandOf(firstPrompt(':shaver stats')), ':shaver stats')
+  assert.equal(commandOf(firstPrompt('hello')), undefined)
+})
+
+test('an answered first-prompt command is stripped but for its reminders', () => {
+  const msgs = [firstPrompt(':shaver stats'), assistant('stats'), user('b')]
+  assert.deepEqual(stripCommands(msgs), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, user('b')])
+})
+
 test('an answered command, the system messages after it and its reply are stripped', () => {
   const msgs = [user('a'), assistant('A'), user(':shaver stats'), system('nudge'), assistant('stats'), user('b')]
   assert.deepEqual(stripCommands(msgs), [user('a'), assistant('A'), user('b')])
