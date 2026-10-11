@@ -52,8 +52,8 @@ def message_key(m: dict) -> str:
     return json.dumps([m["role"], c], sort_keys=True)
 
 
-def part_tokens(session_dir: str, reqs: list[dict]) -> dict[str, float]:
-    """Each part's tokens, by hash, from the requests' reported counts.
+def part_tokens(session_dir: str, reqs: list[dict]) -> list[dict[str, float]]:
+    """Each request's parts' tokens, by hash, from the requests' reported counts.
 
     Taken in order, a request's count less what its parts already counted is
     what its new parts cost together. A new assistant message costs the output
@@ -63,12 +63,18 @@ def part_tokens(session_dir: str, reqs: list[dict]) -> dict[str, float]:
     full together, keyed `defs:` and their hashes; and each loaded deferred
     tool, keyed `tool:` and its hash. A message whose breakpoint moved is the
     same part under another hash.
+
+    A trim that changes an earlier message unbinds the thinking of the replies
+    after it, which the API then leaves out, so those replies are counted again
+    with the new parts, at their bytes less the thinking. A request's counts
+    are each part's latest, so its parts add up to its reported count.
     """
     parts = os.path.join(session_dir, "parts")
     plain = {h: message_key(json.load(open(os.path.join(parts, h + ".json"), encoding="utf-8"))) for r in reqs for h in {p["hash"] for p in r["parts"]}}
     known: dict[str, float] = {}  # by plain message, or defs:/tool: key
+    thinking: dict[str, int] = {}  # counted replies' bound thinking, in bytes
     answered: set[int] = set()  # requests whose answer has its count
-    out: dict[str, float] = {}
+    out: list[dict[str, float]] = []
     for n, r in enumerate(reqs):
         msgs = [plain[p["hash"]] for p in r["parts"]]
         loaded = set().union(*(referenced(os.path.join(parts, p["hash"] + ".json")) for p in r["parts"]))
@@ -80,8 +86,13 @@ def part_tokens(session_dir: str, reqs: list[dict]) -> dict[str, float]:
         full = [t for t in r["tools"] if not t.get("deferred")]
         sizes["defs:" + json.dumps(base_defs(r))] = sum(s["bytes"] for s in r["system"]) + sum(t["bytes"] for t in full)
         sizes.update({"tool:" + t["hash"]: t["bytes"] for t in r["tools"] if t.get("deferred") and t["name"] in loaded})
-        left = r["inputTokens"] - sum(known[k] * count.get(k, 1) for k in sizes if k in known)
         new = [k for k in sizes if k not in known]
+        first = next((i for i, k in enumerate(msgs) if k in new), len(msgs))
+        for k in dict.fromkeys(msgs[first:]):
+            if k not in new and k in thinking:
+                new.append(k)
+                sizes[k] -= thinking.pop(k)
+        left = r["inputTokens"] - sum(known[k] * count.get(k, 1) for k in sizes if k not in new)
         for i, k in enumerate(msgs):
             # A reply first sent with its thinking trimmed off costs less than
             # its output, which counted the thinking.
@@ -93,11 +104,12 @@ def part_tokens(session_dir: str, reqs: list[dict]) -> dict[str, float]:
                     answered.add(by)
                     known[k] = reqs[by]["outputTokens"]
                     left -= known[k] * count[k]
+                    t = len(json.dumps([b for b in json.loads(k)[1] if isinstance(b, dict) and b.get("type") == "thinking"]))
+                    if t > 2:
+                        thinking[k] = t
                     new.remove(k)
         rest = sum(sizes[k] * count.get(k, 1) for k in new)
         for k in new:
             known[k] = left * sizes[k] / rest
-        for p, k in zip(r["parts"], msgs):
-            out[p["hash"]] = known[k]
-        out.update({k: known[k] for k in sizes if not k.startswith("[")})
+        out.append({p["hash"]: known[k] for p, k in zip(r["parts"], msgs)} | {k: known[k] for k in sizes if not k.startswith("[")})
     return out

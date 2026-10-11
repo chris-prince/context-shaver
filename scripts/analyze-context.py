@@ -126,7 +126,7 @@ def main() -> int:
     total = float(request["inputTokens"])
     parts_dir = os.path.join(session, "parts")
 
-    tokens = defs.part_tokens(session, reqs[: index + 1])
+    tokens = defs.part_tokens(session, reqs[: index + 1])[-1]
     d = defs.def_bytes(session, request)
     fixed = tokens["defs:" + json.dumps(defs.base_defs(request))]
     by_type: dict[str, float] = defaultdict(float)

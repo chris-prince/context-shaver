@@ -67,7 +67,7 @@ def write_price(l: dict) -> float:
     return (2 * hour + 1.25 * five) / (hour + five) if hour + five else 2.0
 
 
-def advance_tokens(session_dir: str, before: list[dict], after: dict, tokens: dict[str, float]) -> tuple[float, float]:
+def advance_tokens(session_dir: str, before: list[dict], after: dict, tokens: dict[int, dict[str, float]]) -> tuple[float, float]:
     """What an advance saved and rewrote, in tokens, from its request and the
     requests before it. Trimmed is what the latest of those whose last message
     the advance's request also sent had sent; the messages after it are new."""
@@ -80,8 +80,9 @@ def advance_tokens(session_dir: str, before: list[dict], after: dict, tokens: di
         return 0.0, 0.0
     was = [key(p["hash"]) for p in r["parts"]]
     end = sent.index(was[-1]) + 1
-    saved = sum(tokens[p["hash"]] for p in r["parts"]) - sum(tokens[p["hash"]] for p in after["parts"][:end])
-    new = sum(tokens[p["hash"]] for p in after["parts"][end:])
+    was_tokens, now = tokens[id(r)], tokens[id(after)]
+    saved = sum(was_tokens[p["hash"]] for p in r["parts"]) - sum(now[p["hash"]] for p in after["parts"][:end])
+    new = sum(now[p["hash"]] for p in after["parts"][end:])
     return saved, max(0.0, sum(written(after)) - new)
 
 
@@ -98,7 +99,7 @@ def session_row(session_dir: str) -> dict | None:
     reqs = [l for l in lines if l.get("event") == "request" and l.get("inputTokens") and l.get("tools") is not None]
     if not reqs:
         return None
-    tokens = defs.part_tokens(session_dir, reqs)
+    tokens = {id(r): t for r, t in zip(reqs, defs.part_tokens(session_dir, reqs))}  # each request's counts
     cost = savings = rewrite = 0.0
     saved_tokens = 0.0  # what the advances so far took out of every request
     pending_rewrite = 0.0  # tokens the next request writes instead of reading
