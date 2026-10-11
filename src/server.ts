@@ -12,6 +12,7 @@
 // outweighs what it rewrites, priced against the cache entries the
 // conversation's requests left.
 
+import { execFileSync } from 'node:child_process'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -19,6 +20,7 @@ import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
+import { isCommand, reply, stripCommands } from './command.ts'
 import { loadPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
@@ -98,11 +100,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const touched = pos.filter((q, i) => q.breakpoint || i === r).map((q) => q.prefix)
   const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {} }
   if (a['log-step-events']) {
-    let session = 'unknown'
-    try {
-      session = JSON.parse(body.metadata?.user_id ?? '{}').session_id ?? session
-    } catch {}
-    p.logDir = path.join(logRoot, `${session}-${key.slice(0, 8)}`)
+    p.logDir = logDirOf(body)
     const time = new Date(now).toISOString()
     if (d?.savedChars) {
       const context: Record<string, number> = {}
@@ -128,6 +126,30 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
     p.logLine = { event: 'request', time, model: body.model, predictedCachedChars, trimmedEnd: { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
   }
   return p
+}
+
+// Where a conversation's requests are logged: its session, and its key.
+function logDirOf(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
+  let session = 'unknown'
+  try {
+    session = JSON.parse(body.metadata?.user_id ?? '{}').session_id ?? session
+  } catch {}
+  return path.join(logRoot, `${session}-${hash(JSON.stringify(body.messages[0])).slice(0, 8)}`)
+}
+
+// The answer to `:ctx stats`: scripts/analyze-context.py on the conversation's
+// latest logged request. The conversation's key is taken as prepare takes it,
+// after the forced deferrals.
+function stats(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
+  if (!a['log-step-events']) return 'mini-context: requests are not being logged (--log-step-events), so there are no stats.'
+  const b = structuredClone(body)
+  forceDefer(b, policy.tools_force_deferred ?? [])
+  try {
+    const out = execFileSync('python3', [path.resolve(import.meta.dirname, '..', 'scripts', 'analyze-context.py'), logDirOf(b)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    return '```\n' + out.trimEnd() + '\n```'
+  } catch (err) {
+    return `mini-context: analyze-context.py failed: ${(err as { stderr?: string }).stderr?.trim() || err}`
+  }
 }
 
 // The usage a response reports: message_start's, with message_delta's output
@@ -201,10 +223,24 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readBody(req)
+  let raw = await readBody(req)
   const url = req.url ?? '/'
   let p: Prepared | undefined
   if (req.method === 'POST' && url.split('?')[0] === '/v1/messages' && raw.length) {
+    // `:ctx stats` is answered here; answered ones are stripped (command.ts).
+    try {
+      const body = JSON.parse(raw.toString('utf8'))
+      if (Array.isArray(body.messages) && body.messages.length) {
+        const msgs = stripCommands(body.messages)
+        if (body.tools?.length && isCommand(msgs[msgs.length - 1])) {
+          res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
+          return void res.end(reply(stats({ ...body, messages: msgs }), body.model, !!body.stream))
+        }
+        if (msgs.length < body.messages.length) raw = Buffer.from(JSON.stringify({ ...body, messages: msgs }))
+      }
+    } catch (err) {
+      console.error('mini-context: commands left in:', err)
+    }
     try {
       p = prepare(raw, Date.now())
     } catch (err) {

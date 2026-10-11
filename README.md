@@ -188,7 +188,10 @@ With `--log-step-events`, logs go to
 Scripts:
 
 - `python3 scripts/analyze-context.py [conversation dir] [--request N]` breaks one
-  request's tokens down by age and by part type.
+  request's tokens down by age and by part type. Typing `:ctx stats` as a
+  prompt shows it for the session's latest request: the proxy answers it
+  without calling the model, and strips the command and its answer from every
+  later request (`src/command.ts`).
 - `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
 - `node scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's
