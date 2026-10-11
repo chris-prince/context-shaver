@@ -237,7 +237,8 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let raw = await readBody(req)
+  const original = await readBody(req)
+  let raw = original
   const url = req.url ?? '/'
   let p: Prepared | undefined
   if (req.method === 'POST' && url.split('?')[0] === '/v1/messages' && raw.length) {
@@ -270,12 +271,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const send = (body: Buffer | undefined) =>
     fetch(a.upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
   let up = await send(p?.body ?? raw)
-  // A trimmed request the API refuses is sent again as it came, so a trim
+  // A changed request the API refuses is sent again as it came, so the proxy
   // never costs the user a turn.
-  if (p && up.status === 400) {
-    console.error(`mini-context: trimmed request refused, sent untrimmed: ${(await up.text()).slice(0, 500)}`)
+  if ((p || raw !== original) && up.status === 400) {
+    console.error(`mini-context: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
     p = undefined
-    up = await send(raw)
+    up = await send(original)
   }
   const out: Record<string, string> = {}
   up.headers.forEach((v, k) => {
@@ -294,10 +295,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
-  const stats = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
-  if (inputTokens && stats) {
-    record(journalOf(p.key), latestOf(p.key), stats)
-    current.set(p.key, stats)
+  const next = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
+  if (inputTokens && next) {
+    record(journalOf(p.key), latestOf(p.key), next)
+    current.set(p.key, next)
   }
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) } })
   if (p.logDir && p.logLine) {

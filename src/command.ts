@@ -4,7 +4,8 @@
 // so the proxy strips each command, the system messages after it and the reply
 // from every request it forwards. Dropping them leaves what came before next to
 // what came after, a prompt or the end, so no system message is left after an
-// assistant one.
+// assistant one. A command the model answered instead, with a tool call, stays,
+// since dropping the call would orphan its result.
 
 export const COMMANDS = [':shaver stats', ':shaver policy']
 
@@ -29,7 +30,8 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
     }
     let j = i + 1
     while (j < msgs.length && msgs[j].role === 'system') j++
-    if (j < msgs.length && msgs[j].role === 'assistant') i = j
+    const r = msgs[j]
+    if (r?.role === 'assistant' && !(Array.isArray(r.content) && r.content.some((b) => b.type === 'tool_use'))) i = j
     else out.push(msgs[i])
   }
   return out

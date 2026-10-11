@@ -30,3 +30,10 @@ test('the reply streams as one text block with no usage', () => {
   assert.equal(events[2].delta.text, 'hi')
   assert.deepEqual(JSON.parse(reply('hi', 'm', false)).content, [{ type: 'text', text: 'hi' }])
 })
+
+test('a command the model answered with a tool call stays', () => {
+  const call = { role: 'assistant', content: [{ type: 'text', text: 'Let me look' }, { type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }
+  const result = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] }
+  const msgs = [user('a'), assistant('A'), user(':shaver stats'), call, result]
+  assert.deepEqual(stripCommands(msgs), msgs)
+})
