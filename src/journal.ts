@@ -7,7 +7,9 @@
 // A line records results, not inputs, so a replay never reruns the counting.
 // Its fields: the plain fields that changed; for each record, the entries set
 // and the keys deleted; and, when it changed, the part list, each run of parts
-// kept from the previous list as [from, to) and each other part whole.
+// kept from the previous list as [from, to) and each other part whole. A line
+// also holds the request's usage as the API reported it (cache reads, cache
+// writes by TTL, output), which the stats leave out and replay ignores.
 
 import { appendFileSync, existsSync, readFileSync, renameSync } from 'node:fs'
 import type { Stats } from './stats.ts'
@@ -20,6 +22,7 @@ export type Delta = {
   set?: Partial<Pick<Stats, (typeof PLAIN)[number]>>
   records?: Partial<Record<(typeof RECORDS)[number], { set?: Record<string, unknown>; del?: string[] }>>
   parts?: Array<[number, number] | Part>
+  usage?: object
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
@@ -65,9 +68,10 @@ export function apply(prev: Stats | undefined, d: Delta): Stats {
   return s
 }
 
-// Appends the change from prev, the stats the journal ends with, to next.
-export function record(file: string, prev: Stats | undefined, next: Stats): void {
-  appendFileSync(file, JSON.stringify(diff(prev, next)) + '\n')
+// Appends the change from prev, the stats the journal ends with, to next, and
+// the usage the request reported.
+export function record(file: string, prev: Stats | undefined, next: Stats, usage?: object): void {
+  appendFileSync(file, JSON.stringify({ ...diff(prev, next), ...(usage && { usage }) }) + '\n')
 }
 
 // The stats after each line of a journal, in order, each built from the one

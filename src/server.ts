@@ -297,7 +297,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
   const next = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
   if (inputTokens && next) {
-    record(journalOf(p.key), latestOf(p.key), next)
+    record(journalOf(p.key), latestOf(p.key), next, u)
     current.set(p.key, next)
   }
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) } })

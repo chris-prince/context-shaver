@@ -200,8 +200,9 @@ Scripts:
   `:shaver policy` shows the policy file the same way, as it is on disk now.
   Each counted request appends what it changed to
   `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a
-  request; replayed from the start, the journal gives the stats after any
-  request. The proxy keeps only each conversation's latest stats in memory,
+  request, with the usage the API reported for it: cache reads, cache writes
+  by TTL, and output tokens. Replayed from the start, the journal gives the
+  stats after any request. The proxy keeps only each conversation's latest stats in memory,
   replaying the journal once after a restart; a journal that won't replay
   is moved aside to `<key>.journal.bad.jsonl` and the stats start again.
   Counting starts when the

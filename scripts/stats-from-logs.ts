@@ -41,7 +41,14 @@ const journal = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'journal
 let s: Stats | undefined
 for (const r of reqs.slice(0, last + 1)) {
   const next = count(s, r)
-  if (values['check-journal']) record(journal, s, next)
+  if (values['check-journal'])
+    record(journal, s, next, {
+      input_tokens: r.inputTokens - r.cachedTokens - r.writtenTokens5m - r.writtenTokens60m,
+      cache_read_input_tokens: r.cachedTokens,
+      cache_creation_input_tokens: r.writtenTokens5m + r.writtenTokens60m,
+      cache_creation: { ephemeral_5m_input_tokens: r.writtenTokens5m, ephemeral_1h_input_tokens: r.writtenTokens60m },
+      output_tokens: r.outputTokens ?? 0,
+    })
   s = next
 }
 // Counts the requests again alongside the journal's replay, so that neither

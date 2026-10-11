@@ -27,10 +27,12 @@ test('replaying the journal gives the stats after every request', () => {
   let s: Stats | undefined
   requests.forEach((msgs, i) => {
     const next = observe(s, describe(body(msgs), ends, `2026-10-11T10:0${i}:00Z`), 1000 + 100 * i, 30)
-    record(file, s, next)
+    record(file, s, next, { input_tokens: 10, cache_read_input_tokens: 900 + 100 * i, cache_creation_input_tokens: 90, output_tokens: 30 })
     observed.push((s = next))
   })
   assert.deepEqual([...replay(file)], observed)
+  const lines = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  assert.deepEqual(lines.map((l) => l.usage.cache_read_input_tokens), [900, 1000, 1100, 1200, 1300])
   assert.deepEqual(latest(file), observed.at(-1))
 })
 
