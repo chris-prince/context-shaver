@@ -14,7 +14,7 @@
 // less the thinking.
 
 import { hash, kinds as kindsOf } from './log.ts'
-import { blocks, type ApiMsg, type Block } from './items.ts'
+import { blocks, isPrompt, type ApiMsg, type Block } from './items.ts'
 
 type Tool = { name?: string; defer_loading?: boolean }
 
@@ -22,6 +22,8 @@ type Tool = { name?: string; defer_loading?: boolean }
 export type Sent = {
   time: string
   model: string
+  // The prompts among its messages (items.ts, isPrompt).
+  turns: number
   parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number }>
   defs: { key: string; systemPrompt: number; tools: number }
   loaded: Array<{ key: string; bytes: number }>
@@ -31,6 +33,7 @@ export type Sent = {
 export type Stats = {
   first: string
   requests: number
+  turns: number
   time: string
   model: string
   inputTokens: number
@@ -88,6 +91,7 @@ export function describe(body: { model: string; messages: ApiMsg[]; system?: unk
   return {
     time,
     model: body.model,
+    turns: msgs.filter(isPrompt).length,
     parts,
     defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0) },
     loaded: tools.filter((t) => t.defer_loading && loaded.has(t.name ?? '')).map((t) => JSON.stringify(t)).map((j) => ({ key: 'tool:' + hash(j), bytes: j.length })),
@@ -144,6 +148,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   return {
     first: prev?.first ?? r.time,
     requests,
+    turns: r.turns,
     time: r.time,
     model: r.model,
     inputTokens,
@@ -228,7 +233,7 @@ export function render(s: Stats, session: string): string {
   const persist = total - frontier
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests over ${span(s.first, s.time)}`, `${total.toLocaleString('en-US')} tokens`]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, `${total.toLocaleString('en-US')} tokens`]
   out.push('', 'Tokens by age (in calendar days, local time)', row('base', base, total))
   if (by.toolsLoaded) out.push(row('toolsLoaded', by.toolsLoaded, total))
   for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => b - a)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total))

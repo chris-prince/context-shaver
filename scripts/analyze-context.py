@@ -47,6 +47,7 @@ import datetime as dt
 import glob
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -102,6 +103,28 @@ def span(start: str, end: str) -> str:
 def local_time(stamp: str) -> str:
     """An ISO timestamp as local date, time and zone, like 2026-10-10 14:21 PDT."""
     return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+
+
+# User text that is not a prompt (src/items.ts, isPrompt).
+NOT_A_PROMPT = re.compile(r"^\s*(<command-name>|<local-command-|\[Request interrupted|<system-reminder>)")
+
+
+def is_prompt(m: dict) -> bool:
+    if m.get("role") != "user":
+        return False
+    c = [{"type": "text", "text": m["content"]}] if isinstance(m["content"], str) else m["content"]
+    if any(b.get("type") == "tool_result" for b in c):
+        return False
+    return any(not NOT_A_PROMPT.match(str(b.get("text"))) if b.get("type") == "text" else b.get("type") in ("image", "document") for b in c)
+
+
+def turns(parts_dir: str, request: dict) -> int:
+    """The prompts among the request's messages."""
+    n = 0
+    for p in request["parts"]:
+        with open(os.path.join(parts_dir, p["hash"] + ".json"), encoding="utf-8") as f:
+            n += is_prompt(json.load(f))
+    return n
 
 
 def sidecar(parts_dir: str, h: str) -> dict:
@@ -189,7 +212,7 @@ def main() -> int:
     print(f"Model: {model}")
     print()
     print(local_time(request["time"]))
-    print(f"{index + 1:,} requests over {span(reqs[0]['time'], request['time'])}")
+    print(f"{index + 1:,} requests across {turns(parts_dir, request):,} turns, spanning {span(reqs[0]['time'], request['time'])}")
     print(f"{total:,.0f} tokens")
 
     print("\nTokens by age (in calendar days, local time)")

@@ -35,5 +35,5 @@ test('render prints the stats from the state alone', () => {
   const s = observe(undefined, describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
   const out = render(s, 'session')
   assert.match(out, /^Session: session\nModel: m\n/)
-  assert.match(out, /1 requests over 0m\n1,000 tokens/)
+  assert.match(out, /1 requests across 1 turns, spanning 0m\n1,000 tokens/)
 })
