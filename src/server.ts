@@ -19,7 +19,7 @@ import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
-import { commandOf, reply, stripCommands } from './command.ts'
+import { pendingCommand, reply, stripCommands } from './command.ts'
 import { describe, observe, render, type Sent, type Stats } from './stats.ts'
 import { latest, record } from './journal.ts'
 import { loadPolicy } from './policy.ts'
@@ -254,7 +254,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const body = JSON.parse(raw.toString('utf8'))
       if (Array.isArray(body.messages) && body.messages.length) {
         const msgs = stripCommands(body.messages)
-        const command = body.tools?.length && commandOf(msgs[msgs.length - 1])
+        const command = body.tools?.length && pendingCommand(msgs)
         if (command) {
           const text = command === ':shaver policy' ? policyText() : stats({ ...body, messages: msgs })
           res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' })

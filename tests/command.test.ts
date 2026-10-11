@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { commandOf, reply, stripCommands } from '../src/command.ts'
+import { commandOf, pendingCommand, reply, stripCommands } from '../src/command.ts'
 
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] })
 const system = (text: string) => ({ role: 'system', content: text })
@@ -19,6 +19,12 @@ const firstPrompt = (text: string) => ({ role: 'user', content: [{ type: 'text',
 test('a first prompt is a command despite the reminders before it', () => {
   assert.equal(commandOf(firstPrompt(':shaver stats')), ':shaver stats')
   assert.equal(commandOf(firstPrompt('hello')), undefined)
+})
+
+test('a request asks for a command despite the system messages after it', () => {
+  assert.equal(pendingCommand([firstPrompt(':shaver stats'), system('environment')]), ':shaver stats')
+  assert.equal(pendingCommand([user('a'), assistant('A'), user(':shaver policy')]), ':shaver policy')
+  assert.equal(pendingCommand([user(':shaver stats'), assistant('stats')]), undefined)
 })
 
 test('an answered first-prompt command is stripped but for its reminders', () => {

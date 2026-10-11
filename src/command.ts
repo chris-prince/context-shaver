@@ -24,6 +24,13 @@ export function commandOf(m: Msg): string | undefined {
   return texts.length === 1 ? COMMANDS.find((c) => c === texts[0].trim()) : undefined
 }
 
+// The command a request asks for: its last message but for the system messages
+// after it, which Claude Code sends after a session's first prompt.
+export function pendingCommand(msgs: Msg[]): string | undefined {
+  const last = msgs.findLast((m) => m.role !== 'system')
+  return last && commandOf(last)
+}
+
 // The messages with each answered command, the system messages after it and
 // its reply removed, but for any reminders the command came with. A command not
 // yet answered, the last one, stays.
