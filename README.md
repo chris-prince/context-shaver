@@ -92,11 +92,13 @@ A stub replaces the lines, a drop the whole Read; the rest of the message (the
 skills list, the environment block) stays. In the base, before the first
 response, it is left alone.
 
-`tools_force_deferred` lists tools to defer that Claude Code sends in full.
-Each is marked `defer_loading` and added to the deferred tools Claude Code
-lists in its environment message, so the model loads it with `ToolSearch` when
-it needs it. With tool search off (no `ENABLE_TOOL_SEARCH`) nothing is
-deferred. Changing the list rewrites the cache of open sessions once.
+`tools_not_deferred` lists the tools Claude Code sends in full that should stay
+that way. Every other one is marked `defer_loading` and added to the deferred
+tools Claude Code lists in its environment message, so the model loads it with
+`ToolSearch` when it needs it. `ToolSearch` itself is never deferred, listed or
+not. Without the key nothing is deferred, and with tool search off (no
+`ENABLE_TOOL_SEARCH`) neither. Changing the list rewrites the cache of open
+sessions once.
 
 The proxy reads the file when it starts; restart it after editing.
 

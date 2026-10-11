@@ -73,7 +73,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const body = JSON.parse(raw.toString('utf8'))
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
-  forceDefer(body, policy.tools_force_deferred ?? [])
+  if (policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
   const key = hash(JSON.stringify(msgs[0]))
   const s = load(key)
   const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
@@ -153,7 +153,7 @@ function policyText(): string {
 function stats(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
   if (!a['log-step-events']) return 'mini-context: requests are not being logged (--log-step-events), so there are no stats.'
   const b = structuredClone(body)
-  forceDefer(b, policy.tools_force_deferred ?? [])
+  if (policy.tools_not_deferred) forceDefer(b, policy.tools_not_deferred)
   try {
     const out = execFileSync('python3', [path.resolve(import.meta.dirname, '..', 'scripts', 'analyze-context.py'), logDirOf(b)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
     return '```\n' + out.trimEnd() + '\n```'
