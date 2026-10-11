@@ -88,6 +88,11 @@ def local_date(stamp: str | None) -> dt.date | None:
     return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date()
 
 
+def local_time(stamp: str) -> str:
+    """An ISO timestamp as local date, time and zone, like 2026-10-10 14:21 PDT."""
+    return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+
+
 def sidecar(parts_dir: str, h: str) -> dict:
     try:
         with open(os.path.join(parts_dir, h + ".kinds.json"), encoding="utf-8") as f:
@@ -169,12 +174,12 @@ def main() -> int:
     persist = total - frontier
     base = by_type["systemPrompt"] + by_type["tools"] + by_type["preamble"]
 
-    print(f"Date: {ref}")
+    print(f"Time: {local_time(request['time'])}")
     print(f"Session: {os.path.basename(session)}")
     print(f"Model: {model}")
     print()
     print(f"{total:,.0f} tokens")
-    print(f"{index + 1:,} requests")
+    print(f"{index + 1:,} requests since {local_time(reqs[0]['time'])}")
 
     print("\nTokens by age (in calendar days, local time)")
     print(row("base", base, total))
