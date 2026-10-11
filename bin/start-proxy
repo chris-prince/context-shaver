@@ -10,7 +10,8 @@ repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 port=${CTX_SHAVER_PORT:-8787}
 log=()
 [[ ${CTX_SHAVER_LOG:-} == 1 ]] && log=(--log-step-events)
-up() { nc -z 127.0.0.1 "$port" 2>/dev/null; }
+# True if anything accepts a connection, through bash's own /dev/tcp (no nc).
+up() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
 
 if [[ ${1:-} == --restart ]] && up; then
   kill $(lsof -ti "tcp:$port" -sTCP:LISTEN)
