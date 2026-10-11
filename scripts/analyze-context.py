@@ -88,6 +88,13 @@ def local_date(stamp: str | None) -> dt.date | None:
     return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date()
 
 
+def span(start: str, end: str) -> str:
+    """The time between two ISO timestamps, like 1d 3h, or 17h under a day."""
+    hours = int((dt.datetime.fromisoformat(end.replace("Z", "+00:00")) - dt.datetime.fromisoformat(start.replace("Z", "+00:00"))).total_seconds() // 3600)
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h" if days else f"{hours}h"
+
+
 def local_time(stamp: str) -> str:
     """An ISO timestamp as local date, time and zone, like 2026-10-10 14:21 PDT."""
     return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M %Z")
@@ -174,12 +181,12 @@ def main() -> int:
     persist = total - frontier
     base = by_type["systemPrompt"] + by_type["tools"] + by_type["preamble"]
 
-    print(f"Now: {local_time(request['time'])}")
     print(f"Session: {os.path.basename(session)}")
     print(f"Model: {model}")
     print()
+    print(local_time(request["time"]))
     print(f"{total:,.0f} tokens")
-    print(f"{index + 1:,} requests since {local_time(reqs[0]['time'])}")
+    print(f"{index + 1:,} requests over {span(reqs[0]['time'], request['time'])}")
 
     print("\nTokens by age (in calendar days, local time)")
     print(row("base", base, total))
