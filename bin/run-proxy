@@ -3,14 +3,20 @@
 # it running; its output goes to proxy-data/proxy.log. With --restart, asks the
 # proxy there to stop first, so a new one picks up code and policy changes.
 # Sessions running through it resume with their next request, once it is back
-# up. With --stop, only stops it. With CTX_SHAVER_LOG=1, it logs every request
-# under proxy-data/logs/.
+# up. With --stop, only stops it. With --log, the proxy it starts logs every
+# request under proxy-data/logs/.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 port=${CTX_SHAVER_PORT:-8787}
-log=()
-[[ ${CTX_SHAVER_LOG:-} == 1 ]] && log=(--log-step-events)
+action= log=()
+for arg; do
+  case $arg in
+    --restart | --stop) action=$arg ;;
+    --log) log=(--log-step-events) ;;
+    *) echo "usage: run-proxy [--restart | --stop] [--log]" >&2; exit 2 ;;
+  esac
+done
 # True if anything accepts a connection, through bash's own /dev/tcp (no nc).
 up() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
 # Asks the proxy to exit (server.ts), so no lsof is needed to find its PID.
@@ -20,12 +26,12 @@ stop() {
     while read -r -t 5 _ <&3; do :; done) 2>/dev/null || true
 }
 
-if [[ ${1:-} == --restart || ${1:-} == --stop ]] && up; then
+if [[ -n $action ]] && up; then
   stop
   for _ in $(seq 50); do up || break; sleep 0.1; done
   ! up || { echo "run-proxy: the proxy on port $port did not stop" >&2; exit 1; }
 fi
-[[ ${1:-} == --stop ]] && exit 0
+[[ $action == --stop ]] && exit 0
 
 if ! up; then
   mkdir -p "$repo/proxy-data"

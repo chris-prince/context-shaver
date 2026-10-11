@@ -26,7 +26,8 @@ bin/ctx-shaver [claude args ...]
 or `CTX_SHAVER_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json`, and
-with logging off unless `CTX_SHAVER_LOG=1` is set (see [Logs](#logs)). It also
+with logging off; to log (see [Logs](#logs)), start the proxy first with
+`bin/run-proxy --log`. It also
 sets `ENABLE_TOOL_SEARCH=true`: Claude Code turns its tool search off when the
 base URL isn't Anthropic's, which sends every tool's definition on every
 request (about 26k more tokens).
@@ -37,8 +38,9 @@ To pick up changes to the proxy's code, restart it:
 bin/run-proxy --restart
 ```
 
-Sessions running through it carry on with their next request. To stop it,
-run `bin/run-proxy --stop`.
+Sessions running through it carry on with their next request. Pass `--log` as
+well to keep logging on, as the new proxy doesn't inherit it. To stop it, run
+`bin/run-proxy --stop`.
 
 Claude Code cannot reach the API while the proxy is down, so a session started
 this way fails if the proxy is stopped.
@@ -172,8 +174,7 @@ prompt changed), both candidates write everything, so advancing always pays.
 
 ## Logs
 
-With `--log-step-events` (which `bin/run-proxy` passes when `CTX_SHAVER_LOG=1`
-is set), logs go to
+With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
 `proxy-data/logs/<session>-<conversation>/`:
 
 - `step_events.jsonl`, with one line per event:
