@@ -42,11 +42,14 @@ test('a command not yet answered stays', () => {
   assert.deepEqual(stripCommands(msgs), msgs)
 })
 
-test('the reply streams as one text block with no usage', () => {
-  const events = reply('hi', 'm', true).trim().split('\n\n').map((e) => JSON.parse(e.split('\ndata: ')[1]))
+test('the reply streams as one text block, reporting the context as cache reads', () => {
+  const events = reply('hi', 'm', true, 58000).trim().split('\n\n').map((e) => JSON.parse(e.split('\ndata: ')[1]))
   assert.deepEqual(events.map((e) => e.type), ['message_start', 'content_block_start', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop'])
   assert.equal(events[2].delta.text, 'hi')
-  assert.deepEqual(JSON.parse(reply('hi', 'm', false)).content, [{ type: 'text', text: 'hi' }])
+  assert.deepEqual(events[0].message.usage, { input_tokens: 0, cache_read_input_tokens: 58000, output_tokens: 0 })
+  const plain = JSON.parse(reply('hi', 'm', false, 58000))
+  assert.deepEqual(plain.content, [{ type: 'text', text: 'hi' }])
+  assert.equal(plain.usage.cache_read_input_tokens, 58000)
 })
 
 test('a command the model answered with a tool call stays', () => {

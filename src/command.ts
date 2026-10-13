@@ -53,10 +53,13 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
   return out
 }
 
-// A response holding just `text`, as a stream of events or a plain message,
-// with no usage, since no model ran.
-export function reply(text: string, model: string, stream: boolean): string {
-  const message = { id: `msg_proxy_${Date.now()}`, type: 'message', role: 'assistant', model, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } }
+// A response holding just `text`, as a stream of events or a plain message.
+// No model ran, but Claude Code reads its context size from the last reply's
+// usage, so `context` (the latest real request's input) is reported as cache
+// reads, the input that adds least to its cost tally.
+export function reply(text: string, model: string, stream: boolean, context: number): string {
+  const usage = { input_tokens: 0, cache_read_input_tokens: context, output_tokens: 0 }
+  const message = { id: `msg_proxy_${Date.now()}`, type: 'message', role: 'assistant', model, stop_sequence: null, usage }
   if (!stream) return JSON.stringify({ ...message, content: [{ type: 'text', text }], stop_reason: 'end_turn' })
   const events: Record<string, unknown>[] = [
     { type: 'message_start', message: { ...message, content: [], stop_reason: null } },

@@ -258,7 +258,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         if (command) {
           const text = command === ':shaver policy' ? policyText() : stats({ ...body, messages: msgs })
           res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
-          return void res.end(reply(text, body.model, !!body.stream))
+          const context = latestOf(hash(JSON.stringify(body.messages[0])))?.inputTokens ?? 0
+          return void res.end(reply(text, body.model, !!body.stream, context))
         }
         if (msgs.length < body.messages.length) raw = Buffer.from(JSON.stringify({ ...body, messages: msgs }))
       }
