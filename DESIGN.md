@@ -43,11 +43,50 @@ headers as they come.
 | Option | Default | |
 | --- | --- | --- |
 | `--port` | `8787` | Listens on 127.0.0.1 only |
-| `--upstream` | `https://api.anthropic.com` | |
+| `--upstream` | `https://api.anthropic.com` | For requests that don't name one ([below](#when-the-model-is-already-proxied)) |
 | `--dir` | the repo's `proxy-data/` | Where `state/` and `logs/` go |
 | `--policy` | the repo's `policy.json` | The policy file to use (format documented below). If not specified, defaults to `policy.json` and if missing creates a local `policy.json` from `policy.default.json` |
 | `--log-step-events` | off | Write the log (below) |
 | `--cache-ttl-seconds` | `3600` | The cache TTL. Lower it only to test the cold path |
+
+### When the model is already proxied
+
+If `ANTHROPIC_BASE_URL` is already set when `claude-via-shaver` runs, say to a
+company gateway, ctx-shaver goes in front of it rather than replacing it.
+Claude Code's base URL becomes `http://127.0.0.1:8787/via/<upstream>`, the
+upstream's base URL percent-encoded as one path segment, and
+the proxy sends that session's requests there with the prefix stripped
+(`src/via.ts`). The upstream may be `http` or `https`, and may have a path of
+its own. One proxy serves sessions behind different upstreams; requests with no
+`/via/` go to `--upstream`, and a `/via/` that doesn't name an `http(s)` base URL
+is refused, never sent there instead. A base URL already through this proxy, as
+a teammate session inherits, is left as it is.
+
+Some setups set the base URL only after `claude` starts: a wrapper installed as
+`claude` that runs its own proxy for each session, on a new port each time, and
+then runs Claude Code. A launcher run before it can't see that URL, and the
+wrapper replaces the one it's given, so ctx-shaver would be bypassed. If the
+wrapper lets you choose the binary it runs (often an environment variable
+naming its path), give it `claude-via-shaver` itself: run by the wrapper, it
+sees the base URL the wrapper set and chains to it, as above. Tell it where the
+real Claude Code is with `CTX_SHAVER_REAL_CLAUDE_LOCATION`, a path or a glob of
+versioned installs, of which it takes the newest:
+
+```bash
+export CTX_SHAVER_REAL_CLAUDE_LOCATION='~/path/to/claude-code-*'
+export <WRAPPER_BINARY_VAR>=~/ctx-shaver/bin/claude-via-shaver
+claude [claude args ...]
+```
+
+Without `CTX_SHAVER_REAL_CLAUDE_LOCATION` it would run `claude`, the wrapper,
+which would run it again; it notices and stops with an error instead. With it
+set, start sessions through the wrapper, as above: `claude-via-shaver` run
+directly would skip the wrapper and whatever it sets up.
+
+The proxy serves only requests whose `Host` is `127.0.0.1` or `localhost`.
+Since a request can name any upstream, a web page that reached the proxy by DNS
+rebinding (which sends the page's own domain as `Host`) could otherwise read
+whatever it had the proxy fetch from your network.
 
 ## Policy
 

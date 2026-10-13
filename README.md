@@ -32,7 +32,9 @@ Then each time you start your CLI:
 
 `claude-via-shaver` makes sure the local proxy is running (on 127.0.0.1:8787),
 then runs `claude` with an env var to route model calls through the proxy. It
-works with both claude.ai logins and Claude API keys.
+works with both claude.ai logins and Claude API keys. If your model calls are
+already proxied (`ANTHROPIC_BASE_URL` is set, or a wrapper sets it), ctx-shaver
+chains in front of that proxy (see DESIGN.md).
 
 When running against the proxy, the prompt `:shaver stats` will return details
 on how ctx-shaver is doing this session and where your context is being spent.

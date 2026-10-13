@@ -22,6 +22,7 @@ import { forceDefer } from './defer.ts'
 import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
 import { describe, estimate, isSuggestion, observe, render, type Sent, type Stats } from './stats.ts'
 import { latest, record } from './journal.ts'
+import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
@@ -261,10 +262,19 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks)
 }
 
+function refuse(res: ServerResponse, status: 400 | 403, message: string): void {
+  console.error(message)
+  res.writeHead(status, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({ type: 'error', error: { type: status === 403 ? 'permission_error' : 'invalid_request_error', message } }))
+}
+
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const original = await readBody(req)
   let raw = original
-  const url = req.url ?? '/'
+  if (!localHost(req.headers.host)) return refuse(res, 403, `ctx-shaver proxy: refused a request for Host ${req.headers.host}`)
+  const r = route(req.url ?? '/', a.upstream)
+  if ('error' in r) return refuse(res, 400, `ctx-shaver proxy: ${r.error}`)
+  const { upstream, url } = r
   // bin/run-proxy --restart and --stop stop the proxy with this. The header
   // keeps a web page from sending it: browsers send a custom header only after a
   // CORS check this proxy doesn't answer.
@@ -303,7 +313,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const abort = new AbortController()
   res.on('close', () => res.writableFinished || abort.abort())
   const send = (body: Buffer | undefined) =>
-    fetch(a.upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
+    fetch(upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
   let up = await send(p?.body ?? raw)
   // A changed request the API refuses is sent again as it came, so the proxy
   // never costs the user a turn.
