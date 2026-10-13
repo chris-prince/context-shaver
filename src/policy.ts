@@ -2,7 +2,7 @@
 // (README.md, "Policy"). With no file there are no rules, and the proxy passes
 // requests through.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync } from 'node:fs'
 import type { Clock, Item, Kind } from './items.ts'
 
 export type Action = 'stub' | 'drop'
@@ -30,6 +30,12 @@ export function parsePolicy(v: unknown): Policy {
         throw new Error(`policy: bad ${kind} rule ${JSON.stringify(r)}`)
   }
   return v as Policy
+}
+
+// Makes a policy file from the default if there is none, so the repo tracks
+// only the default and edits to the file stay out of git.
+export function seedPolicy(file: string, from: string): void {
+  if (!existsSync(file) && existsSync(from)) copyFileSync(from, file)
 }
 
 // The policy in a file, or none if there is no file.

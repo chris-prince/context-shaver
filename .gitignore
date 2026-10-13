@@ -1,3 +1,4 @@
 proxy-data/
 __pycache__/
 local/
+/policy.json

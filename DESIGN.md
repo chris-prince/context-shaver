@@ -11,12 +11,11 @@ bin/claude-via-shaver [claude args ...]
 `bin/claude-via-shaver` starts the proxy if nothing is listening on its port (8787,
 or `CTX_SHAVER_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
-`proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json`, and
-with logging off; to log (see [Logs](#logs)), start the proxy first with
-`bin/run-proxy --log`. It also
-sets `ENABLE_TOOL_SEARCH=true`: Claude Code turns its tool search off when the
-base URL isn't Anthropic's, which sends every tool's definition on every
-request (about 26k more tokens).
+`proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json` (see
+[Policy](#policy)), and with logging off; to log (see [Logs](#logs)), start the
+proxy first with `bin/run-proxy --log`. It also sets `ENABLE_TOOL_SEARCH=true`:
+Claude Code turns its tool search off when the base URL isn't Anthropic's,
+which sends every tool's definition on every request (about 26k more tokens).
 
 To pick up changes to the proxy's code, restart it:
 
@@ -46,11 +45,17 @@ headers as they come.
 | `--port` | `8787` | Listens on 127.0.0.1 only |
 | `--upstream` | `https://api.anthropic.com` | |
 | `--dir` | the repo's `proxy-data/` | Where `state/` and `logs/` go |
-| `--policy` | the repo's `policy.json` | The policy (below). With no file there, requests pass through |
+| `--policy` | the repo's `policy.json` | The policy file to use (format documented below). If not specified, defaults to `policy.json` and if missing creates a local `policy.json` from `policy.default.json` |
 | `--log-step-events` | off | Write the log (below) |
 | `--cache-ttl-seconds` | `3600` | The cache TTL. Lower it only to test the cold path |
 
 ## Policy
+
+The repo tracks only `policy.default.json`. When the proxy starts with the
+repo's `policy.json` and there is none, it copies the default there; that copy
+is ignored by git, so edit it freely. To go back to the default, delete it and
+restart the proxy (`bin/run-proxy --restart`). To pass every request through
+untrimmed, make it `{}`.
 
 The policy file gives each kind of content a list of rules. A rule is due once
 its item's step (`"on": "step"`) or turn (`"on": "turn"`) is among the

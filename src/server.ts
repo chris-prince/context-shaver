@@ -22,21 +22,25 @@ import { forceDefer } from './defer.ts'
 import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
 import { describe, estimate, observe, render, type Sent, type Stats } from './stats.ts'
 import { latest, record } from './journal.ts'
-import { loadPolicy } from './policy.ts'
+import { loadPolicy, seedPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 
+const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
   allowNegative: true,
   options: {
     port: { type: 'string', default: '8787' },
     upstream: { type: 'string', default: 'https://api.anthropic.com' },
     dir: { type: 'string', default: path.resolve(import.meta.dirname, '..', 'proxy-data') },
-    policy: { type: 'string', default: path.resolve(import.meta.dirname, '..', 'policy.json') },
+    policy: { type: 'string', default: repoPolicy },
     'log-step-events': { type: 'boolean', default: false },
     'cache-ttl-seconds': { type: 'string', default: '3600' },
   },
 })
 
+// The repo's policy.json is made from policy.default.json the first time; a
+// --policy file given is taken as it is.
+if (a.policy === repoPolicy) seedPolicy(repoPolicy, path.resolve(import.meta.dirname, '..', 'policy.default.json'))
 const loaded = loadPolicy(a.policy)
 if (!loaded) console.error(`ctx-shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
 const policy = loaded ?? {}

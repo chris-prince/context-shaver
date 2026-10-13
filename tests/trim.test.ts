@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
-import { parsePolicy, treatment, type Policy } from '../src/policy.ts'
+import { parsePolicy, seedPolicy, treatment, type Policy } from '../src/policy.ts'
 import { apply, decide, isStubbed, LOOKBACK, positionsOf, readThrough, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'stub' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
 const dropAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'drop' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
-const committed = parsePolicy(JSON.parse(readFileSync(new URL('../policy.json', import.meta.url), 'utf8')))
+const committed = parsePolicy(JSON.parse(readFileSync(new URL('../policy.default.json', import.meta.url), 'utf8')))
 
 // The messages with a breakpoint on the last block, as Claude Code sends them.
 const tailed = (msgs: readonly ApiMsg[]): ApiMsg[] =>
@@ -68,6 +70,19 @@ test('a policy file is checked', () => {
   assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'tool_search', 'reasoning', 'tools_not_deferred'])
   for (const bad of [[], { tools: [] }, { tool: {} }, { tools_not_deferred: [1] }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }])
     assert.throws(() => parsePolicy(bad))
+})
+
+test('a missing policy file is made from the default, and an edited one is kept', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'ctx-shaver-'))
+  const [file, from] = [path.join(dir, 'policy.json'), path.join(dir, 'policy.default.json')]
+  seedPolicy(file, from)
+  assert.throws(() => readFileSync(file))
+  writeFileSync(from, '{"tool":[]}')
+  seedPolicy(file, from)
+  assert.equal(readFileSync(file, 'utf8'), '{"tool":[]}')
+  writeFileSync(file, '{}')
+  seedPolicy(file, from)
+  assert.equal(readFileSync(file, 'utf8'), '{}')
 })
 
 test('with no rules, requests pass through', () => {
