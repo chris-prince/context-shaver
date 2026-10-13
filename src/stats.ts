@@ -153,12 +153,18 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   if (outputTokens) answers[keys[keys.length - 1]] = outputTokens
 
   // An advance takes out what the previous request's parts cost less what
-  // they cost now: the parts through the last one it also sent. What follows
+  // they cost now: the parts through the last one it also sent, counting
+  // repeats, since Claude Code sends the same reminder again. What follows
   // that is the turn's new parts.
   let removedTokens = prev?.removedTokens ?? 0
   if (prev && r.advanced) {
-    const had = new Set(prev.parts.map((p) => p.key))
-    const kept = r.parts.slice(0, r.parts.findLastIndex((p) => had.has(p.key)) + 1)
+    const left: Record<string, number> = {}
+    for (const p of prev.parts) left[p.key] = (left[p.key] ?? 0) + 1
+    let end = 0
+    r.parts.forEach((p, i) => {
+      if (left[p.key]) [left[p.key], end] = [left[p.key] - 1, i + 1]
+    })
+    const kept = r.parts.slice(0, end)
     removedTokens += prev.parts.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - kept.reduce((n, p) => n + known[p.key], 0)
   }
 
