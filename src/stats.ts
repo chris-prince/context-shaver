@@ -231,7 +231,7 @@ function line(name: string, value: number, total: number, width = 22): string {
   return `${name.padEnd(width)}${Math.round(value).toLocaleString('en-US').padStart(12)}  (${String(percent(value, total)).padStart(2)}%)`
 }
 
-const head = (name: string, value: number, total: number) => line(name, value, total)
+const head = (name: string, value: number, total: number) => line('  ' + name, value, total)
 const row = (name: string, value: number, total: number, indent = 0) => '    ' + line(' '.repeat(indent) + name, value, total)
 
 // The count as the sum it is: what the request would cost without the trims,
@@ -239,7 +239,7 @@ const row = (name: string, value: number, total: number, indent = 0) => '    ' +
 function tally(now: number, removed: number): string[] {
   const [w, r, n] = [now + removed, removed, now].map((v) => Math.round(v).toLocaleString('en-US'))
   const width = w.length
-  return ['Context Stats', `    ${w.padStart(width)} tokens w/o shaver`, `  - ${r.padStart(width)} tokens shaved`, `  = ${n.padStart(width)} tokens now`]
+  return ['', 'Context Stats', `    ${w.padStart(width)} tokens w/o shaver`, `  - ${r.padStart(width)} tokens shaved`, `  = ${n.padStart(width)} tokens now`]
 }
 
 export function render(s: Stats, session: string): string {
