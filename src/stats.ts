@@ -104,6 +104,17 @@ export function describe(body: { model: string; messages: ApiMsg[]; system?: unk
   }
 }
 
+// Whether a request is Claude Code's prompt suggestion: the conversation so far
+// and a last message asking what the user will type next. It sends one after a
+// reply, interactively, with no header to tell it apart, so the stats leave it
+// out by that message; counted, it would add a turn the user never took.
+export function isSuggestion(msgs: readonly ApiMsg[]): boolean {
+  const last = msgs.at(-1)
+  if (last?.role !== 'user') return false
+  const text = typeof last.content === 'string' ? last.content : last.content.find((b) => b.type === 'text')?.text ?? ''
+  return text.startsWith('[SUGGESTION MODE:')
+}
+
 // The stats once a request is answered with these counts.
 export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number): Stats {
   const known = { ...prev?.tokens }

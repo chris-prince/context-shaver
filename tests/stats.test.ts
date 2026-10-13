@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { describe, estimate, observe, render, type Stats } from '../src/stats.ts'
+import { describe, estimate, isSuggestion, observe, render, type Stats } from '../src/stats.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -40,6 +40,15 @@ test('a part a side request left out keeps its count when it comes back', () => 
   s = observe(s, describe(body([a]), ends, '2026-10-11T10:00:01Z'), s.tokens[s.parts[0].key] + s.tokens[s.defs.key], 0)
   s = observe(s, describe(body([a, b, c]), ends, '2026-10-11T10:00:02Z'), 900, 0)
   assert.equal(s.tokens[s.parts[2].key], counted)
+})
+
+test('a prompt suggestion is told apart by its last message', () => {
+  const a: ApiMsg = { role: 'user', content: 'a' }
+  const b: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b' }] }
+  assert.equal(isSuggestion([a, b, { role: 'user', content: '[SUGGESTION MODE: Suggest what the user might naturally type next]' }]), true)
+  assert.equal(isSuggestion([a, b, { role: 'user', content: [{ type: 'text', text: '[SUGGESTION MODE: …]' }] }]), true)
+  assert.equal(isSuggestion([a, b, { role: 'user', content: 'what is [SUGGESTION MODE:]?' }]), false)
+  assert.equal(isSuggestion([a, b]), false)
 })
 
 test('a loaded tool counts with the message that loads it, once, even when deferred later', () => {

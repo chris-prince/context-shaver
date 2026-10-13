@@ -20,7 +20,7 @@ import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
-import { describe, estimate, observe, render, type Sent, type Stats } from './stats.ts'
+import { describe, estimate, isSuggestion, observe, render, type Sent, type Stats } from './stats.ts'
 import { latest, record } from './journal.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
@@ -78,7 +78,7 @@ function latestOf(key: string): Stats | undefined {
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; stats?: Stats; sent: Sent; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a /v1/messages request. Only requests with tools are trimmed: those
 // are the main loop and subagents. Claude Code's side requests are sent as
@@ -117,7 +117,7 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: latestOf(key), sent: describe(body, trimmed, time, d?.advanced) }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: latestOf(key), sent: describe(body, trimmed, time, d?.advanced), suggestion: isSuggestion(msgs) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
@@ -330,7 +330,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
   const next = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
-  if (inputTokens && next) {
+  if (inputTokens && next && !p.suggestion) {
     record(journalOf(p.key), latestOf(p.key), next, u)
     current.set(p.key, next)
   }
