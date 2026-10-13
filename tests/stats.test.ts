@@ -64,6 +64,6 @@ test('render prints the stats from the state alone', () => {
   assert.match(out, /^Session: session\nModel: m\n/)
   assert.match(out, /1 requests across 1 turns, spanning 0m\n1,000 tokens/)
   assert.match(out, /\nBase +[\d,]+ +\( *\d+%\)\n  Fixed session overhead\. If over 10k, defer more tools\./)
-  assert.match(out, /\nConversation +[\d,]+ .*\n  Earlier turns.*\n  by age:\n    today .*\n  by type:\n    user /)
+  assert.match(out, /\nConversation +[\d,]+ .*\n  Earlier turns.*\n  by age:\n      today .*\n  by type:\n      user /)
   assert.match(out, /\nFrontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
 })

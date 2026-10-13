@@ -210,7 +210,7 @@ function line(name: string, value: number, total: number, width = 22): string {
 }
 
 const head = (name: string, value: number, total: number) => line(name, value, total)
-const row = (name: string, value: number, total: number, indent = 0) => '  ' + line(' '.repeat(indent) + name, value, total, 24)
+const row = (name: string, value: number, total: number, indent = 0) => '    ' + line(' '.repeat(indent) + name, value, total)
 
 export function render(s: Stats, session: string): string {
   const total = s.inputTokens
