@@ -37,9 +37,15 @@ test('an answered first-prompt command is stripped but for its reminders', () =>
   assert.deepEqual(stripCommands(msgs), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, user('b')])
 })
 
-test('an answered command, the system messages after it and its reply are stripped', () => {
+test('an answered command and its reply are stripped, the system messages between moved before the next reply', () => {
   const msgs = [user('a'), assistant('A'), user(':shaver stats'), system('nudge'), assistant('stats'), user('b')]
-  assert.deepEqual(stripCommands(msgs), [user('a'), assistant('A'), user('b')])
+  assert.deepEqual(stripCommands(msgs), [user('a'), assistant('A'), user('b'), system('nudge')])
+  assert.deepEqual(stripCommands([...msgs, assistant('B')]), [user('a'), assistant('A'), user('b'), system('nudge'), assistant('B')])
+})
+
+test("a first-prompt command keeps Claude Code's preamble", () => {
+  const msgs = [firstPrompt(':shaver stats'), system('preamble'), assistant('stats'), user('b'), assistant('B')]
+  assert.deepEqual(stripCommands(msgs), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, user('b'), system('preamble'), assistant('B')])
 })
 
 test('a command not yet answered stays', () => {

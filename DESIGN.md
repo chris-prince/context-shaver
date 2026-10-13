@@ -191,10 +191,11 @@ Scripts:
   frontier (by age, then by type), and the frontier. Every percentage is of
   the whole request. After each request the proxy counts its parts' tokens
   (`src/stats.ts`) and answers from those counts. Before any request is
-  answered it shows the command's own request instead, its count estimated
-  from its bytes and marked so. It answers without calling the model, and
-  strips the command and its answer from every later request
-  (`src/command.ts`).
+  answered it shows the command's own request instead, as it will be sent,
+  its count estimated from its bytes and marked so. It answers without calling
+  the model, and strips the command and its answer from every later request
+  (`src/command.ts`), keeping the system messages between them: after a first
+  prompt those are Claude Code's whole preamble.
   `:shaver policy` shows the policy file the same way, as it is on disk now.
   Each counted request appends what it changed to
   `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a

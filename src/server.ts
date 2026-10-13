@@ -159,11 +159,14 @@ function policyText(): string {
 }
 
 // The answer to `:shaver stats`: the conversation's latest answered request,
-// from its journal (stats.ts), or before there is one, this request estimated.
+// from its journal (stats.ts), or before there is one, this request estimated
+// as it will be sent once the command is answered, tools deferred.
 function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: string } }): string {
-  const session = path.basename(logDirOf(body))
-  const s = latestOf(hash(JSON.stringify(body.messages[0])))
-  const text = s ? render(s, session) : render(estimate(describe({ ...body, messages: withoutPending(body.messages) }, { tools: 0, reasoning: 0 }, new Date().toISOString())), session, true)
+  const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
+  if (policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
+  const session = path.basename(logDirOf(sent))
+  const s = latestOf(hash(JSON.stringify(sent.messages[0])))
+  const text = s ? render(s, session) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), session, true)
   return '```\n' + text + '\n```'
 }
 
@@ -259,7 +262,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         if (command) {
           const text = command === ':shaver policy' ? policyText() : stats({ ...body, messages: msgs })
           res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
-          const context = latestOf(hash(JSON.stringify(body.messages[0])))?.inputTokens ?? 0
+          const context = latestOf(hash(JSON.stringify(withoutPending(msgs)[0])))?.inputTokens ?? 0
           return void res.end(reply(text, body.model, !!body.stream, context))
         }
         if (msgs.length < body.messages.length) raw = Buffer.from(JSON.stringify({ ...body, messages: msgs }))

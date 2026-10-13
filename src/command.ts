@@ -39,12 +39,19 @@ export function withoutPending<M extends Msg>(msgs: M[]): M[] {
   return [...msgs.slice(0, i), ...(reminders.length ? [{ ...msgs[i], content: reminders }] : []), ...msgs.slice(i + 1)]
 }
 
-// The messages with each answered command, the system messages after it and
-// its reply removed, but for any reminders the command came with. A command not
-// yet answered, the last one, stays.
+// The messages with each answered command and its reply removed, but for any
+// reminders the command came with. The system messages between them are kept,
+// moved to just before the next reply (or to the end): on a first prompt they
+// are Claude Code's whole preamble, and the API refuses a system message right
+// before a user one. A command not yet answered, the last one, stays.
 export function stripCommands<M extends Msg>(msgs: M[]): M[] {
   const out: M[] = []
+  let moved: M[] = []
   for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].role === 'assistant') {
+      out.push(...moved)
+      moved = []
+    }
     if (!commandOf(msgs[i])) {
       out.push(msgs[i])
       continue
@@ -55,10 +62,11 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
     if (r?.role === 'assistant' && !(Array.isArray(r.content) && r.content.some((b) => b.type === 'tool_use'))) {
       const reminders = Array.isArray(msgs[i].content) ? (msgs[i].content as Block[]).filter(isReminder) : []
       if (reminders.length) out.push({ ...msgs[i], content: reminders })
+      moved.push(...msgs.slice(i + 1, j))
       i = j
     } else out.push(msgs[i])
   }
-  return out
+  return [...out, ...moved]
 }
 
 // A response holding just `text`, as a stream of events or a plain message.
