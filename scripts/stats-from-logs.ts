@@ -20,17 +20,19 @@ if (!dir) {
   process.exit(1)
 }
 const part = (h: string) => JSON.parse(readFileSync(path.join(dir, 'parts', h + '.json'), 'utf8'))
-// The answered request lines, with their tools.
-const reqs = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8')
+const events = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8')
   .split('\n')
   .flatMap((l) => {
     try {
-      const e = JSON.parse(l)
-      return e.event === 'request' && e.inputTokens && e.tools ? [e] : []
+      return [JSON.parse(l)]
     } catch {
       return []
     }
   })
+// The answered request lines, with their tools, and the times of the requests
+// a trim advanced on, which share their compaction line's time.
+const reqs = events.filter((e) => e.event === 'request' && e.inputTokens && e.tools)
+const advanced = new Set(events.filter((e) => e.event === 'compaction' && e.advanced).map((e) => e.time))
 if (!reqs.length) {
   console.error(`no request lines with usage under ${dir}`)
   process.exit(1)
@@ -42,7 +44,7 @@ if (!(Number.isInteger(last) && 0 <= last && last < reqs.length)) {
 }
 const count = (s: Stats | undefined, r: any) => {
   const body = { model: r.model, messages: r.parts.map((p: { hash: string }) => part(p.hash)), system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
-  return observe(s, describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time), r.inputTokens, r.outputTokens ?? 0)
+  return observe(s, describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time, advanced.has(r.time)), r.inputTokens, r.outputTokens ?? 0)
 }
 const journal = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'journal.jsonl')
 let s: Stats | undefined

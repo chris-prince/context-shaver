@@ -67,3 +67,19 @@ test('render prints the stats from the state alone', () => {
   assert.match(out, /\nConversation +[\d,]+ .*\n  Earlier turns.*\n    by age:\n      today .*\n    by type:\n      user /)
   assert.match(out, /\nFrontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
 })
+
+test('an advance removes what the earlier parts cost less what they cost now', () => {
+  const a: ApiMsg = { role: 'user', content: 'a'.repeat(400) }
+  const b: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b'.repeat(400) }] }
+  const c: ApiMsg = { role: 'user', content: 'c' }
+  let s = observe(undefined, describe(body([a, b, c]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
+  const before = s.parts.reduce((n, p) => n + s.tokens[p.key], 0)
+  const stub: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b' }] }
+  const d: ApiMsg = { role: 'user', content: 'd' }
+  // Side requests drop parts too; only an advance counts.
+  assert.equal(observe(s, describe(body([a]), ends, '2026-10-11T10:00:30Z'), 500, 0).removedTokens, 0)
+  s = observe(s, describe(body([a, stub, c, d]), ends, '2026-10-11T10:01:00Z', true), 900, 0)
+  const kept = s.parts.slice(0, 3).reduce((n, p) => n + s.tokens[p.key], 0)
+  assert.equal(s.removedTokens, before - kept)
+  assert.equal(s.removedBytes, JSON.stringify(b).length - JSON.stringify(stub).length)
+})

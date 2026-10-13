@@ -113,7 +113,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: latestOf(key), sent: describe(body, trimmed, time) }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: latestOf(key), sent: describe(body, trimmed, time, d?.advanced) }
   if (a['log-step-events']) {
     p.logDir = logDirOf(body)
     if (d?.savedChars) {
