@@ -234,6 +234,14 @@ function line(name: string, value: number, total: number, width = 22): string {
 const head = (name: string, value: number, total: number) => line(name, value, total)
 const row = (name: string, value: number, total: number, indent = 0) => '    ' + line(' '.repeat(indent) + name, value, total)
 
+// The count as the sum it is: what the request would cost without the trims,
+// less what they removed, with the numbers lined up.
+function tally(now: number, removed: number): string[] {
+  const [w, r, n] = [now + removed, removed, now].map((v) => Math.round(v).toLocaleString('en-US'))
+  const width = w.length
+  return [`  ${w.padStart(width)} tokens w/o shaver`, `- ${r.padStart(width)} tokens shaved`, `  ${n.padStart(width)} tokens now`]
+}
+
 export function render(s: Stats, session: string): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
@@ -263,7 +271,7 @@ export function render(s: Stats, session: string): string {
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, `${total.toLocaleString('en-US')} tokens`, `Trims removed ${Math.round(s.removedTokens ?? 0).toLocaleString('en-US')} tokens`]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, ...tally(total, s.removedTokens ?? 0)]
   out.push('', head('Base', base, total), '  Fixed session overhead. If over 10k, defer more tools.')
   for (const k of [...BASE_TYPES].sort(byLabel)) out.push(row(label(k), by[k] ?? 0, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by age:')
