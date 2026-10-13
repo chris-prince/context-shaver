@@ -46,7 +46,11 @@ export function hash(s: string): string {
 // Claude Code injects system messages and system-reminder blocks in user
 // messages. Those of the preamble, the messages before the first response
 // (CLAUDE.md, git status, the environment block), are `system`: fixed for the
-// session, as the system prompt is, and the stats count them as base.
+// session, as the system prompt is, and the stats count them as base. Their
+// text is cut at Claude Code's headings into `system:skills`,
+// `system:agents-md` and the like, and the tools it adds there are
+// `system:tools-deferred`; text under no heading stays `system`. A system
+// message's own bytes join its first part.
 // Later ones (environment updates, reminders) are `harness`.
 export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Record<string, number>; lineage?: string } {
   const out: Record<string, number> = {}
@@ -55,12 +59,47 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
   const content = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content
   for (const b of content) {
     const k = m.role === 'system' || isReminder(b) ? injected : kindOf(b, m.role)
-    add(k, JSON.stringify(b).length)
+    if (k === 'system' && b.type === 'text') for (const [s, n] of sections(b)) add(s, n)
+    else add(k === 'system' && b.type === 'tool_addition' ? 'system:tools-deferred' : k, JSON.stringify(b).length)
   }
-  add(m.role === 'system' ? injected : m.role, json.length - Object.values(out).reduce((a, b) => a + b, 0))
+  const envelope = m.role !== 'system' ? m.role : preamble ? (Object.keys(out)[0] ?? injected) : injected
+  add(envelope, json.length - Object.values(out).reduce((a, b) => a + b, 0))
   const first = content.find((b) => b.type === 'tool_use' || b.type === 'tool_result')
   const id = first?.type === 'tool_use' ? first.id : first?.tool_use_id
   return { kinds: out, ...(typeof id === 'string' ? { lineage: `${m.role}:${id}` } : {}) }
+}
+
+// The headings Claude Code starts each part of the preamble with, and the
+// section each starts.
+const HEADINGS: Array<[string, string]> = [
+  ['The following skills are available', 'skills'],
+  ['Available agent types', 'agent-types'],
+  ['The following deferred tools', 'tools-deferred'],
+  ['Codebase and user instructions', 'agents-md'],
+  ['As you answer the user', 'guidance'],
+  ['Attribution for git commits', 'git-attribution'],
+  ['# Environment', 'other'],
+  ['You are powered by the model', 'other'],
+  ['While bypass permissions', 'other'],
+  ["Today's date is", 'other'],
+]
+
+// A preamble text block's bytes by section. A section runs from its heading,
+// at the start of a line, to the next; what comes before the first heading
+// joins it.
+function sections(b: Block): Array<[string, number]> {
+  const text = b.text as string
+  const starts: Array<[number, string]> = []
+  for (const [h, s] of HEADINGS) {
+    const at = text.search(new RegExp('^' + h, 'm'))
+    if (at >= 0) starts.push([at, 'system:' + s])
+  }
+  starts.sort((a, z) => a[0] - z[0])
+  if (!starts.length) return [['system', JSON.stringify(b).length]]
+  starts[0][0] = 0
+  const out = starts.map(([at, s], i): [string, number] => [s, JSON.stringify(text.slice(at, starts[i + 1]?.[0])).length - 2])
+  out[0][1] += JSON.stringify(b).length - out.reduce((n, [, m]) => n + m, 0)
+  return out
 }
 
 const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('<system-reminder>')

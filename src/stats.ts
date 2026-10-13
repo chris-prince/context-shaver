@@ -205,12 +205,11 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
 
 // The kinds the frontier holds back, each with the frontier that trims it.
 const FRONTIER: Record<string, 'tools' | 'reasoning'> = { reasoning: 'reasoning', toolCalls: 'tools', toolResults: 'tools' }
-const BASE_TYPES = ['systemPrompt', 'tools', 'preamble']
-// What Claude Code injects reads the same before the first response as after.
-const LABELS: Record<string, string> = { preamble: 'systemMessage', harness: 'systemMessage' }
+const LABELS: Record<string, string> = { harness: 'system-message' }
 const REST_TYPES = ['toolsLoaded', 'user', 'harness', 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'other']
 
-const label = (k: string) => LABELS[k] ?? k
+// A kind as the output shows it: renamed, if at all, then hyphen-cased.
+const label = (k: string) => LABELS[k] ?? k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())
 const byLabel = (a: string, b: string) => (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : 0)
 
 // A local calendar day, as days since the epoch.
@@ -269,6 +268,7 @@ export function render(s: Stats, session: string, estimated = false): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
+  const sections: Record<string, number> = {}
   const fixed = s.tokens[s.defs.key] ?? 0
   const defBytes = s.defs.systemPrompt + s.defs.tools
   add('systemPrompt', (fixed * s.defs.systemPrompt) / defBytes)
@@ -283,7 +283,11 @@ export function render(s: Stats, session: string, estimated = false): string {
     const bytes = Object.values(p.kinds).reduce((a, b) => a + b, 0)
     for (const [kind, n] of Object.entries(p.kinds)) {
       const share = ((s.tokens[p.key] ?? 0) * n) / bytes
-      if (kind === 'system') add('preamble', share)
+      if (kind === 'system' || kind.startsWith('system:')) {
+        add('preamble', share)
+        const name = kind.slice('system:'.length) || 'other'
+        sections[name] = (sections[name] ?? 0) + share
+      }
       else if (kind in FRONTIER && i >= s.ends[FRONTIER[kind]]) frontier += share
       else {
         add(kind, share)
@@ -295,8 +299,10 @@ export function render(s: Stats, session: string, estimated = false): string {
   const conversation = total - base - frontier
 
   const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...tally(total, s.removedTokens ?? 0, estimated ? 'Context Stats (estimated)' : 'Context Stats')]
-  out.push('', head('Base', base, total), '  Fixed session overhead. If over 10k, defer more tools.')
-  for (const k of [...BASE_TYPES].sort(byLabel)) out.push(row(label(k), by[k] ?? 0, total))
+  out.push('', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
+  // The system prompt, the tools, and the preamble by section, side by side.
+  const baseRows: Array<[string, number]> = [['system-prompt', by.systemPrompt ?? 0], ['tools', by.tools ?? 0], ...Object.entries(sections)]
+  for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by age:')
   for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => b - a)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))
   if (byDay[0]) out.push(row('today', byDay[0], total, 2))

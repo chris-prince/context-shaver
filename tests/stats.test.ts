@@ -72,9 +72,16 @@ test('render prints the stats from the state alone', () => {
   const out = render(s, 'session')
   assert.match(out, /^Session: session\nModel: m\n/)
   assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Stats\n    1,000 tokens w\/o shaver\n  -     0 tokens shaved \(0%\)\n  = 1,000 tokens now\n/)
-  assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Fixed session overhead\. If over 10k, defer more tools\./)
+  assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. If over 10k, shrink big items\./)
   assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by age:\n      today .*\n    by type:\n      user /)
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
+})
+
+test('Base lists the system prompt, the tools and the preamble\'s sections, by name', () => {
+  const preamble: ApiMsg = { role: 'system', content: '# Environment\nmacOS\nThe following skills are available:\n' + '- skill: does things\n'.repeat(20) }
+  const s = observe(undefined, describe(body([preamble, { role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
+  const base = render(s, 'session').split('\n\n').find((b) => b.startsWith('  Base'))!.split('\n').slice(2).map((l) => l.replace(/ +[\d,]+ +\( *\d+%\)$/, ''))
+  assert.deepEqual(base, ['    other', '    skills', '    system-prompt', '    tools'])
 })
 
 test('before any request is answered, the request is estimated from its bytes', () => {

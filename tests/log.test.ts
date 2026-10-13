@@ -18,12 +18,25 @@ test('injected content is system in the preamble and harness after it; the promp
   assert.equal(later.system, undefined)
 
   const env: ApiMsg = { role: 'system', content: '# Environment' }
-  assert.deepEqual(kinds(JSON.stringify(env), env, true).kinds, { system: JSON.stringify(env).length })
+  assert.deepEqual(kinds(JSON.stringify(env), env, true).kinds, { 'system:other': JSON.stringify(env).length })
   assert.deepEqual(kinds(JSON.stringify(env), env).kinds, { harness: JSON.stringify(env).length })
 
   // Tools surfaced mid-preamble come as non-text blocks; they are preamble too.
-  const added = { role: 'system', content: [{ type: 'text', text: '# Environment' }, { type: 'tool_addition', tool: { name: 'Docs' } }] } as ApiMsg
-  assert.deepEqual(kinds(JSON.stringify(added), added, true).kinds, { system: JSON.stringify(added).length })
+  const tool = { type: 'tool_addition', tool: { name: 'Docs' } }
+  const added = { role: 'system', content: [{ type: 'text', text: '# Environment' }, tool] } as ApiMsg
+  const n = JSON.stringify(added).length
+  assert.deepEqual(kinds(JSON.stringify(added), added, true).kinds, { 'system:other': n - JSON.stringify(tool).length, 'system:tools-deferred': JSON.stringify(tool).length })
+})
+
+test('preamble text is cut at its headings into sections', () => {
+  const text = '<system-reminder>\n# Environment\nmacOS\nThe following skills are available:\n- a: b\nNot at a line start: Available agent types\nToday\'s date is 2026-10-13.'
+  const m: ApiMsg = { role: 'system', content: [{ type: 'text', text }] }
+  const json = JSON.stringify(m)
+  const k = kinds(json, m, true).kinds
+  assert.deepEqual(Object.keys(k).sort(), ['system:other', 'system:skills'])
+  const skills = JSON.stringify('The following skills are available:\n- a: b\nNot at a line start: Available agent types\n').length - 2
+  assert.equal(k['system:skills'], skills)
+  assert.equal(k['system:other'] + k['system:skills'], json.length)
 })
 
 test('a skill body beside the Skill result counts as a tool result', () => {
