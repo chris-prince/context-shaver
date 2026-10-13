@@ -244,10 +244,10 @@ export function render(s: Stats, session: string): string {
   const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, `${total.toLocaleString('en-US')} tokens`]
   out.push('', head('Base', base, total), '  Fixed session overhead. If over 10k, defer more tools.')
   for (const k of [...BASE_TYPES].sort(byLabel)) out.push(row(label(k), by[k] ?? 0, total))
-  out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '  by age:')
+  out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by age:')
   for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => b - a)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))
   if (byDay[0]) out.push(row('today', byDay[0], total, 2))
-  out.push('  by type:')
+  out.push('    by type:')
   for (const k of [...REST_TYPES].sort(byLabel)) if (by[k]) out.push(row(label(k), by[k], total, 2))
   out.push('', head('Frontier', frontier, total), '  Recent turns, not yet eligible to trim. Okay if large.')
   return out.join('\n')
