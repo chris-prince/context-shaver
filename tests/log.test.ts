@@ -20,6 +20,10 @@ test('injected content is system in the preamble and harness after it; the promp
   const env: ApiMsg = { role: 'system', content: '# Environment' }
   assert.deepEqual(kinds(JSON.stringify(env), env, true).kinds, { system: JSON.stringify(env).length })
   assert.deepEqual(kinds(JSON.stringify(env), env).kinds, { harness: JSON.stringify(env).length })
+
+  // Tools surfaced mid-preamble come as non-text blocks; they are preamble too.
+  const added = { role: 'system', content: [{ type: 'text', text: '# Environment' }, { type: 'tool_addition', tool: { name: 'Docs' } }] } as ApiMsg
+  assert.deepEqual(kinds(JSON.stringify(added), added, true).kinds, { system: JSON.stringify(added).length })
 })
 
 test('a skill body beside the Skill result counts as a tool result', () => {

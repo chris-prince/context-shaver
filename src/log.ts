@@ -54,7 +54,7 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
   const injected = preamble ? 'system' : 'harness'
   const content = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content
   for (const b of content) {
-    const k = b.type === 'text' && (m.role === 'system' || isReminder(b)) ? injected : kindOf(b, m.role)
+    const k = m.role === 'system' || isReminder(b) ? injected : kindOf(b, m.role)
     add(k, JSON.stringify(b).length)
   }
   add(m.role === 'system' ? injected : m.role, json.length - Object.values(out).reduce((a, b) => a + b, 0))

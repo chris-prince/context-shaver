@@ -252,6 +252,8 @@ export function estimate(r: Sent): Stats {
   return { ...observe(undefined, r, Math.round(bytes * BYTE_TOKENS), 0), requests: 0, turns: 0 }
 }
 
+const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
+
 export function render(s: Stats, session: string, estimated = false): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
@@ -281,7 +283,7 @@ export function render(s: Stats, session: string, estimated = false): string {
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, ...tally(total, s.removedTokens ?? 0, estimated ? 'Context Stats (estimated)' : 'Context Stats')]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...tally(total, s.removedTokens ?? 0, estimated ? 'Context Stats (estimated)' : 'Context Stats')]
   out.push('', head('Base', base, total), '  Fixed session overhead. If over 10k, defer more tools.')
   for (const k of [...BASE_TYPES].sort(byLabel)) out.push(row(label(k), by[k] ?? 0, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by age:')
