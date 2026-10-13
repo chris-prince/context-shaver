@@ -81,5 +81,4 @@ test('an advance removes what the earlier parts cost less what they cost now', (
   s = observe(s, describe(body([a, stub, c, d]), ends, '2026-10-11T10:01:00Z', true), 900, 0)
   const kept = s.parts.slice(0, 3).reduce((n, p) => n + s.tokens[p.key], 0)
   assert.equal(s.removedTokens, before - kept)
-  assert.equal(s.removedBytes, JSON.stringify(b).length - JSON.stringify(stub).length)
 })

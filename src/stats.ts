@@ -41,7 +41,6 @@ export type Stats = {
   model: string
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
-  removedBytes: number
   removedTokens: number
   // Each part's latest count, by key.
   tokens: Record<string, number>
@@ -156,13 +155,10 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   // An advance takes out what the previous request's parts cost less what
   // they cost now: the parts through the last one it also sent. What follows
   // that is the turn's new parts.
-  let removedBytes = prev?.removedBytes ?? 0
   let removedTokens = prev?.removedTokens ?? 0
   if (prev && r.advanced) {
     const had = new Set(prev.parts.map((p) => p.key))
     const kept = r.parts.slice(0, r.parts.findLastIndex((p) => had.has(p.key)) + 1)
-    const bytesOf = (p: { kinds: Record<string, number> }) => Object.values(p.kinds).reduce((a, b) => a + b, 0)
-    removedBytes += prev.parts.reduce((n, p) => n + bytesOf(p), 0) - kept.reduce((n, p) => n + p.bytes, 0)
     removedTokens += prev.parts.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - kept.reduce((n, p) => n + known[p.key], 0)
   }
 
@@ -179,7 +175,6 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     time: r.time,
     model: r.model,
     inputTokens,
-    removedBytes,
     removedTokens,
     tokens: known,
     bound,
@@ -262,7 +257,7 @@ export function render(s: Stats, session: string): string {
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, `${total.toLocaleString('en-US')} tokens`, `Trims removed ${Math.round(s.removedTokens ?? 0).toLocaleString('en-US')} tokens (${(s.removedBytes ?? 0).toLocaleString('en-US')} bytes)`]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, `${total.toLocaleString('en-US')} tokens`, `Trims removed ${Math.round(s.removedTokens ?? 0).toLocaleString('en-US')} tokens`]
   out.push('', head('Base', base, total), '  Fixed session overhead. If over 10k, defer more tools.')
   for (const k of [...BASE_TYPES].sort(byLabel)) out.push(row(label(k), by[k] ?? 0, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by age:')
