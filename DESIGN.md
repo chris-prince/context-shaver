@@ -95,8 +95,28 @@ The proxy reads the file when it starts; restart it after editing.
 ## What it trims
 
 Only requests that carry tools are trimmed: the main loop and subagents. Claude
-Code's side requests pass through unchanged. A conversation is keyed by its
-first message, so each subagent is its own.
+Code's side requests pass through unchanged.
+
+A conversation is one message history that only grows, and each has its own
+state: the applied clock below counts steps and turns into it, and its cache
+entries are prefixes of it, so neither carries over to another history. Its
+key is the session ID, the agent ID and a hash of its first message:
+
+- Claude Code sends the session ID with every request. It keeps apart sessions
+  whose first message is the same, as when two start with `:shaver stats` in
+  the same repo state: once the command is stripped, both first messages are
+  the same reminders.
+- Each subagent's requests carry `x-claude-code-agent-id`; the main loop's
+  carry none and are keyed `main`.
+- One agent can still send several histories. A WebSearch call is its own
+  one-message request with no agent ID, and a compaction (`/compact`, or the
+  automatic one) replaces the history with a summary and carries on from
+  that, never sending the old messages again. The first message changes
+  exactly then, so the new history starts fresh: nothing trimmed, nothing
+  cached, a new journal. Keeping the old state would point its clock at turns
+  the new history doesn't have, and count on cache entries it can't read.
+
+Without a session ID (other clients), the first message alone is the key.
 
 A step is an assistant message with the tool results that answer it. The
 latest step, the one the model is answering, is never touched. A turn starts
@@ -164,7 +184,7 @@ so it says nothing about whether advancing would pay.
 ## Logs
 
 With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
-`proxy-data/logs/<session>-<conversation>/`:
+`proxy-data/logs/<key>/`:
 
 - `step_events.jsonl`, with one line per event:
   - a `request` line for each answered request: usage, and the request's

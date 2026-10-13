@@ -79,12 +79,12 @@ type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<str
 // Trims a /v1/messages request. Only requests with tools are trimmed: those
 // are the main loop and subagents. Claude Code's side requests are sent as
 // they came.
-function prepare(raw: Buffer, now: number): Prepared | undefined {
+function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined {
   const body = JSON.parse(raw.toString('utf8'))
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   if (policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
-  const key = hash(JSON.stringify(msgs[0]))
+  const key = keyOf(body, agent)
   const s = load(key)
   const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
   const clock = clockOf(msgs)
@@ -115,7 +115,7 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   const time = new Date(now).toISOString()
   const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: latestOf(key), sent: describe(body, trimmed, time, d?.advanced) }
   if (a['log-step-events']) {
-    p.logDir = logDirOf(body)
+    p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
       const context: Record<string, number> = {}
       for (const m of keep.msgs) for (const [k, n] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + n
@@ -139,13 +139,30 @@ function prepare(raw: Buffer, now: number): Prepared | undefined {
   return p
 }
 
-// Where a conversation's requests are logged: its session, and its key.
-function logDirOf(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
-  let session = 'unknown'
+// A conversation's key, which names its state, journal and log dir. A
+// conversation is one message history that only grows: the proxy's applied
+// clock counts steps and turns into it, and its cache entries are prefixes of
+// it, so neither means anything for another history.
+//
+// Claude Code sends the session ID with every request, and an agent ID
+// (x-claude-code-agent-id) with each subagent's; the main loop sends none. But
+// one agent can still send several histories: a WebSearch call is its own
+// one-message request, and a compaction (/compact, or the automatic one)
+// replaces the history with a summary and carries on from that. So the key
+// also takes a hash of the first message, which changes exactly when the
+// history is a new one, and each starts with fresh state.
+//
+// The session ID keeps apart sessions whose first message is the same, as
+// happens when two start with `:shaver stats` in the same repo state: once
+// the command is stripped, all that is left of it is the same reminders.
+// Without a session ID (other clients), the first message is the key alone.
+function keyOf(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }, agent?: string): string {
+  const first = hash(JSON.stringify(body.messages[0]))
+  let session: string | undefined
   try {
-    session = JSON.parse(body.metadata?.user_id ?? '{}').session_id ?? session
+    session = JSON.parse(body.metadata?.user_id ?? '{}').session_id
   } catch {}
-  return path.join(logRoot, `${session}-${hash(JSON.stringify(body.messages[0])).slice(0, 8)}`)
+  return session ? `${session}-${agent ?? 'main'}-${first.slice(0, 8)}` : first
 }
 
 // The answer to `:shaver policy`: the policy file as it is now, which may differ
@@ -161,12 +178,12 @@ function policyText(): string {
 // The answer to `:shaver stats`: the conversation's latest answered request,
 // from its journal (stats.ts), or before there is one, this request estimated
 // as it will be sent once the command is answered, tools deferred.
-function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: string } }): string {
+function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: string } }, agent?: string): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   if (policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
-  const session = path.basename(logDirOf(sent))
-  const s = latestOf(hash(JSON.stringify(sent.messages[0])))
-  const text = s ? render(s, session) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), session, true)
+  const key = keyOf(sent, agent)
+  const s = latestOf(key)
+  const text = s ? render(s, key) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true)
   return '```\n' + text + '\n```'
 }
 
@@ -257,12 +274,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       const body = JSON.parse(raw.toString('utf8'))
       if (Array.isArray(body.messages) && body.messages.length) {
+        const agent = req.headers['x-claude-code-agent-id'] as string | undefined
         const msgs = stripCommands(body.messages)
         const command = body.tools?.length && pendingCommand(msgs)
         if (command) {
-          const text = command === ':shaver policy' ? policyText() : stats({ ...body, messages: msgs })
+          const text = command === ':shaver policy' ? policyText() : stats({ ...body, messages: msgs }, agent)
           res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
-          const context = latestOf(hash(JSON.stringify(withoutPending(msgs)[0])))?.inputTokens ?? 0
+          const context = latestOf(keyOf({ ...body, messages: withoutPending(msgs) }, agent))?.inputTokens ?? 0
           return void res.end(reply(text, body.model, !!body.stream, context))
         }
         if (msgs.length < body.messages.length) raw = Buffer.from(JSON.stringify({ ...body, messages: msgs }))
@@ -271,7 +289,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('ctx-shaver: commands left in:', err)
     }
     try {
-      p = prepare(raw, Date.now())
+      p = prepare(raw, Date.now(), req.headers['x-claude-code-agent-id'] as string | undefined)
     } catch (err) {
       console.error('ctx-shaver: request left untrimmed:', err)
     }
