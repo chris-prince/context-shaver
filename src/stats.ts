@@ -239,7 +239,7 @@ const row = (name: string, value: number, total: number, indent = 0) => '    ' +
 function tally(now: number, removed: number): string[] {
   const [w, r, n] = [now + removed, removed, now].map((v) => Math.round(v).toLocaleString('en-US'))
   const width = w.length
-  return ['', 'Context Stats', `    ${w.padStart(width)} tokens w/o shaver`, `  - ${r.padStart(width)} tokens shaved`, `  = ${n.padStart(width)} tokens now`]
+  return ['', 'Context Stats', `    ${w.padStart(width)} tokens w/o shaver`, `  - ${r.padStart(width)} tokens shaved (${percent(removed, now + removed)}%)`, `  = ${n.padStart(width)} tokens now`]
 }
 
 export function render(s: Stats, session: string): string {
