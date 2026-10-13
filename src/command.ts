@@ -31,6 +31,14 @@ export function pendingCommand(msgs: Msg[]): string | undefined {
   return last && commandOf(last)
 }
 
+// The messages with the pending command left out but for its reminders, as
+// they will be sent once it is answered.
+export function withoutPending<M extends Msg>(msgs: M[]): M[] {
+  const i = msgs.findLastIndex((m) => m.role !== 'system')
+  const reminders = Array.isArray(msgs[i].content) ? (msgs[i].content as Block[]).filter(isReminder) : []
+  return [...msgs.slice(0, i), ...(reminders.length ? [{ ...msgs[i], content: reminders }] : []), ...msgs.slice(i + 1)]
+}
+
 // The messages with each answered command, the system messages after it and
 // its reply removed, but for any reminders the command came with. A command not
 // yet answered, the last one, stays.

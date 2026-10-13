@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { commandOf, pendingCommand, reply, stripCommands } from '../src/command.ts'
+import { commandOf, pendingCommand, reply, stripCommands, withoutPending } from '../src/command.ts'
 
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] })
 const system = (text: string) => ({ role: 'system', content: text })
@@ -25,6 +25,11 @@ test('a request asks for a command despite the system messages after it', () => 
   assert.equal(pendingCommand([firstPrompt(':shaver stats'), system('environment')]), ':shaver stats')
   assert.equal(pendingCommand([user('a'), assistant('A'), user(':shaver policy')]), ':shaver policy')
   assert.equal(pendingCommand([user(':shaver stats'), assistant('stats')]), undefined)
+})
+
+test('the pending command is left out but for its reminders', () => {
+  assert.deepEqual(withoutPending([firstPrompt(':shaver stats'), system('environment')]), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, system('environment')])
+  assert.deepEqual(withoutPending([user('a'), assistant('b'), user(':shaver stats')]), [user('a'), assistant('b')])
 })
 
 test('an answered first-prompt command is stripped but for its reminders', () => {

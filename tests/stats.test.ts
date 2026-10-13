@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { describe, observe, render, type Stats } from '../src/stats.ts'
+import { describe, estimate, observe, render, type Stats } from '../src/stats.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -66,6 +66,14 @@ test('render prints the stats from the state alone', () => {
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Fixed session overhead\. If over 10k, defer more tools\./)
   assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by age:\n      today .*\n    by type:\n      user /)
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
+})
+
+test('before any request is answered, the request is estimated from its bytes', () => {
+  const s = estimate(describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'))
+  assert.ok(s.inputTokens > 0)
+  assert.equal(Math.round(sum(s)), s.inputTokens)
+  const out = render(s, 'session', true)
+  assert.match(out, /0 requests across 0 turns, spanning 0m\n\nContext Stats \(estimated\)\n.*\n  -  +0 tokens shaved \(0%\)\n/)
 })
 
 test('an advance removes what the earlier parts cost less what they cost now', () => {

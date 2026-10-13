@@ -236,13 +236,23 @@ const row = (name: string, value: number, total: number, indent = 0) => '    ' +
 
 // The count as the sum it is: what the request would cost without the trims,
 // less what they removed, with the numbers lined up.
-function tally(now: number, removed: number): string[] {
+function tally(now: number, removed: number, heading: string): string[] {
   const [w, r, n] = [now + removed, removed, now].map((v) => Math.round(v).toLocaleString('en-US'))
   const width = w.length
-  return ['', 'Context Stats', `    ${w.padStart(width)} tokens w/o shaver`, `  - ${r.padStart(width)} tokens shaved (${percent(removed, now + removed)}%)`, `  = ${n.padStart(width)} tokens now`]
+  return ['', heading, `    ${w.padStart(width)} tokens w/o shaver`, `  - ${r.padStart(width)} tokens shaved (${percent(removed, now + removed)}%)`, `  = ${n.padStart(width)} tokens now`]
 }
 
-export function render(s: Stats, session: string): string {
+// Tokens a byte on a session's first request, which measured 0.345 to 0.367.
+const BYTE_TOKENS = 0.36
+
+// The stats before any request is answered: the request alone, its count
+// estimated from its bytes.
+export function estimate(r: Sent): Stats {
+  const bytes = r.defs.systemPrompt + r.defs.tools + r.parts.reduce((n, p) => n + p.bytes, 0)
+  return { ...observe(undefined, r, Math.round(bytes * BYTE_TOKENS), 0), requests: 0, turns: 0 }
+}
+
+export function render(s: Stats, session: string, estimated = false): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
@@ -271,7 +281,7 @@ export function render(s: Stats, session: string): string {
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, ...tally(total, s.removedTokens ?? 0)]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, ...tally(total, s.removedTokens ?? 0, estimated ? 'Context Stats (estimated)' : 'Context Stats')]
   out.push('', head('Base', base, total), '  Fixed session overhead. If over 10k, defer more tools.')
   for (const k of [...BASE_TYPES].sort(byLabel)) out.push(row(label(k), by[k] ?? 0, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by age:')

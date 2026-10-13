@@ -19,8 +19,8 @@ import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
-import { pendingCommand, reply, stripCommands } from './command.ts'
-import { describe, observe, render, type Sent, type Stats } from './stats.ts'
+import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
+import { describe, estimate, observe, render, type Sent, type Stats } from './stats.ts'
 import { latest, record } from './journal.ts'
 import { loadPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
@@ -159,11 +159,12 @@ function policyText(): string {
 }
 
 // The answer to `:shaver stats`: the conversation's latest answered request,
-// from its journal (stats.ts).
-function stats(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }): string {
+// from its journal (stats.ts), or before there is one, this request estimated.
+function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: string } }): string {
+  const session = path.basename(logDirOf(body))
   const s = latestOf(hash(JSON.stringify(body.messages[0])))
-  if (!s) return 'ctx-shaver: no request in this conversation has been counted yet, so there are no stats.'
-  return '```\n' + render(s, path.basename(logDirOf(body))) + '\n```'
+  const text = s ? render(s, session) : render(estimate(describe({ ...body, messages: withoutPending(body.messages) }, { tools: 0, reasoning: 0 }, new Date().toISOString())), session, true)
+  return '```\n' + text + '\n```'
 }
 
 // The usage a response reports: message_start's, with message_delta's output
