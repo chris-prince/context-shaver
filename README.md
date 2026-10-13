@@ -13,7 +13,7 @@ context that are no longer needed.
 - **Lower cost.** You stop paying, request after request, for content that no
   longer matters.
 - **Automatic.** Trimming happens continuously, with no commands to run.
-- **Fast.** No pausing for compaction.
+- **Fast.** Compaction happens instantly, with no pauses to slow you down.
 - **Intelligent.** Cache-aware price modeling means you optimize for true costs,
   not just raw token counts.
 - **Configurable.** What gets culled is up to you, controlled by a policy file.
