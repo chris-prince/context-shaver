@@ -313,7 +313,10 @@ export type Decision = {
 // pays when its extra cost is at most K S, with S the characters it saves
 // every later request. Advancing reads no further than the first change, and
 // less when no entry ends there or none is in reach of its breakpoints. With
-// nothing cached both write everything, so advancing always pays.
+// nothing cached both write everything, so advancing always pays. A request
+// with no breakpoints in its messages (a side request branched off the
+// conversation) reads nothing of them whatever is cached, so says nothing of
+// the cache: it never advances.
 export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: string, thinking: Thinking = new Map()): Decision {
   const M = writeCost(model)
   const a = positionsOf(before, seed, thinking)
@@ -322,7 +325,7 @@ export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live
   const savedChars = sum(a) - sum(b)
   const [ra, rb] = [readThrough(a, live), readThrough(b, live)]
   const cold = ra < 0
-  if (a.at(-1)?.prefix === b.at(-1)?.prefix || savedChars <= 0) return { advanced: false, cold, savedChars: 0, rewriteChars: 0, extraChars: 0 }
+  if (a.at(-1)?.prefix === b.at(-1)?.prefix || savedChars <= 0 || !a.some((p) => p.breakpoint)) return { advanced: false, cold, savedChars: 0, rewriteChars: 0, extraChars: 0 }
   const rewriteChars = sum(a.slice(0, ra + 1)) - sum(b.slice(0, rb + 1))
   const extraChars = costOf(b, rb, M) - costOf(a, ra, M)
   return { advanced: extraChars <= K * savedChars, cold, savedChars, rewriteChars, extraChars }

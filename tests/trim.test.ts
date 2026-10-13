@@ -289,6 +289,13 @@ test('cold always advances; warm only when savings outweigh the rewrite', () => 
   assert.equal(gate(msgs, msgs, []).advanced, false)
 })
 
+test('a request with no breakpoints in its messages never advances', () => {
+  const unmarked = (ms: readonly ApiMsg[]): ApiMsg[] => JSON.parse(JSON.stringify(ms, (k, v) => (k === 'cache_control' ? undefined : v)))
+  const keep = unmarked(apply(msgs, stubAll, { steps: 0, turns: 0 }).msgs)
+  const adv = unmarked(apply(msgs, stubAll, { steps: 5, turns: 2 }).msgs)
+  assert.equal(decide(keep, adv, new Set(), 's', 'claude-haiku-5-5').advanced, false)
+})
+
 test('a thinking block is sized by the tokens it bills, not its signature', () => {
   const sig = 's'.repeat(2000)
   const block = { type: 'thinking', thinking: '', signature: sig }

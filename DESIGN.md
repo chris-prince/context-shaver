@@ -159,6 +159,9 @@ Advancing reads no further than its first change. It reads less when no
 entry ends there, and nothing when every entry is out of the breakpoints'
 reach. When nothing is cached (the TTL lapsed, or the model, tools or system
 prompt changed), both candidates write everything, so advancing always pays.
+A request with no breakpoints in its messages (a side request branched off
+the conversation) never advances: it reads none of them whatever is cached,
+so it says nothing about whether advancing would pay.
 
 ## Logs
 
@@ -171,7 +174,9 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     `writtenTokens5m` are the tokens written to the cache for an hour and for
     5 minutes; an hour's write costs more. `predictedCachedChars` is the
     message characters the proxy expected the cache to serve, to check the
-    model against `cachedTokens`;
+    model against `cachedTokens`; `breakpoints` is how many of the messages'
+    blocks carry `cache_control` (with none, the messages are read from no
+    entry, so the proxy holds trimming);
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind
