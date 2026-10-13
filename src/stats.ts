@@ -205,12 +205,12 @@ function span(start: string, end: string): string {
 
 const percent = (v: number, total: number) => (total ? Math.floor((v / total) * 100 + 0.5) : 0)
 
-function line(name: string, value: number, total: number): string {
-  return `${name.padEnd(22)}${Math.round(value).toLocaleString('en-US').padStart(12)}  (${String(percent(value, total)).padStart(2)}%)`
+function line(name: string, value: number, total: number, width = 22): string {
+  return `${name.padEnd(width)}${Math.round(value).toLocaleString('en-US').padStart(12)}  (${String(percent(value, total)).padStart(2)}%)`
 }
 
 const head = (name: string, value: number, total: number) => line(name, value, total)
-const row = (name: string, value: number, total: number, indent = 0) => '  ' + line(' '.repeat(indent) + name, value, total)
+const row = (name: string, value: number, total: number, indent = 0) => '  ' + line(' '.repeat(indent) + name, value, total, 24)
 
 export function render(s: Stats, session: string): string {
   const total = s.inputTokens
