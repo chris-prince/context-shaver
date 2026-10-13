@@ -2,14 +2,16 @@
 // answered request the proxy counts its parts' tokens (observe) as
 // scripts/defs.py's part_tokens does from the logs, and keeps only what the
 // next request and the stats need: the latest request's parts, and their
-// counts. render prints them as scripts/analyze-context.py does.
+// counts. render prints them in three sections: the base, the conversation
+// before the frontier, and the frontier.
 //
 // Taken in order, a request's reported count less what its parts already
 // counted is what its new parts cost together. A new reply costs the output
 // count of the request that answered with it; the other new parts share what
-// is left by bytes. A part is a message (as JSON without breakpoints), the
-// system blocks and tools sent in full together, or a deferred tool a tool
-// search has loaded. A trim that changes an earlier message unbinds the
+// is left by bytes. A part is a message (as JSON without breakpoints), or the
+// system blocks and tools sent in full together. A tool a tool search loads
+// counts with the message that loads it, since the API expands each reference
+// into the tool's definition whether or not the tool is deferred. A trim that changes an earlier message unbinds the
 // thinking of the replies after it, so those are counted again, at their bytes
 // less the thinking.
 
@@ -26,7 +28,6 @@ export type Sent = {
   turns: number
   parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number }>
   defs: { key: string; systemPrompt: number; tools: number }
-  loaded: Array<{ key: string; bytes: number }>
   ends: { tools: number; reasoning: number }
 }
 
@@ -48,7 +49,6 @@ export type Stats = {
   seen: Record<string, string>
   parts: Array<{ key: string; kinds: Record<string, number>; lineage?: string }>
   defs: Sent['defs']
-  loaded: string[]
   ends: Sent['ends']
 }
 
@@ -64,37 +64,37 @@ function plain(m: ApiMsg): string {
   return hash(JSON.stringify([m.role, c]))
 }
 
-// The deferred tools a request's tool results load by tool_reference.
-function referenced(msgs: readonly ApiMsg[]): Set<string> {
-  const out = new Set<string>()
-  for (const m of msgs)
-    for (const b of blocks(m))
-      if (b.type === 'tool_result' && Array.isArray(b.content))
-        for (const c of b.content as Block[]) if (c.type === 'tool_reference') out.add(String(c.tool_name))
+// The tools a message's tool results load by tool_reference.
+function referenced(m: ApiMsg): string[] {
+  const out: string[] = []
+  for (const b of blocks(m))
+    if (b.type === 'tool_result' && Array.isArray(b.content))
+      for (const c of b.content as Block[]) if (c.type === 'tool_reference') out.push(String(c.tool_name))
   return out
 }
 
 export function describe(body: { model: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[] }, ends: Sent['ends'], time: string): Sent {
   const msgs = body.messages
   const responded = msgs.findIndex((m) => m.role === 'assistant')
+  const tools = body.tools ?? []
+  const size = new Map(tools.map((t) => [t.name, JSON.stringify(t).length]))
   const parts = msgs.map((m, i) => {
     const json = JSON.stringify(m)
     const k = kindsOf(json, m, responded < 0 || i < responded)
     const thinking = m.role === 'assistant' ? blocks(m).filter((b) => b.type === 'thinking') : []
-    return { key: plain(m), bytes: json.length, kinds: k.kinds, lineage: k.lineage, role: m.role, thinking: thinking.length ? JSON.stringify(thinking).length : 0 }
+    const loaded = referenced(m).reduce((n, t) => n + (size.get(t) ?? 0), 0)
+    const kinds = loaded ? { ...k.kinds, toolsLoaded: loaded } : k.kinds
+    return { key: plain(m), bytes: json.length + loaded, kinds, lineage: k.lineage, role: m.role, thinking: thinking.length ? JSON.stringify(thinking).length : 0 }
   })
   const system: unknown[] = typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : Array.isArray(body.system) ? body.system : []
-  const tools = body.tools ?? []
   const full = tools.filter((t) => !t.defer_loading).map((t) => JSON.stringify(t))
   const sys = system.map((s) => JSON.stringify(s))
-  const loaded = referenced(msgs)
   return {
     time,
     model: body.model,
     turns: msgs.filter(isPrompt).length,
     parts,
     defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0) },
-    loaded: tools.filter((t) => t.defer_loading && loaded.has(t.name ?? '')).map((t) => JSON.stringify(t)).map((j) => ({ key: 'tool:' + hash(j), bytes: j.length })),
     ends,
   }
 }
@@ -112,7 +112,6 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     count[p.key] = (count[p.key] ?? 0) + 1
   }
   sizes[r.defs.key] = r.defs.systemPrompt + r.defs.tools
-  for (const t of r.loaded) sizes[t.key] = t.bytes
   const isNew = new Set(Object.keys(sizes).filter((k) => !(k in known)))
   const first = keys.findIndex((k) => isNew.has(k))
   if (first >= 0)
@@ -167,7 +166,6 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     seen,
     parts: r.parts.map((p) => ({ key: p.key, kinds: p.kinds, ...(p.lineage ? { lineage: p.lineage } : {}) })),
     defs: r.defs,
-    loaded: r.loaded.map((t) => t.key),
     ends: r.ends,
   }
 }
@@ -207,10 +205,12 @@ function span(start: string, end: string): string {
 
 const percent = (v: number, total: number) => (total ? Math.floor((v / total) * 100 + 0.5) : 0)
 
-function row(name: string, value: number, total: number, showPercent = true, indent = 0): string {
-  const line = `  ${' '.repeat(indent)}${name.padEnd(20)}${Math.round(value).toLocaleString('en-US').padStart(12)}`
-  return showPercent ? line + `  (${String(percent(value, total)).padStart(2)}%)` : line
+function line(name: string, value: number, total: number): string {
+  return `${name.padEnd(22)}${Math.round(value).toLocaleString('en-US').padStart(12)}  (${String(percent(value, total)).padStart(2)}%)`
 }
+
+const head = (name: string, value: number, total: number) => line(name, value, total)
+const row = (name: string, value: number, total: number, indent = 0) => line(' '.repeat(2 + indent) + name, value, total)
 
 export function render(s: Stats, session: string): string {
   const total = s.inputTokens
@@ -220,7 +220,6 @@ export function render(s: Stats, session: string): string {
   const defBytes = s.defs.systemPrompt + s.defs.tools
   add('systemPrompt', (fixed * s.defs.systemPrompt) / defBytes)
   add('tools', (fixed * s.defs.tools) / defBytes)
-  add('toolsLoaded', s.loaded.reduce((n, k) => n + (s.tokens[k] ?? 0), 0))
 
   const ref = day(s.time)
   const byDay: Record<number, number> = {}
@@ -239,23 +238,17 @@ export function render(s: Stats, session: string): string {
       }
     }
   })
-  const persist = total - frontier
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
+  const conversation = total - base - frontier
 
   const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${s.requests.toLocaleString('en-US')} requests across ${s.turns.toLocaleString('en-US')} turns, spanning ${span(s.first, s.time)}`, `${total.toLocaleString('en-US')} tokens`]
-  out.push('', 'Tokens by age (in calendar days, local time)', row('base', base, total))
-  if (by.toolsLoaded) out.push(row('toolsLoaded', by.toolsLoaded, total))
-  for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => b - a)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total))
-  if (byDay[0]) out.push(row('today', byDay[0], total))
-  if (frontier) out.push(row('frontier', frontier, total))
-  out.push(row('TOTAL', total, total, false))
-  out.push('', 'Tokens by part type (pre-frontier only)', row('base', base, persist))
-  for (const k of [...BASE_TYPES].sort(byLabel)) out.push(row(label(k), by[k] ?? 0, persist, true, 2))
-  out.push(row('non-base', persist - base, persist))
-  for (const k of [...REST_TYPES].sort(byLabel)) {
-    if (['toolsLoaded', 'reasoning', 'other'].includes(k) && !by[k]) continue
-    out.push(row(label(k), by[k] ?? 0, persist, true, 2))
-  }
-  out.push(row('TOTAL', persist, persist, false))
+  out.push('', head('Base', base, total), '  Fixed session overhead. If over 10k, defer more tools.')
+  for (const k of [...BASE_TYPES].sort(byLabel)) out.push(row(label(k), by[k] ?? 0, total))
+  out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '  by age:')
+  for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => b - a)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))
+  if (byDay[0]) out.push(row('today', byDay[0], total, 2))
+  out.push('  by type:')
+  for (const k of [...REST_TYPES].sort(byLabel)) if (by[k]) out.push(row(label(k), by[k], total, 2))
+  out.push('', head('Frontier', frontier, total), '  Recent turns, not yet eligible to trim. Okay if large.')
   return out.join('\n')
 }

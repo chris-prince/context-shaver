@@ -42,9 +42,28 @@ test('a part a side request left out keeps its count when it comes back', () => 
   assert.equal(s.tokens[s.parts[2].key], counted)
 })
 
+test('a loaded tool counts with the message that loads it, once, even when deferred later', () => {
+  const big = { name: 'Big', description: 'x'.repeat(4000) }
+  const prompt: ApiMsg = { role: 'user', content: 'hi' }
+  const call: ApiMsg = { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'ToolSearch', input: {} }] }
+  const result: ApiMsg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'tool_reference', tool_name: 'Big' }] }] }
+  const sent = (tools: object[]) => describe({ model: 'm', messages: [prompt, call, result], system: 'sys', tools }, ends, '2026-10-11T10:00:00Z')
+  const first = sent([{ name: 'Bash' }, big])
+  assert.equal(first.parts[2].kinds.toolsLoaded, JSON.stringify(big).length)
+  let s = observe(undefined, first, 3000, 0)
+  const loaded = s.tokens[s.parts[2].key]
+  // Deferring the tool changes only the base; the message keeps its count.
+  s = observe(s, sent([{ name: 'Bash' }, { ...big, defer_loading: true }]), 1900, 0)
+  assert.equal(s.tokens[s.parts[2].key], loaded)
+  assert.equal(sum(s), 1900)
+})
+
 test('render prints the stats from the state alone', () => {
   const s = observe(undefined, describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
   const out = render(s, 'session')
   assert.match(out, /^Session: session\nModel: m\n/)
   assert.match(out, /1 requests across 1 turns, spanning 0m\n1,000 tokens/)
+  assert.match(out, /\nBase +[\d,]+ +\( *\d+%\)\n  Fixed session overhead\. If over 10k, defer more tools\./)
+  assert.match(out, /\nConversation +[\d,]+ .*\n  Earlier turns.*\n  by age:\n    today .*\n  by type:\n    user /)
+  assert.match(out, /\nFrontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
 })
