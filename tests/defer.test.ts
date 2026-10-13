@@ -15,21 +15,12 @@ test('a tool not kept is deferred and listed with the others; ToolSearch never i
   assert.match((b.messages[1].content as { text: string }[])[0].text, /calling them:\nArtifact\nWebFetch\n\nmore$/)
 })
 
-test('with no list from Claude Code, the proxy adds one at the end before any reply', () => {
+test('with no list in a system message, nothing is deferred, even if the conversation quotes one', () => {
   const b = request('')
+  b.messages.push({ role: 'assistant', content: [{ type: 'text', text: `It reads: ${HEAD}Agent` }] })
   forceDefer(b, ['Bash'])
-  assert.deepEqual(b.tools, request('env').tools.map((t) => (t.name === 'Artifact' ? { ...t, defer_loading: true } : t)))
+  assert.deepEqual(b.tools, request('').tools)
   assert.equal(b.messages.length, 2)
-  assert.equal(b.messages[1].role, 'system')
-  assert.match((b.messages[1].content as { text: string }[])[0].text, /^The following deferred tools are now available via ToolSearch\..*calling them:\nArtifact\n$/s)
-})
-
-test('the added list goes just before the first reply, after every user message ahead of it', () => {
-  const b = request('')
-  b.messages.push({ role: 'user', content: 'the prompt' }, { role: 'assistant', content: [{ type: 'text', text: `It reads: ${HEAD}Agent` }] })
-  forceDefer(b, ['Bash'])
-  assert.deepEqual(b.messages.map((m) => m.role), ['user', 'user', 'system', 'assistant'])
-  assert.equal((b.messages[3].content as { text: string }[])[0].text, `It reads: ${HEAD}Agent`)
 })
 
 test('with tool search off, nothing is deferred', () => {

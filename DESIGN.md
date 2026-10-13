@@ -85,11 +85,9 @@ response, it is left alone.
 `tools_not_deferred` lists the tools Claude Code sends in full that should stay
 that way. Every other one is marked `defer_loading` and added to the deferred
 tools Claude Code lists in its environment message, so the model loads it with
-`ToolSearch` when it needs it. Claude Code sometimes sends no such list even
-with tool search on; the proxy then adds its own, worded the same, as a system
-message just before the first reply. `ToolSearch` itself is never deferred, listed
-or not. Without the key nothing is deferred, and with tool search off (no
-`ToolSearch` tool) neither. Changing the list rewrites the cache of open
+`ToolSearch` when it needs it. `ToolSearch` itself is never deferred, listed or
+not. Without the key nothing is deferred, and with tool search off (no
+`ENABLE_TOOL_SEARCH`, so no list) neither. Changing the list rewrites the cache of open
 sessions once.
 
 The proxy reads the file when it starts; restart it after editing.
