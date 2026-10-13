@@ -34,7 +34,7 @@ export function hash(s: string): string {
 }
 
 // A message's bytes by kind, summing to its JSON length, in the buckets
-// ctx-shaver's analyze-context reads: user, assistant, reasoning, tool calls
+// `:shaver stats` reads: user, assistant, reasoning, tool calls
 // and results each split into stubbed and not, what Claude Code injects, and
 // other (content of an unknown type). The role/content wrapper rides with the
 // role, a system message's with its text. A skill's body, which Claude Code
@@ -46,7 +46,7 @@ export function hash(s: string): string {
 // Claude Code injects system messages and system-reminder blocks in user
 // messages. Those of the preamble, the messages before the first response
 // (CLAUDE.md, git status, the environment block), are `system`: fixed for the
-// session, as the system prompt is, and analyze-context counts them as base.
+// session, as the system prompt is, and the stats count them as base.
 // Later ones (environment updates, reminders) are `harness`.
 export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Record<string, number>; lineage?: string } {
   const out: Record<string, number> = {}

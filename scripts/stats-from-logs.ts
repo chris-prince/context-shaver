@@ -1,8 +1,7 @@
 // Replays a conversation's logs through src/stats.ts and prints what
-// `:shaver stats` would have said at a request, to compare with
-// scripts/analyze-context.py's output for the same request. With
-// --check-journal it also journals each request (src/journal.ts) and checks
-// that replaying the journal gives the stats observed after every one.
+// `:shaver stats` would have said at a request. With --check-journal it also
+// journals each request (src/journal.ts) and checks that replaying the journal
+// gives the stats observed after every one.
 //
 // Usage: node scripts/stats-from-logs.ts <session dir> [--request N] [--check-journal]
 
@@ -21,7 +20,7 @@ if (!dir) {
   process.exit(1)
 }
 const part = (h: string) => JSON.parse(readFileSync(path.join(dir, 'parts', h + '.json'), 'utf8'))
-// The request lines analyze-context.py reads: answered, with their tools.
+// The answered request lines, with their tools.
 const reqs = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8')
   .split('\n')
   .flatMap((l) => {

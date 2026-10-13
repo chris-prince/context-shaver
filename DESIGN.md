@@ -181,8 +181,6 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
 
 Scripts:
 
-- `python3 scripts/analyze-context.py [conversation dir] [--request N]` breaks one
-  request's tokens down by age and by part type.
 - Typing `:shaver stats` as a prompt shows the session's latest request,
   logged or not, in three sections: the base, the conversation before the
   frontier (by age, then by type), and the frontier. Every percentage is of
@@ -202,9 +200,9 @@ Scripts:
   journal does, so a conversation begun under an older proxy counts its
   earlier messages by bytes.
 - `node scripts/stats-from-logs.ts <conversation dir> [--request N]
-  [--check-journal]` replays a logged conversation through `src/stats.ts`,
-  to check its output against `analyze-context.py`'s. `--check-journal`
-  also checks that the journal replays to the same stats after every
+  [--check-journal]` replays a logged conversation through `src/stats.ts`
+  and prints what `:shaver stats` would have said. `--check-journal` also
+  checks that the journal replays to the same stats after every
   request.
 - `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
