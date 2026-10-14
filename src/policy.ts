@@ -10,10 +10,10 @@ export type Action = 'stub' | 'drop'
 // the latest `wait`.
 type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 // `tools_not_deferred` names the tools Claude Code sends in full that stay
-// that way; the proxy defers the rest (defer.ts). `summarize_after_tokens` is
+// that way; the proxy defers the rest (defer.ts). `summary_threshold_tokens` is
 // how many tokens of completed turns a record leaves uncovered before the
 // proxy asks for the next (summary.ts); without it, none is made or applied.
-export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[]; summarize_after_tokens?: number }
+export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[]; summary_threshold_tokens?: number }
 
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
@@ -25,8 +25,8 @@ export function parsePolicy(v: unknown): Policy {
       if (!Array.isArray(rules) || !rules.every((n) => typeof n === 'string')) throw new Error('policy: tools_not_deferred is not a list of tool names')
       continue
     }
-    if (kind === 'summarize_after_tokens') {
-      if (!Number.isInteger(rules) || (rules as number) <= 0) throw new Error('policy: summarize_after_tokens is not a positive token count')
+    if (kind === 'summary_threshold_tokens') {
+      if (!Number.isInteger(rules) || (rules as number) <= 0) throw new Error('policy: summary_threshold_tokens is not a positive token count')
       continue
     }
     if (!Object.hasOwn(ACTIONS, kind)) throw new Error(`policy: unknown kind ${kind}`)

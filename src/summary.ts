@@ -2,7 +2,7 @@
 // their memorable events (local/notes.md, "Heavy compaction").
 //
 // Making a record is kept apart from applying it. Once a request leaves
-// `summarize_after_tokens` (policy.ts) uncovered, the proxy forks it after it is
+// `summary_threshold_tokens` (policy.ts) uncovered, the proxy forks it after it is
 // answered: the same request with instructions appended, which reads its cache
 // entry and pays only for the instructions and the record. A record covers only
 // complete arcs, so it ends where some turn starts, and the next fork asks from

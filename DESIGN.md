@@ -140,7 +140,7 @@ not. Without the key nothing is deferred, and with tool search off (no
 `ENABLE_TOOL_SEARCH`, so no list) neither. Changing the list rewrites the cache of open
 sessions once.
 
-`summarize_after_tokens` turns on heavy compaction (below): a fork is made
+`summary_threshold_tokens` turns on heavy compaction (below): a fork is made
 once the completed turns past the last one offered hold that many tokens
 before the frontier. The
 default is 20000. Without the key no record is made or sent.
@@ -244,7 +244,7 @@ landed, the user's decisions and the traps hit (`src/summary.ts`). Making a
 record is kept apart from sending it.
 
 - **Made while the cache is warm.** Once a request's completed turns, since
-  the turn the last fork was offered at, hold `summarize_after_tokens` tokens as
+  the turn the last fork was offered at, hold `summary_threshold_tokens` tokens as
   sent before the frontier, counted as the stats count them from the API's
   usage, the proxy forks
   it after it is answered: the same request with

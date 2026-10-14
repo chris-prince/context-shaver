@@ -119,7 +119,7 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const seed = seedOf(body.model, body.tools, body.system)
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
   // The records it sends: those sent before, and on a cold cache, all there are.
-  const chain = policy.summarize_after_tokens ? validChain(loadSummaries(key).chain, msgs) : []
+  const chain = policy.summary_threshold_tokens ? validChain(loadSummaries(key).chain, msgs) : []
   const before = Math.min(s?.summarized ?? 0, chain.length)
   let records = before
   let keep = summarized(apply(msgs, policy, held), msgs, chain.slice(0, records))
@@ -154,7 +154,7 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
   const suggestion = isSuggestion(msgs)
-  const after = policy.summarize_after_tokens
+  const after = policy.summary_threshold_tokens
   // Whether to fork is known once the response's counts are in.
   const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
   const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, fork, stats: latestOf(key), sent: described, suggestion }
