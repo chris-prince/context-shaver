@@ -141,7 +141,8 @@ not. Without the key nothing is deferred, and with tool search off (no
 sessions once.
 
 `summarize_after_tokens` turns on heavy compaction (below): a fork is made
-once the completed turns past the last one offered hold that many tokens. The
+once the completed turns past the last one offered hold that many tokens
+before the frontier. The
 default is 20000. Without the key no record is made or sent.
 
 The proxy reads the file when it starts; restart it after editing.
@@ -244,7 +245,8 @@ record is kept apart from sending it.
 
 - **Made while the cache is warm.** Once a request's completed turns, since
   the turn the last fork was offered at, hold `summarize_after_tokens` tokens as
-  sent, counted as the stats count them from the API's usage, the proxy forks
+  sent before the frontier, counted as the stats count them from the API's
+  usage, the proxy forks
   it after it is answered: the same request with
   instructions appended to its last message, after the breakpoint. The fork
   reads the request's cache entry and pays only for the instructions and the

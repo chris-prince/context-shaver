@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornOf, describe, estimate, isSuggestion, observe, render, type Stats } from '../src/stats.ts'
+import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Stats } from '../src/stats.ts'
 import { SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -124,4 +124,24 @@ test('records show as their own type, each dated by the first message it covers'
   assert.doesNotMatch(out, /^ +assistant /m)
   assert.match(out, /^ +5 days ago /m)
   assert.match(out, /^ +2 days ago /m)
+})
+
+test('settled leaves out what the frontier holds, and only that', () => {
+  const prompt: ApiMsg = { role: 'user', content: 'run it' }
+  const call: ApiMsg = { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] }
+  const result: ApiMsg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'a\nb\nc'.repeat(50) }] }
+  const reply: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'done' }] }
+  const next: ApiMsg = { role: 'user', content: 'thanks' }
+  // The tools frontier starts at the result: the call before it is settled.
+  const sent = describe(body([prompt, call, result, reply, next]), { tools: 2, reasoning: 0 }, '2026-10-11T10:00:00Z')
+  const tokens = Object.fromEntries(sent.parts.map((p) => [p.key, 100]))
+  const out = settled(sent, tokens)
+  assert.equal(out[1], 100)
+  assert.equal(out[3], 100)
+  assert.equal(out[4], 100)
+  // Only the result's message wrapper is left, as the stats count it.
+  assert.ok(out[2] > 0 && out[2] < 10, `the result's settled share is ${out[2]}`)
+  const s = observe(undefined, sent, 1000, 0)
+  const frontier = Number(/\n  Frontier +([\d,]+)/.exec(render(s, 'x'))![1].replace(/,/g, ''))
+  assert.ok(frontier > 0)
 })

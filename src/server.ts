@@ -20,7 +20,7 @@ import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts
 import { clockOf, heldTo, isPrompt, type ApiMsg, type Block, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
-import { bornOf, describe, estimate, isSuggestion, observe, render, type Sent, type Stats } from './stats.ts'
+import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
 import { history, latest, record } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -384,7 +384,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     record(journalOf(p.key), c.stats, next, u)
     current.set(p.key, { stats: next, cost: add(c.cost, c.stats, next, u!, ttlMs) })
   }
-  const forked = p.fork && next && !p.suggestion && !forking.has(p.key) ? p.fork(p.sent.parts.map((q) => next.tokens[q.key] ?? 0)) : undefined
+  const forked = p.fork && next && !p.suggestion && !forking.has(p.key) ? p.fork(settled(p.sent, next.tokens)) : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, summarized: p.summarized, offered: forked?.current ?? p.offered })
   if (forked) void summarize(p.key, forked, upstream + url, headers, p.body, p.logDir)
   if (p.logDir && p.logLine) {

@@ -71,8 +71,8 @@ export type Fork = { start: number; current: number; prompts: Array<{ quote: str
 
 // The fork a request calls for: one when the turns completed since `from`
 // (the turn the last fork was offered at, or the last record's end) hold at
-// least `threshold` tokens in the messages as sent, by each one's count in
-// `tokens` (stats.ts).
+// least `threshold` tokens before the frontier in the messages as sent, by
+// each one's count in `tokens` (stats.ts, settled).
 export function forkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[]): Fork | undefined {
   const prompts = promptsOf(msgs)
   const current = prompts.length

@@ -212,6 +212,16 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
 
 // The kinds the frontier holds back, each with the frontier that trims it.
 const FRONTIER: Record<string, 'tools' | 'reasoning'> = { reasoning: 'reasoning', toolCalls: 'tools', toolResults: 'tools' }
+const inFrontier = (kind: string, i: number, ends: Sent['ends']) => kind in FRONTIER && i >= ends[FRONTIER[kind]]
+
+// Each part's tokens before the frontier: its count, less the share of its
+// kinds the frontier holds.
+export function settled(s: Sent, tokens: Record<string, number>): number[] {
+  return s.parts.map((p, i) => {
+    const bytes = Object.values(p.kinds).reduce((a, b) => a + b, 0)
+    return Object.entries(p.kinds).reduce((n, [kind, b]) => (inFrontier(kind, i, s.ends) ? n : n + ((tokens[p.key] ?? 0) * b) / bytes), 0)
+  })
+}
 const LABELS: Record<string, string> = { harness: 'system-message' }
 const REST_TYPES = ['toolsLoaded', 'user', 'harness', 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'summary', 'other']
 
@@ -300,7 +310,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
         const name = kind.slice('system:'.length) || 'other'
         sections[name] = (sections[name] ?? 0) + share
       }
-      else if (kind in FRONTIER && i >= s.ends[FRONTIER[kind]]) frontier += share
+      else if (inFrontier(kind, i, s.ends)) frontier += share
       else {
         add(kind, share)
         byDay[ago] = (byDay[ago] ?? 0) + share
