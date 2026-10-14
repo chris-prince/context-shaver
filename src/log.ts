@@ -69,13 +69,15 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
   return { kinds: out, ...(typeof id === 'string' ? { lineage: `${m.role}:${id}` } : {}) }
 }
 
-// The headings Claude Code starts each part of the preamble with, and the
-// section each starts.
+// The headings Claude Code starts each part of the preamble with, as regex
+// sources, and the section each starts. The memory index comes inside the
+// instructions reminder, after the rules files.
 const HEADINGS: Array<[string, string]> = [
   ['The following skills are available', 'skills'],
   ['Available agent types', 'agent-types'],
   ['The following deferred tools', 'tools-deferred'],
   ['Codebase and user instructions', 'agents-md'],
+  ['Contents of .*/memory/MEMORY\\.md', 'memory'],
   ['As you answer the user', 'guidance'],
   ['Attribution for git commits', 'git-attribution'],
   ['# Environment', 'other'],

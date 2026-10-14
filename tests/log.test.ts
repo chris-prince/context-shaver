@@ -39,6 +39,17 @@ test('preamble text is cut at its headings into sections', () => {
   assert.equal(k['system:other'] + k['system:skills'], json.length)
 })
 
+test('the memory index is cut out of the instructions reminder', () => {
+  const memory = 'Contents of /Users/x/.claude/projects/p/memory/MEMORY.md (user\'s auto-memory):\n- [A](a.md) — b\n'
+  const text = '<system-reminder>\nCodebase and user instructions are shown below.\nContents of /Users/x/AGENTS.md (project instructions):\nrules\n' + memory + '</system-reminder>'
+  const m: ApiMsg = { role: 'user', content: [{ type: 'text', text }] }
+  const json = JSON.stringify(m)
+  const k = kinds(json, m, true).kinds
+  assert.deepEqual(Object.keys(k).sort(), ['system:agents-md', 'system:memory', 'user'])
+  assert.equal(k['system:memory'], JSON.stringify(memory + '</system-reminder>').length - 2)
+  assert.equal(k['system:agents-md'] + k['system:memory'] + k.user, json.length)
+})
+
 test('a skill body beside the Skill result counts as a tool result', () => {
   const m: ApiMsg = { role: 'user', content: [
     { type: 'tool_result', tool_use_id: 't1', content: 'Launching skill: x' },
