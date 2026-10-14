@@ -276,11 +276,7 @@ const costLines = (c: Cost) => difference('Costs (session)', c.without, c.actual
 
 const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 
-// The records heavy compaction has made (summary.ts), how many are sent, and
-// what their forks cost, which the actual cost includes.
-export type Records = { made: number; sent: number; spent: number }
-
-export function render(s: Stats, session: string, estimated = false, cost?: Cost, records?: Records): string {
+export function render(s: Stats, session: string, estimated = false, cost?: Cost): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
@@ -314,7 +310,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, '', estimated ? 'Context Summary (estimated)' : 'Context Summary', ...tally(total, s.removedTokens ?? 0), ...(cost ? costLines(cost) : []), ...(records ? [`  Records: ${records.made} made, ${records.sent} sent, $${records.spent.toFixed(2)} to make`] : [])]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, '', estimated ? 'Context Summary (estimated)' : 'Context Summary', ...tally(total, s.removedTokens ?? 0), ...(cost ? costLines(cost) : [])]
   out.push('', 'Context Details', '', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
   // The system prompt, the tools, and the preamble by section, side by side.
   const baseRows: Array<[string, number]> = [['system-prompt', by.systemPrompt ?? 0], ['tools', by.tools ?? 0], ...Object.entries(sections)]

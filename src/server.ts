@@ -226,10 +226,9 @@ function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: s
   if (policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
   const key = keyOf(sent, agent)
   const { stats: s, cost: c } = currentOf(key)
-  const { chain, spent: forks } = loadSummaries(key)
-  const summaries = policy.summarize_after_tokens && { made: chain.length, sent: load(key)?.summarized ?? 0, spent: forks }
+  const { spent: forks } = loadSummaries(key)
   const withForks = c && { ...c, actual: c.actual + forks }
-  const text = s ? render(s, key, false, withForks, summaries) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks, summaries)
+  const text = s ? render(s, key, false, withForks) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks)
   return '```\n' + text + '\n```'
 }
 
