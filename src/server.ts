@@ -406,20 +406,23 @@ const forking = new Set<string>()
 // to the conversation's records whatever it answers.
 async function summarize(key: string, f: Fork, target: string, headers: Record<string, string>, sent: Buffer, logDir?: string): Promise<void> {
   forking.add(key)
+  const began = Date.now()
+  const body = JSON.parse(sent.toString('utf8'))
+  const asked = { start: f.start, current: f.current, maxTokens: body.max_tokens, thinking: body.thinking }
   try {
-    const body = JSON.parse(sent.toString('utf8'))
     body.messages = forkMessages(body.messages, instructions(f))
     body.stream = false
-    const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify(body) })
+    const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(600_000) })
     const out: { content?: Block[]; usage?: Usage } = await r.json()
     if (!r.ok) throw new Error(`${r.status} ${JSON.stringify(out).slice(0, 500)}`)
     const time = new Date().toISOString()
     const record = recordOf(out.content ?? [], f, time)
     const s = loadSummaries(key)
     writeFileSync(summariesOf(key), JSON.stringify({ chain: record ? [...s.chain, record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0) }))
-    if (logDir) writeLine(logDir, { event: 'summary', time, start: f.start, current: f.current, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
+    if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
     console.error('ctx-shaver: summary fork failed:', err)
+    if (logDir) writeLine(logDir, { event: 'summary', time: new Date().toISOString(), ...asked, ms: Date.now() - began, error: String(err).slice(0, 500) })
   } finally {
     forking.delete(key)
   }
