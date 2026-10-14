@@ -65,6 +65,10 @@ export type Item = { kind: Kind; id: string; step: number; turn: number }
 export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'redacted_thinking'
 export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
 
+// The heading of the message heavy compaction's records go in (summary.ts).
+export const SUMMARY_HEAD = "[ctx-shaver] My record of this session's earlier turns, compacted in my context:"
+export const isSummary = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith(SUMMARY_HEAD)
+
 const KINDS: Record<string, Kind> = { Skill: 'skill', ToolSearch: 'tool_search' }
 
 // A Read that Claude Code sends as a system message's text, as when it

@@ -27,7 +27,7 @@ export type Sent = {
   model: string
   // The prompts among its messages (items.ts, isPrompt).
   turns: number
-  parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number }>
+  parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number; born?: string }>
   defs: { key: string; systemPrompt: number; tools: number }
   ends: { tools: number; reasoning: number }
   // Whether the proxy advanced its trim on this request.
@@ -67,6 +67,12 @@ function plain(m: ApiMsg): string {
     c = bs.length === 1 && bs[0].type === 'text' && Object.keys(bs[0]).length === 2 ? bs[0].text : bs
   }
   return hash(JSON.stringify([m.role, c]))
+}
+
+// When a message was first sent, by the stats so far.
+export function bornOf(s: Stats | undefined, m: ApiMsg): string | undefined {
+  const { lineage } = kindsOf(JSON.stringify(m), m)
+  return (lineage && s?.seen['lineage:' + lineage]) || s?.seen[plain(m)]
 }
 
 // The tools a message's tool results load by tool_reference.
@@ -182,7 +188,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
 
   const seen = { ...prev?.seen }
   for (const p of r.parts) {
-    seen[p.key] ??= r.time
+    seen[p.key] ??= p.born ?? r.time
     if (p.lineage) seen['lineage:' + p.lineage] ??= r.time
   }
   const requests = (prev?.requests ?? 0) + 1
@@ -207,7 +213,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
 // The kinds the frontier holds back, each with the frontier that trims it.
 const FRONTIER: Record<string, 'tools' | 'reasoning'> = { reasoning: 'reasoning', toolCalls: 'tools', toolResults: 'tools' }
 const LABELS: Record<string, string> = { harness: 'system-message' }
-const REST_TYPES = ['toolsLoaded', 'user', 'harness', 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'other']
+const REST_TYPES = ['toolsLoaded', 'user', 'harness', 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'summary', 'other']
 
 // A kind as the output shows it: renamed, if at all, then hyphen-cased.
 const label = (k: string) => LABELS[k] ?? k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())

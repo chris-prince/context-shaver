@@ -9,7 +9,7 @@
 // there on. Records are applied when the cache is cold, when everything is
 // written anyway, and every request after sends the same.
 
-import { blocks, isPrompt, type ApiMsg, type Block } from './items.ts'
+import { blocks, isPrompt, SUMMARY_HEAD, type ApiMsg, type Block } from './items.ts'
 import { hash } from './log.ts'
 import { sizeOf, TEXT_TOKENS, type Applied, type Thinking } from './trim.ts'
 
@@ -43,7 +43,7 @@ export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly 
   if (!chain.length) return a
   const from = msgs.findIndex((m) => m.role === 'assistant')
   const to = promptsOf(msgs)[chain.at(-1)!.endsBefore - 1]
-  const text = `[ctx-shaver] My record of this session's earlier turns, compacted in my context:\n\n${chain.map((s) => s.text).join('\n\n')}`
+  const text = `${SUMMARY_HEAD}\n\n${chain.map((s) => s.text).join('\n\n')}`
   const out: Applied = { msgs: [], origin: [], treated: a.treated }
   let placed = false
   a.msgs.forEach((m, j) => {

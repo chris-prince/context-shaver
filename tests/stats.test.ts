@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { describe, estimate, isSuggestion, observe, render, type Stats } from '../src/stats.ts'
-import type { ApiMsg } from '../src/items.ts'
+import { bornOf, describe, estimate, isSuggestion, observe, render, type Stats } from '../src/stats.ts'
+import { SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
 const body = (messages: ApiMsg[]) => ({ model: 'm', messages, system: 'sys', tools: [{ name: 'Bash' }] })
@@ -105,4 +105,19 @@ test('an advance removes what the earlier parts cost less what they cost now', (
   s = observe(s, describe(body([a, stub, c, d]), ends, '2026-10-11T10:01:00Z', true), 900, 0)
   const kept = s.parts.slice(0, 3).reduce((n, p) => n + s.tokens[p.key], 0)
   assert.equal(s.removedTokens, before - kept)
+})
+
+test('a record shows as its own type, dated by the first response it covers', () => {
+  const a: ApiMsg = { role: 'user', content: 'a' }
+  const b: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b' }] }
+  const c: ApiMsg = { role: 'user', content: 'c' }
+  let s = observe(undefined, describe(body([a, b, c]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
+  const record: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: `${SUMMARY_HEAD}\n\nturn 1` }] }
+  const sent = describe(body([a, record, c]), ends, '2026-10-13T10:00:00Z', true)
+  sent.parts[1].born = bornOf(s, b)
+  s = observe(s, sent, 900, 0)
+  const out = render(s, 'k', false)
+  assert.match(out, /^ +summary /m)
+  assert.doesNotMatch(out, /^ +assistant /m)
+  assert.match(out, /^ +2 days ago /m)
 })

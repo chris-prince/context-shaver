@@ -20,7 +20,7 @@ import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts
 import { clockOf, heldTo, isPrompt, type ApiMsg, type Block, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
-import { describe, estimate, isSuggestion, observe, render, type Sent, type Stats } from './stats.ts'
+import { bornOf, describe, estimate, isSuggestion, observe, render, type Sent, type Stats } from './stats.ts'
 import { history, latest, record } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -150,6 +150,9 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const time = new Date(now).toISOString()
   // A record takes its turns' prompts out of the messages; the stats count them still.
   const described = { ...describe(body, trimmed, time, d?.advanced || records > before), turns: msgs.filter(isPrompt).length }
+  // The records are dated by the first message they cover, the first response.
+  const record = records ? described.parts.find((q) => q.kinds.summary) : undefined
+  if (record) record.born = bornOf(latestOf(key), msgs.find((m) => m.role === 'assistant')!)
   const suggestion = isSuggestion(msgs)
   const after = policy.summarize_after_tokens
   const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking) : undefined
