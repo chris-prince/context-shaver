@@ -17,6 +17,7 @@
 
 import { hash, kinds as kindsOf } from './log.ts'
 import { blocks, isPrompt, type ApiMsg, type Block } from './items.ts'
+import type { Cost } from './cost.ts'
 
 type Tool = { name?: string; defer_loading?: boolean }
 
@@ -244,13 +245,15 @@ function line(name: string, value: number, total: number, width = 22): string {
 const head = (name: string, value: number, total: number) => line('  ' + name, value, total)
 const row = (name: string, value: number, total: number, indent = 0) => '    ' + line(' '.repeat(indent) + name, value, total)
 
-// The count as the sum it is: what the request would cost without the trims,
-// less what they removed, with the numbers lined up.
-function tally(now: number, removed: number, heading: string): string[] {
-  const [w, r, n] = [now + removed, removed, now].map((v) => Math.round(v).toLocaleString('en-US'))
-  const width = w.length
-  return ['', heading, `    ${w.padStart(width)} tokens w/o shaver`, `  - ${r.padStart(width)} tokens shaved (${percent(removed, now + removed)}%)`, `  = ${n.padStart(width)} tokens now`]
+// Without the shaver, what it is now, and what the shaver saved, with the
+// numbers lined up.
+function difference(heading: string, without: number, now: number, show: (v: number) => string, labels: [string, string, string]): string[] {
+  const [w, n, d] = [without, now, without - now].map(show)
+  const width = Math.max(w.length, n.length, d.length)
+  return ['  ' + heading, `    ${w.padStart(width)} ${labels[0]}`, `    ${n.padStart(width)} ${labels[1]}`, `    ${d.padStart(width)} ${labels[2]} (${percent(without - now, without)}%)`]
 }
+
+const tally = (now: number, removed: number) => difference('Tokens (current)', now + removed, now, (v) => Math.round(v).toLocaleString('en-US'), ['w/o shaver', 'now', 'saved'])
 
 // Tokens a byte on a session's first request, which measured 0.345 to 0.367.
 const BYTE_TOKENS = 0.36
@@ -262,9 +265,12 @@ export function estimate(r: Sent): Stats {
   return { ...observe(undefined, r, Math.round(bytes * BYTE_TOKENS), 0), requests: 0, turns: 0 }
 }
 
+// The session's cost without the shaver and as it was (cost.ts).
+const costLines = (c: Cost) => difference('Costs (session)', c.without, c.actual, (v) => '$' + v.toFixed(2), ['w/o shaver (estimated)', 'actual', 'saved'])
+
 const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 
-export function render(s: Stats, session: string, estimated = false): string {
+export function render(s: Stats, session: string, estimated = false, cost?: Cost): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
@@ -298,8 +304,8 @@ export function render(s: Stats, session: string, estimated = false): string {
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...tally(total, s.removedTokens ?? 0, estimated ? 'Context Stats (estimated)' : 'Context Stats')]
-  out.push('', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
+  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, '', estimated ? 'Context Summary (estimated)' : 'Context Summary', ...tally(total, s.removedTokens ?? 0), ...(cost ? costLines(cost) : [])]
+  out.push('', 'Context Details', '', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
   // The system prompt, the tools, and the preamble by section, side by side.
   const baseRows: Array<[string, number]> = [['system-prompt', by.systemPrompt ?? 0], ['tools', by.tools ?? 0], ...Object.entries(sections)]
   for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))

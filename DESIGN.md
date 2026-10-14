@@ -272,6 +272,19 @@ Scripts:
   Counting starts when the
   journal does, so a conversation begun under an older proxy counts its
   earlier messages by bytes.
+- The stats also show the session's cost (`src/cost.ts`), from the journal
+  alone, so it adds nothing to it: replayed once with the stats, then kept as
+  a running total. Each request's actual uncached, cache-read, cache-write and
+  output tokens come from its usage. Without the shaver the prompt would have
+  been `inputTokens + removedTokens`; its split is estimated from the gap
+  since the previous request and whether the trim advanced. After a gap longer
+  than the cache TTL, both read only the shared prefix and write the rest. On
+  a warm advance, which rewrites the cache, the shaverless prompt would have
+  read everything the previous one sent. Otherwise it mirrors the actual
+  request, with the trimmed-out tokens read on a hit and written on a miss.
+  Output is the same in both. Dollars use a per-model price table; for an
+  unknown model the costs are left out. Prompt suggestions and command replies
+  are left out, as the journal leaves them out.
 - `node scripts/stats-from-logs.ts <conversation dir> [--request N]
   [--check-journal]` replays a logged conversation through `src/stats.ts`
   and prints what `:shaver stats` would have said. `--check-journal` also

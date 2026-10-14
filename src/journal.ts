@@ -12,6 +12,7 @@
 // writes by TTL, output), which the stats leave out and replay ignores.
 
 import { appendFileSync, existsSync, readFileSync, renameSync } from 'node:fs'
+import type { Usage } from './cost.ts'
 import type { Stats } from './stats.ts'
 
 const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
@@ -22,7 +23,7 @@ export type Delta = {
   set?: Partial<Pick<Stats, (typeof PLAIN)[number]>>
   records?: Partial<Record<(typeof RECORDS)[number], { set?: Record<string, unknown>; del?: string[] }>>
   parts?: Array<[number, number] | Part>
-  usage?: object
+  usage?: Usage
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
@@ -70,16 +71,24 @@ export function apply(prev: Stats | undefined, d: Delta): Stats {
 
 // Appends the change from prev, the stats the journal ends with, to next, and
 // the usage the request reported.
-export function record(file: string, prev: Stats | undefined, next: Stats, usage?: object): void {
+export function record(file: string, prev: Stats | undefined, next: Stats, usage?: Usage): void {
   appendFileSync(file, JSON.stringify({ ...diff(prev, next), ...(usage && { usage }) }) + '\n')
 }
 
 // The stats after each line of a journal, in order, each built from the one
-// before; none if there is none.
-export function* replay(file: string): Generator<Stats> {
+// before, with the usage the line holds; none if there is none.
+export function* history(file: string): Generator<{ stats: Stats; usage?: Usage }> {
   if (!existsSync(file)) return
   let s: Stats | undefined
-  for (const line of readFileSync(file, 'utf8').split('\n')) if (line) yield (s = apply(s, JSON.parse(line)))
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line) continue
+    const d: Delta = JSON.parse(line)
+    yield { stats: (s = apply(s, d)), usage: d.usage }
+  }
+}
+
+export function* replay(file: string): Generator<Stats> {
+  for (const { stats } of history(file)) yield stats
 }
 
 // The stats the journal ends with. A journal that won't replay is moved aside

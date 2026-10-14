@@ -71,7 +71,7 @@ test('render prints the stats from the state alone', () => {
   const s = observe(undefined, describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
   const out = render(s, 'session')
   assert.match(out, /^Session: session\nModel: m\n/)
-  assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Stats\n    1,000 tokens w\/o shaver\n  -     0 tokens shaved \(0%\)\n  = 1,000 tokens now\n/)
+  assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Summary\n  Tokens \(current\)\n    1,000 w\/o shaver\n    1,000 now\n        0 saved \(0%\)\n/)
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. If over 10k, shrink big items\./)
   assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by age:\n      today .*\n    by type:\n      user /)
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
@@ -89,7 +89,7 @@ test('before any request is answered, the request is estimated from its bytes', 
   assert.ok(s.inputTokens > 0)
   assert.equal(Math.round(sum(s)), s.inputTokens)
   const out = render(s, 'session', true)
-  assert.match(out, /0 requests across 0 turns, spanning 0m\n\nContext Stats \(estimated\)\n.*\n  -  +0 tokens shaved \(0%\)\n/)
+  assert.match(out, /0 requests across 0 turns, spanning 0m\n\nContext Summary \(estimated\)\n  Tokens \(current\)\n.*\n.*\n     +0 saved \(0%\)\n/)
 })
 
 test('an advance removes what the earlier parts cost less what they cost now', () => {

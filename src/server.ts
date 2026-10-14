@@ -21,7 +21,8 @@ import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
 import { describe, estimate, isSuggestion, observe, render, type Sent, type Stats } from './stats.ts'
-import { latest, record } from './journal.ts'
+import { history, latest, record } from './journal.ts'
+import { add, cost, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
@@ -68,14 +69,18 @@ function load(key: string): State | undefined {
 
 const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify(s))
 
-// Each conversation's stats as its journal ends (journal.ts), replayed from the
-// journal the first time they're asked for.
-const current = new Map<string, Stats | undefined>()
+// Each conversation's stats as its journal ends (journal.ts) and its cost so
+// far (cost.ts), replayed from the journal the first time they're asked for and
+// kept up as requests are answered.
+type Current = { stats?: Stats; cost?: Cost }
+const current = new Map<string, Current>()
 const journalOf = (key: string) => path.join(stateDir, `${key}.journal.jsonl`)
-function latestOf(key: string): Stats | undefined {
-  if (!current.has(key)) current.set(key, latest(journalOf(key)))
-  return current.get(key)
+function currentOf(key: string): Current {
+  let c = current.get(key)
+  if (!c) current.set(key, (c = { stats: latest(journalOf(key)), cost: cost(history(journalOf(key)), ttlMs) }))
+  return c
 }
+const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
@@ -187,8 +192,8 @@ function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: s
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   if (policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
   const key = keyOf(sent, agent)
-  const s = latestOf(key)
-  const text = s ? render(s, key) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true)
+  const { stats: s, cost: c } = currentOf(key)
+  const text = s ? render(s, key, false, c) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, c)
   return '```\n' + text + '\n```'
 }
 
@@ -196,8 +201,6 @@ function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: s
 // tokens, for a stream; the body's for a plain response. Also its content's
 // lengths: each thinking block's signature and the characters of everything
 // else.
-type Usage = { input_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number }; output_tokens?: number }
-
 type Content = { signatures: string[]; visibleChars: number }
 
 function usageReader() {
@@ -341,8 +344,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
   const next = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
   if (inputTokens && next && !p.suggestion) {
-    record(journalOf(p.key), latestOf(p.key), next, u)
-    current.set(p.key, next)
+    const c = currentOf(p.key)
+    record(journalOf(p.key), c.stats, next, u)
+    current.set(p.key, { stats: next, cost: add(c.cost, c.stats, next, u!, ttlMs) })
   }
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) } })
   if (p.logDir && p.logLine) {

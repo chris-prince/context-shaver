@@ -7,6 +7,7 @@
 // trimmed prefix and the prompt cache keeps reading it; decide says when moving
 // it pays. The latest step and the current turn are never touched.
 
+import { PRICES } from './cost.ts'
 import { blocks, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
 import { treatment, type Action, type Policy } from './policy.ts'
@@ -222,12 +223,11 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock
 // --- When to move the applied clock. ---
 
 // Claude Code writes 1-hour cache entries at 2x input. A read costs 0.1x on
-// most models, so a written character costs M + 1 = 20 reads; the models in
-// READ_COST read for less, and a write costs them more reads. K is the warm
-// requests expected to read what a trim saved before the cache next goes cold:
-// 40 at an hour's TTL (ctx-shaver's local/notes.md, "Light compaction").
-const READ_COST: Record<string, number> = { 'claude-opus-5-5': 0.05, 'claude-fable-5-1': 0.025, 'claude-mythos-5-1': 0.025 }
-export const writeCost = (model: string) => 2 / (READ_COST[model] ?? 0.1) - 1 // M
+// most models, so a written character costs M + 1 = 20 reads; the models
+// priced to read for less (cost.ts, PRICES) pay more reads for a write. K is
+// the warm requests expected to read what a trim saved before the cache next
+// goes cold: 40 at an hour's TTL (ctx-shaver's local/notes.md, "Light compaction").
+export const writeCost = (model: string) => 2 / (PRICES[model] ? PRICES[model].read / PRICES[model].input : 0.1) - 1 // M
 export const K = 40
 
 // What a thinking block bills, which its length does not show: Claude Code
