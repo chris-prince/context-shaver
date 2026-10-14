@@ -412,7 +412,7 @@ async function summarize(key: string, f: Fork, target: string, headers: Record<s
   try {
     body.messages = forkMessages(body.messages, instructions(f))
     body.stream = false
-    const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(600_000) })
+    const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
     const out: { content?: Block[]; usage?: Usage } = await r.json()
     if (!r.ok) throw new Error(`${r.status} ${JSON.stringify(out).slice(0, 500)}`)
     const time = new Date().toISOString()
