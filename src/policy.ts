@@ -13,8 +13,8 @@ type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 // that way; the proxy defers the rest (defer.ts).
 export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[] }
 
-// What each kind can be given. Only tool calls have a stub.
-const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['drop'], tool_search: ['drop'], reasoning: ['drop'] }
+// What each kind can be given. Only tool calls and skills have a stub.
+const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
 
 export function parsePolicy(v: unknown): Policy {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('a policy is an object of rule lists by kind')

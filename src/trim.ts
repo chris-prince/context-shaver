@@ -75,6 +75,16 @@ function stubbedInput(name: string, input: Record<string, unknown>): Record<stri
   return long.length ? out : undefined
 }
 
+// A skill's body with all but its first line, the skill's base directory,
+// stubbed: the model can still read the skill's files, or invoke it again for
+// the body.
+function skillStub(text: string): string {
+  const i = text.indexOf('\n')
+  const rest = i < 0 ? '' : text.slice(i + 1)
+  const n = bytes(rest)
+  return STUB.test(rest) || n <= stub(n).length ? text : `${text.slice(0, i)}\n${stub(n)}`
+}
+
 export type Applied = {
   msgs: ApiMsg[]
   origin: number[] // each message's index in the request as it came
@@ -84,7 +94,8 @@ export type Applied = {
 // The messages with each item given what is due to it at the clock. Blocks keep
 // every other field, cache_control included.
 //
-// - A stubbed tool call has its result and long inputs stubbed.
+// - A stubbed tool call has its result and long inputs stubbed; a stubbed
+//   skill has its body stubbed (skillStub).
 // - A dropped tool call goes with its results; a dropped skill also takes the
 //   skill's body beside its result. The drops are made together, then the
 //   messages checked against where the API takes a system message (README,
@@ -146,14 +157,20 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: 
         content = kept
       }
     }
-    const skillDropped = content.some((b) => b.type === 'tool_result' && items.get(String(b.tool_use_id))?.kind === 'skill' && due.get(b.tool_use_id) === 'drop')
+    const skill = content.find((b) => b.type === 'tool_result' && items.get(String(b.tool_use_id))?.kind === 'skill')?.tool_use_id
+    const skillDue = skill === undefined ? undefined : due.get(skill)
     content = content.filter((b) => {
-      const gone = due.get(idOf(b)) === 'drop' || (skillDropped && isSkillBody(b))
+      const gone = due.get(idOf(b)) === 'drop' || (skillDue === 'drop' && isSkillBody(b))
       if (gone && b.type === 'tool_use') mark(b.id, 'drop')
       return !gone
     })
     content = content.map((b) => {
-      if (due.get(idOf(b)) !== 'stub') return b
+      if (skillDue === 'stub' && isSkillBody(b)) {
+        const text = skillStub(String(b.text))
+        return text === b.text ? b : (mark(skill, 'stub'), { ...b, text })
+      }
+      // A skill's result only names it; its body is what a stub cuts.
+      if (due.get(idOf(b)) !== 'stub' || items.get(String(idOf(b)))?.kind === 'skill') return b
       if (b.type === 'tool_use' && b.input && typeof b.input === 'object') {
         const input = stubbedInput(String(b.name), b.input as Record<string, unknown>)
         return input ? (mark(b.id, 'stub'), { ...b, input }) : b

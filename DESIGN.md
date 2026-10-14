@@ -115,9 +115,15 @@ drop over stub. A kind with no rules is never trimmed.
 | Kind | Item | Actions |
 | --- | --- | --- |
 | `tool` | A tool call with its results | `stub`, `drop` |
-| `skill` | A `Skill` call, its result and the skill's text beside it | `drop` |
+| `skill` | A `Skill` call, its result and the skill's text beside it | `stub`, `drop` |
 | `tool_search` | A `ToolSearch` call and its result | `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |
+
+A stubbed skill keeps its call, its result (which only names it) and the first
+line of its body, `Base directory for this skill: <path>`; the rest of the body
+is stubbed. The model can still read the skill's files, or invoke it again for
+the body. A skill loaded by slash command has no `Skill` call, so it is no item
+and stays.
 
 A Read that Claude Code sends as a system message's text is a `tool` item too:
 after a compaction it re-attaches the files read before, each as `Called the

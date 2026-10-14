@@ -244,13 +244,31 @@ test('a skill goes whole, with its body, once its turn is completed', () => {
     { role: 'user', content: 'prompt 2' },
     { role: 'assistant', content: [{ type: 'text', text: 'answer 2' }] },
   ]
+  const p: Policy = { skill: [{ on: 'turn', wait: 0, action: 'drop' }] }
   const within = skill.slice(0, 4)
-  assert.deepEqual(apply(within, committed, clockOf(within)).msgs, within)
-  const after = apply(skill, committed, clockOf(skill))
+  assert.deepEqual(apply(within, p, clockOf(within)).msgs, within)
+  const after = apply(skill, p, clockOf(skill))
   assert.deepEqual(counts(after), { 'skill:drop': 1 })
   assert.deepEqual(after.origin, [0, 3, 4, 5])
   // Tool rules leave a skill alone.
   assert.deepEqual(apply(skill, { tool: dropAll.tool }, clockOf(skill)).msgs, skill)
+})
+
+test('a stubbed skill keeps its call, result and base directory', () => {
+  const body = `Base directory for this skill: /x\n${long}`
+  const skill: ApiMsg[] = [
+    { role: 'user', content: 'prompt 1' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_s', name: 'Skill', input: { skill: 'claude-api' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_s', content: 'Launching skill: claude-api' }, { type: 'text', text: body }] },
+    ...turn(2, 'Bash', { command: 'ls' }),
+    ...turn(3, 'Bash', { command: 'ls' }),
+  ]
+  const p: Policy = { skill: [{ on: 'step', wait: 1, action: 'stub' }, { on: 'step', wait: 3, action: 'drop' }] }
+  const stubbed = apply(skill, p, { steps: 2, turns: 0 })
+  assert.deepEqual(counts(stubbed), { 'skill:stub': 1 })
+  assert.deepEqual(stubbed.msgs[2].content, [skill[2].content[0], { type: 'text', text: `Base directory for this skill: /x\n${stub(long.length)}` }])
+  assert.deepEqual(stubbed.origin, skill.map((_, i) => i))
+  assert.deepEqual(counts(apply(skill, p, { steps: 4, turns: 0 })), { 'skill:drop': 1 })
 })
 
 test('here-document bodies are stubbed, each to its own end line', () => {
