@@ -17,15 +17,16 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
-import { clockOf, heldTo, type ApiMsg, type Clock } from './items.ts'
+import { clockOf, heldTo, isPrompt, type ApiMsg, type Block, type Clock } from './items.ts'
 import { forceDefer } from './defer.ts'
 import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
 import { describe, estimate, isSuggestion, observe, render, type Sent, type Stats } from './stats.ts'
 import { history, latest, record } from './journal.ts'
-import { add, cost, type Cost, type Usage } from './cost.ts'
+import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
+import { forkMessages, forkOf, instructions, recordOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -54,8 +55,10 @@ mkdirSync(stateDir, { recursive: true })
 // A conversation's applied clock; the cache entries its answered requests
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
 // tokens each thinking block it was answered with bills, by the signature's
-// hash (trim.ts, sizeOf). Its stats, for `:shaver stats`, are in its journal.
-type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number> }
+// hash (trim.ts, sizeOf); how many of its records it sends (summary.ts), and
+// the turn the last fork was offered at. Its stats, for `:shaver stats`, are
+// in its journal.
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; offered?: number }
 
 // A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
@@ -68,6 +71,19 @@ function load(key: string): State | undefined {
 }
 
 const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify(s))
+
+// A conversation's records (summary.ts), and the dollars its forks have cost.
+// They are kept apart from its state, which a request answered after a fork
+// began, and prepared before it ended, would save over.
+type Summaries = { chain: Summary[]; spent: number }
+const summariesOf = (key: string) => path.join(stateDir, `${key}.summaries.json`)
+function loadSummaries(key: string): Summaries {
+  try {
+    return JSON.parse(readFileSync(summariesOf(key), 'utf8'))
+  } catch {
+    return { chain: [], spent: 0 }
+  }
+}
 
 // Each conversation's stats as its journal ends (journal.ts) and its cost so
 // far (cost.ts), replayed from the journal the first time they're asked for and
@@ -84,7 +100,7 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; fork?: Fork; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a /v1/messages request. Only requests with tools are trimmed: those
 // are the main loop and subagents. Claude Code's side requests are sent as
@@ -102,13 +118,22 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const live = new Set(Object.keys(entries))
   const seed = seedOf(body.model, body.tools, body.system)
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
-  const keep = apply(msgs, policy, held)
+  // The records it sends: those sent before, and on a cold cache, all there are.
+  const chain = policy.summarize_after_tokens ? validChain(loadSummaries(key).chain, msgs) : []
+  const before = Math.min(s?.summarized ?? 0, chain.length)
+  let records = before
+  let keep = summarized(apply(msgs, policy, held), msgs, chain.slice(0, records))
+  const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live) < 0
+  if (records < chain.length && cold(positionsOf(keep.msgs, seed, thinking))) {
+    records = chain.length
+    keep = summarized(apply(msgs, policy, held), msgs, chain)
+  }
   let sent = keep
   let applied = held
   let next = keep
   let d: Decision | undefined
   if (clock.steps > held.steps || clock.turns > held.turns) {
-    next = apply(msgs, policy, clock)
+    next = summarized(apply(msgs, policy, clock), msgs, chain.slice(0, records))
     d = decide(keep.msgs, next.msgs, live, seed, body.model, thinking)
     if (d.advanced) [sent, applied] = [next, clock]
   }
@@ -123,7 +148,12 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, stats: latestOf(key), sent: describe(body, trimmed, time, d?.advanced), suggestion: isSuggestion(msgs) }
+  // A record takes its turns' prompts out of the messages; the stats count them still.
+  const described = { ...describe(body, trimmed, time, d?.advanced || records > before), turns: msgs.filter(isPrompt).length }
+  const suggestion = isSuggestion(msgs)
+  const after = policy.summarize_after_tokens
+  const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking) : undefined
+  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, fork, stats: latestOf(key), sent: described, suggestion }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
@@ -144,7 +174,7 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
+    p.logLine = { event: 'request', time, model: body.model, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
   }
   return p
 }
@@ -193,7 +223,10 @@ function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: s
   if (policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
   const key = keyOf(sent, agent)
   const { stats: s, cost: c } = currentOf(key)
-  const text = s ? render(s, key, false, c) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, c)
+  const { chain, spent: forks } = loadSummaries(key)
+  const summaries = policy.summarize_after_tokens && { made: chain.length, sent: load(key)?.summarized ?? 0, spent: forks }
+  const withForks = c && { ...c, actual: c.actual + forks }
+  const text = s ? render(s, key, false, withForks, summaries) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks, summaries)
   return '```\n' + text + '\n```'
 }
 
@@ -348,7 +381,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     record(journalOf(p.key), c.stats, next, u)
     current.set(p.key, { stats: next, cost: add(c.cost, c.stats, next, u!, ttlMs) })
   }
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) } })
+  const forked = p.fork && !forking.has(p.key) ? p.fork : undefined
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, summarized: p.summarized, offered: forked?.current ?? p.offered })
+  if (forked) void summarize(p.key, forked, upstream + url, headers, p.body, p.logDir)
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
       ...p.logLine,
@@ -360,6 +395,33 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         outputTokens: u.output_tokens ?? 0,
       }),
     })
+  }
+}
+
+// The conversations with a fork under way, which get no second one.
+const forking = new Set<string>()
+
+// Forks an answered request for a record of its turns (summary.ts): the
+// request as sent, with the instructions appended, not streamed. Its cost goes
+// to the conversation's records whatever it answers.
+async function summarize(key: string, f: Fork, target: string, headers: Record<string, string>, sent: Buffer, logDir?: string): Promise<void> {
+  forking.add(key)
+  try {
+    const body = JSON.parse(sent.toString('utf8'))
+    body.messages = forkMessages(body.messages, instructions(f))
+    body.stream = false
+    const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify(body) })
+    const out: { content?: Block[]; usage?: Usage } = await r.json()
+    if (!r.ok) throw new Error(`${r.status} ${JSON.stringify(out).slice(0, 500)}`)
+    const time = new Date().toISOString()
+    const record = recordOf(out.content ?? [], f, time)
+    const s = loadSummaries(key)
+    writeFileSync(summariesOf(key), JSON.stringify({ chain: record ? [...s.chain, record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0) }))
+    if (logDir) writeLine(logDir, { event: 'summary', time, start: f.start, current: f.current, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
+  } catch (err) {
+    console.error('ctx-shaver: summary fork failed:', err)
+  } finally {
+    forking.delete(key)
   }
 }
 

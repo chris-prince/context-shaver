@@ -13,5 +13,6 @@
   "reasoning": [
     { "on": "turn", "wait": 0, "action": "drop" }
   ],
-  "tools_not_deferred": ["ToolSearch", "Bash", "Edit", "Read", "Write"]
+  "tools_not_deferred": ["ToolSearch", "Bash", "Edit", "Read", "Write"],
+  "summarize_after_tokens": 20000
 }

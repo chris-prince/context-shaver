@@ -140,6 +140,10 @@ not. Without the key nothing is deferred, and with tool search off (no
 `ENABLE_TOOL_SEARCH`, so no list) neither. Changing the list rewrites the cache of open
 sessions once.
 
+`summarize_after_tokens` turns on heavy compaction (below): a fork is made
+once the completed turns past the last one offered hold that many tokens. The
+default is 20000. Without the key no record is made or sent.
+
 The proxy reads the file when it starts; restart it after editing.
 
 ## What it trims
@@ -231,6 +235,40 @@ A request with no breakpoints in its messages (a side request branched off
 the conversation) never advances: it reads none of them whatever is cached,
 so it says nothing about whether advancing would pay.
 
+## Heavy compaction
+
+A conversation's early turns can be replaced with a record of their memorable
+events: the goal of each arc (a stretch spent on one goal), the outcomes that
+landed, the user's decisions and the traps hit (`src/summary.ts`). Making a
+record is kept apart from sending it.
+
+- **Made while the cache is warm.** Once a request's completed turns, since
+  the turn the last fork was offered at, hold `summarize_after_tokens` tokens as
+  sent, the proxy forks it after it is answered: the same request with
+  instructions appended to its last message, after the breakpoint. The fork
+  reads the request's cache entry and pays only for the instructions and the
+  record. Claude Code never sees it, and only one runs at a time per
+  conversation.
+- **Made in parts.** The instructions list the uncovered turns by number, each
+  with its prompt quoted, and ask for complete arcs only, ending with the turn
+  the record stops before. A record ending where a turn starts leaves no tool
+  call without its result. The next fork asks from that turn on. A fork that
+  finds no complete arc, or calls a tool, makes no record.
+- **Kept** in `proxy-data/state/<key>.summaries.json`, apart from the state,
+  which a request answered while a fork runs would save over. Each record holds
+  a hash of the prompt it stops before; when that prompt is no longer there
+  (the conversation was rewound), it goes with the records after it.
+- **Sent once the cache is cold.** A request that reads nothing from the cache
+  writes everything anyway, so it takes all the records there are: everything
+  from the first response to the last record's end becomes one assistant
+  message holding them. The messages before the first response (the preamble
+  and the first prompt) stay. An assistant message fits after them where a user
+  one can't, since they can end with a system message. Every request after
+  sends the same records, so the cache keeps reading them.
+
+A fork's cost is in the session's actual cost in `:shaver stats`, which also
+shows the records made and sent.
+
 ## Logs
 
 With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
@@ -248,7 +286,11 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind
-    and treatment, as `{"tool:stub": 2, "reasoning:drop": 1}`.
+    and treatment, as `{"tool:stub": 2, "reasoning:drop": 1}`;
+  - a `summary` line for each fork: the turns it was offered (`start` to
+    `current`), the turn its record ends before (none if it made none), the
+    record's characters and the fork's usage. A request line's `summaries` is
+    how many records it sent.
 - `parts/`, where each distinct message is saved once, together with its bytes
   split by kind. A trimmed message shares a lineage with the original.
 

@@ -64,6 +64,14 @@ function dollars(p: Price, t: Tokens, short: number): number {
   return ((t.uncached * p.input + t.reads * p.read + writes + t.output * p.output) * times) / 1e6
 }
 
+// What a request the client never saw cost, as a summary fork (summary.ts);
+// nothing for a model with no price.
+export function spent(model: string, u: Usage): number {
+  const p = PRICES[model]
+  const t: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
+  return p ? dollars(p, t, u.cache_creation?.ephemeral_5m_input_tokens ?? 0) : 0
+}
+
 // The cost so far with a request's added, given the stats it leaves, the stats
 // before it, and its usage; none once a request's model has no price.
 export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number): Cost | undefined {
