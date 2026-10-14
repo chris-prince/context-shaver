@@ -259,7 +259,7 @@ function difference(heading: string, without: number, now: number, show: (v: num
   return ['  ' + heading, `    ${w.padStart(width)} ${labels[0]}`, `    ${n.padStart(width)} ${labels[1]}`, `    ${d.padStart(width)} ${labels[2]} (${percent(without - now, without)}%)`]
 }
 
-const tally = (now: number, removed: number) => difference('Tokens (current)', now + removed, now, (v) => Math.round(v).toLocaleString('en-US'), ['w/o shaver', 'now', 'saved'])
+const tally = (now: number, removed: number) => difference('Tokens (current)', now + removed, now, (v) => Math.round(v).toLocaleString('en-US'), ['if no shaver', 'actual', 'saved'])
 
 // Tokens a byte on a session's first request, which measured 0.345 to 0.367.
 const BYTE_TOKENS = 0.36
@@ -272,7 +272,7 @@ export function estimate(r: Sent): Stats {
 }
 
 // The session's cost without the shaver and as it was (cost.ts).
-const costLines = (c: Cost) => difference('Costs (session)', c.without, c.actual, (v) => '$' + v.toFixed(2), ['w/o shaver (estimated)', 'actual', 'saved'])
+const costLines = (c: Cost) => difference('Costs (session)', c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated)', 'actual', 'saved'])
 
 const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 

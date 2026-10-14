@@ -71,7 +71,7 @@ test('render prints the stats from the state alone', () => {
   const s = observe(undefined, describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
   const out = render(s, 'session')
   assert.match(out, /^Session: session\nModel: m\n/)
-  assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Summary\n  Tokens \(current\)\n    1,000 w\/o shaver\n    1,000 now\n        0 saved \(0%\)\n/)
+  assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Summary\n  Tokens \(current\)\n    1,000 if no shaver\n    1,000 actual\n        0 saved \(0%\)\n/)
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. If over 10k, shrink big items\./)
   assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by age:\n      today .*\n    by type:\n      user /)
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
