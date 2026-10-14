@@ -19,7 +19,9 @@ const session = (): ApiMsg[] => [
   ]),
 ]
 const none = (msgs: ApiMsg[]) => apply(msgs, {}, { steps: 0, turns: 0 })
-const forkAt = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000) => forkOf(none(msgs), msgs, chain, offered, threshold, new Map())
+// Each message's count as the stats have it: a tool result 1,000 tokens, the rest 100.
+const counts = (msgs: ApiMsg[]) => msgs.map((m) => (JSON.stringify(m).includes('tool_result') ? 1000 : 100))
+const forkAt = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000, tokens = counts(msgs)) => forkOf(none(msgs), msgs, chain, offered, threshold, new Map(), tokens)
 
 test('a fork covers the completed turns from the last record on, once they are big enough', () => {
   const msgs = session()
@@ -27,10 +29,14 @@ test('a fork covers the completed turns from the last record on, once they are b
   assert.deepEqual([f.start, f.current], [1, 4])
   assert.deepEqual(f.prompts.map((p) => p.quote), ['turn one', 'turn two', 'turn three', 'turn four'])
   assert.ok(f.chars > 3 * 4000 && f.chars < 4 * 4000) // turns 1–3, not the current one
-  assert.equal(forkAt(msgs, [], 0, 10_000), undefined)
+  // Turns 1–3 hold 3,000 tokens of results and 800 of the rest.
+  assert.equal(forkAt(msgs, [], 0, 3800)?.start, 1)
+  assert.equal(forkAt(msgs, [], 0, 3801), undefined)
+  // Counted in tokens, not characters: the same turns at a token each are too few.
+  assert.equal(forkAt(msgs, [], 0, 1000, msgs.map(() => 1)), undefined)
   // Offered at turn 3: only turn 3 counts towards the next, but it still asks from the start.
-  assert.equal(forkAt(msgs, [], 3, 2000), undefined)
-  assert.equal(forkAt(msgs, [], 3, 1000)?.start, 1)
+  assert.equal(forkAt(msgs, [], 3, 1301), undefined)
+  assert.equal(forkAt(msgs, [], 3, 1300)?.start, 1)
 })
 
 test("a fork's record is read back, and only one that covers a complete arc is kept", () => {

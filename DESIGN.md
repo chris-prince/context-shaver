@@ -244,7 +244,8 @@ record is kept apart from sending it.
 
 - **Made while the cache is warm.** Once a request's completed turns, since
   the turn the last fork was offered at, hold `summarize_after_tokens` tokens as
-  sent, the proxy forks it after it is answered: the same request with
+  sent, counted as the stats count them from the API's usage, the proxy forks
+  it after it is answered: the same request with
   instructions appended to its last message, after the breakpoint. The fork
   reads the request's cache entry and pays only for the instructions and the
   record. Claude Code never sees it, and only one runs at a time per

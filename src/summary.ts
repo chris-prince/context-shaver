@@ -11,7 +11,7 @@
 
 import { blocks, isPrompt, SUMMARY_HEAD, type ApiMsg, type Block } from './items.ts'
 import { hash } from './log.ts'
-import { sizeOf, TEXT_TOKENS, type Applied, type Thinking } from './trim.ts'
+import { sizeOf, type Applied, type Thinking } from './trim.ts'
 
 // A record, ending before the turn whose prompt has this hash.
 export type Summary = { endsBefore: number; prompt: string; text: string; time: string }
@@ -71,15 +71,17 @@ export type Fork = { start: number; current: number; prompts: Array<{ quote: str
 
 // The fork a request calls for: one when the turns completed since `from`
 // (the turn the last fork was offered at, or the last record's end) hold at
-// least `threshold` tokens in the messages as sent.
-export function forkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking): Fork | undefined {
+// least `threshold` tokens in the messages as sent, by each one's count in
+// `tokens` (stats.ts).
+export function forkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[]): Fork | undefined {
   const prompts = promptsOf(msgs)
   const current = prompts.length
   const start = chain.at(-1)?.endsBefore ?? 1
   const at = (t: number) => (t <= 1 ? msgs.findIndex((m) => m.role === 'assistant') : prompts[t - 1])
-  const charsFrom = (t: number) =>
-    a.msgs.reduce((n, m, j) => (a.origin[j] >= at(t) && a.origin[j] < prompts[current - 1] ? n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking), 0) : n), 0)
-  if (current <= start || at(1) < 0 || charsFrom(Math.max(start, Math.min(offered, current))) * TEXT_TOKENS < threshold) return
+  const covered = (t: number, j: number) => a.origin[j] >= at(t) && a.origin[j] < prompts[current - 1]
+  const charsFrom = (t: number) => a.msgs.reduce((n, m, j) => (covered(t, j) ? n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking), 0) : n), 0)
+  const from = Math.max(start, Math.min(offered, current))
+  if (current <= start || at(1) < 0 || tokens.reduce((n, k, j) => (covered(from, j) ? n + k : n), 0) < threshold) return
   const quote = (m: ApiMsg) => {
     const text = blocks(m).find((b: Block) => b.type === 'text' && !/^\s*<system-reminder>/.test(String(b.text)))?.text ?? '(an image)'
     const flat = String(text).replace(/\s+/g, ' ').trim()

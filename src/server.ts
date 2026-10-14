@@ -100,7 +100,7 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; fork?: Fork; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; fork?: (tokens: number[]) => Fork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a /v1/messages request. Only requests with tools are trimmed: those
 // are the main loop and subagents. Claude Code's side requests are sent as
@@ -155,7 +155,8 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
   const suggestion = isSuggestion(msgs)
   const after = policy.summarize_after_tokens
-  const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking) : undefined
+  // Whether to fork is known once the response's counts are in.
+  const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
   const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, fork, stats: latestOf(key), sent: described, suggestion }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
@@ -383,7 +384,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     record(journalOf(p.key), c.stats, next, u)
     current.set(p.key, { stats: next, cost: add(c.cost, c.stats, next, u!, ttlMs) })
   }
-  const forked = p.fork && !forking.has(p.key) ? p.fork : undefined
+  const forked = p.fork && next && !p.suggestion && !forking.has(p.key) ? p.fork(p.sent.parts.map((q) => next.tokens[q.key] ?? 0)) : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, summarized: p.summarized, offered: forked?.current ?? p.offered })
   if (forked) void summarize(p.key, forked, upstream + url, headers, p.body, p.logDir)
   if (p.logDir && p.logLine) {
