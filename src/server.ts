@@ -26,7 +26,7 @@ import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
-import { forkMessages, forkOf, instructions, recordOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
+import { forkMessages, forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -150,9 +150,9 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const time = new Date(now).toISOString()
   // A record takes its turns' prompts out of the messages; the stats count them still.
   const described = { ...describe(body, trimmed, time, d?.advanced || records > before), turns: msgs.filter(isPrompt).length }
-  // The records are dated by the first message they cover, the first response.
-  const record = records ? described.parts.find((q) => q.kinds.summary) : undefined
-  if (record) record.born = bornOf(latestOf(key), msgs.find((m) => m.role === 'assistant')!)
+  // Each record is dated by the first message it covers.
+  const starts = startsOf(msgs, chain.slice(0, records))
+  described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
   const suggestion = isSuggestion(msgs)
   const after = policy.summarize_after_tokens
   const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking) : undefined

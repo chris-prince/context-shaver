@@ -107,17 +107,21 @@ test('an advance removes what the earlier parts cost less what they cost now', (
   assert.equal(s.removedTokens, before - kept)
 })
 
-test('a record shows as its own type, dated by the first response it covers', () => {
-  const a: ApiMsg = { role: 'user', content: 'a' }
-  const b: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b' }] }
-  const c: ApiMsg = { role: 'user', content: 'c' }
-  let s = observe(undefined, describe(body([a, b, c]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
-  const record: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: `${SUMMARY_HEAD}\n\nturn 1` }] }
-  const sent = describe(body([a, record, c]), ends, '2026-10-13T10:00:00Z', true)
+test('records show as their own type, each dated by the first message it covers', () => {
+  const [a, c, e, g]: ApiMsg[] = ['a', 'c', 'e', 'g'].map((t) => ({ role: 'user', content: t }))
+  const [b, d, f]: ApiMsg[] = ['b', 'd', 'f'].map((t) => ({ role: 'assistant', content: [{ type: 'text', text: t }] }))
+  let s = observe(undefined, describe(body([a, b, c]), ends, '2026-10-08T10:00:00Z'), 1000, 0)
+  s = observe(s, describe(body([a, b, c, d, e]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
+  s = observe(s, describe(body([a, b, c, d, e, f, g]), ends, '2026-10-13T09:00:00Z'), 1000, 0)
+  // Two records, of turns 1-2 (from b) and turn 3 (from e).
+  const record = (text: string): ApiMsg => ({ role: 'assistant', content: [{ type: 'text', text: `${SUMMARY_HEAD}\n\n${text}` }] })
+  const sent = describe(body([a, record('turns 1-2'), record('turn 3'), g]), ends, '2026-10-13T10:00:00Z', true)
   sent.parts[1].born = bornOf(s, b)
+  sent.parts[2].born = bornOf(s, e)
   s = observe(s, sent, 900, 0)
   const out = render(s, 'k', false)
   assert.match(out, /^ +summary /m)
   assert.doesNotMatch(out, /^ +assistant /m)
+  assert.match(out, /^ +5 days ago /m)
   assert.match(out, /^ +2 days ago /m)
 })

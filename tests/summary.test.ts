@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { ApiMsg } from '../src/items.ts'
+import { SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { apply } from '../src/trim.ts'
-import { forkMessages, forkOf, instructions, recordOf, summarized, validChain, type Fork, type Summary } from '../src/summary.ts'
+import { forkMessages, forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -59,10 +59,11 @@ test('records replace the turns they cover, after the base, and go when their pr
   const r2 = recordOf([{ type: 'text', text: 'two\nEnds before: [3]' }], { ...f, start: 2 }, 'now')!
   const out = summarized(none(msgs), msgs, [r1, r2])
   assert.deepEqual(out.msgs.slice(0, 3), msgs.slice(0, 3))
-  assert.equal(out.msgs[3].role, 'assistant')
-  assert.match(JSON.stringify(out.msgs[3].content), /one\\n\\ntwo/)
-  assert.deepEqual(out.msgs.slice(4), msgs.slice(10))
-  assert.deepEqual(out.origin, [0, 1, 2, 3, ...msgs.slice(10).map((_, i) => 10 + i)])
+  // One message each, oldest first, each standing for the first message it covers.
+  assert.deepEqual(out.msgs.slice(3, 5), [r1, r2].map((r) => ({ role: 'assistant', content: [{ type: 'text', text: `${SUMMARY_HEAD}\n\n${r.text}` }] })))
+  assert.deepEqual(out.msgs.slice(5), msgs.slice(10))
+  assert.deepEqual(startsOf(msgs, [r1, r2]), [3, 6])
+  assert.deepEqual(out.origin, [0, 1, 2, 3, 6, ...msgs.slice(10).map((_, i) => 10 + i)])
   // The next fork asks from turn 3, and counts only what follows the records.
   assert.equal(forkAt(msgs, [r1, r2], 0, 1000)?.start, 3)
   // Rewound to turn 2 with a new prompt: the second record goes.

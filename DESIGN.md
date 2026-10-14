@@ -260,11 +260,13 @@ record is kept apart from sending it.
   (the conversation was rewound), it goes with the records after it.
 - **Sent once the cache is cold.** A request that reads nothing from the cache
   writes everything anyway, so it takes all the records there are: everything
-  from the first response to the last record's end becomes one assistant
-  message holding them. The messages before the first response (the preamble
-  and the first prompt) stay. An assistant message fits after them where a user
-  one can't, since they can end with a system message. Every request after
-  sends the same records, so the cache keeps reading them.
+  from the first response to the last record's end is replaced by the records,
+  one assistant message each, oldest first. The messages before the first
+  response (the preamble and the first prompt) stay. Assistant messages fit
+  after them where a user one can't, since they can end with a system message.
+  Every request after sends the same records, so the cache keeps reading them.
+  In `:shaver stats` each record counts as `summary` and is dated by the first
+  message it replaced, so several records can fall in several age rows.
 
 A fork's cost is in the session's actual cost in `:shaver stats`, which also
 shows the records made and sent.

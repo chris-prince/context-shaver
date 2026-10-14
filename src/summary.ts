@@ -34,22 +34,31 @@ export function validChain(chain: readonly Summary[], msgs: readonly ApiMsg[]): 
   return n < 0 ? [...chain] : chain.slice(0, n)
 }
 
+// The index of the first message each record covers: the first response for
+// the first record, and the prompt its predecessor ends before for the rest.
+export function startsOf(msgs: readonly ApiMsg[], chain: readonly Summary[]): number[] {
+  const prompts = promptsOf(msgs)
+  return chain.map((_, k) => (k ? prompts[chain[k - 1].endsBefore - 1] : msgs.findIndex((m) => m.role === 'assistant')))
+}
+
 // The messages with everything from the first response up to the last
-// record's end replaced by one assistant message holding the records. The
-// messages before the first response (the preamble and the first prompt)
-// stay. An assistant message fits after them where a user one can't: they
-// can end with a system message, which the API refuses before a user one.
+// record's end replaced by the records, one assistant message each, oldest
+// first. The messages before the first response (the preamble and the first
+// prompt) stay. Assistant messages fit after them where a user one can't:
+// they can end with a system message, which the API refuses before a user one.
 export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[]): Applied {
   if (!chain.length) return a
-  const from = msgs.findIndex((m) => m.role === 'assistant')
+  const starts = startsOf(msgs, chain)
   const to = promptsOf(msgs)[chain.at(-1)!.endsBefore - 1]
-  const text = `${SUMMARY_HEAD}\n\n${chain.map((s) => s.text).join('\n\n')}`
   const out: Applied = { msgs: [], origin: [], treated: a.treated }
   let placed = false
   a.msgs.forEach((m, j) => {
     const i = a.origin[j]
-    if (i >= from && i < to) return
-    if (i >= to && !placed) out.msgs.push({ role: 'assistant', content: [{ type: 'text', text }] }), out.origin.push(from), (placed = true)
+    if (i >= starts[0] && i < to) return
+    if (i >= to && !placed) {
+      chain.forEach((s, k) => (out.msgs.push({ role: 'assistant', content: [{ type: 'text', text: `${SUMMARY_HEAD}\n\n${s.text}` }] }), out.origin.push(starts[k])))
+      placed = true
+    }
     out.msgs.push(m), out.origin.push(i)
   })
   return out
