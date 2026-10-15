@@ -46,6 +46,10 @@ test("a fork's record is read back, and only one that covers a complete arc is k
   assert.equal(r.text, '## Arc\n- did it')
   assert.equal(r.endsBefore, 3)
   assert.deepEqual(validChain([r], msgs), [r])
+  // Ending before the current turn, whose prompt later comes as a string.
+  const r4 = recordOf([{ type: 'text', text: '## Arc\n- did it\n\nEnds before: [4]' }], f, 'now')!
+  const later = msgs.map((m, i) => (i === 14 ? { role: 'user', content: 'turn four' } : m)) as ApiMsg[]
+  assert.deepEqual(validChain([r4], later), [r4])
   for (const text of ['Ends before: [1]', 'no closing line', '## Arc\n\nEnds before: [5]']) assert.equal(recordOf([{ type: 'text', text }], f, 'now'), undefined)
   assert.equal(recordOf([{ type: 'text', text: 'x\nEnds before: [3]' }, { type: 'tool_use', id: 'z', name: 'Bash', input: {} }], f, 'now'), undefined)
   assert.match(instructions(f), /\[1\] "turn one"\n\[2\] "turn two"\n\[3\] "turn three"\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)

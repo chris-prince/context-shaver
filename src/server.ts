@@ -407,7 +407,8 @@ const forking = new Set<string>()
 
 // Forks an answered request for a record of its turns (summary.ts): the
 // request as sent, with the instructions appended, not streamed. Its cost goes
-// to the conversation's records whatever it answers.
+// to the conversation's records whatever it answers. Its record follows the
+// ones the fork started after; any later ones no longer fit the messages.
 async function summarize(key: string, f: Fork, target: string, headers: Record<string, string>, sent: Buffer, logDir?: string): Promise<void> {
   forking.add(key)
   const began = Date.now()
@@ -424,7 +425,7 @@ async function summarize(key: string, f: Fork, target: string, headers: Record<s
     const time = new Date().toISOString()
     const record = recordOf(out.content ?? [], f, time)
     const s = loadSummaries(key)
-    writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain, record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0) }))
+    writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0) }))
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
     console.error('ctx-shaver: summary fork failed:', err)

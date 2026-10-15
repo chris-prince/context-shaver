@@ -16,9 +16,10 @@ import { sizeOf, type Applied, type Thinking } from './trim.ts'
 // A record, ending before the turn whose prompt has this hash.
 export type Summary = { endsBefore: number; prompt: string; text: string; time: string }
 
-// The cache_control a prompt carries moves from request to request, so a
-// prompt is known by the rest.
-const promptHash = (m: ApiMsg) => hash(JSON.stringify(m, (k, v) => (k === 'cache_control' ? undefined : v)))
+// The cache_control a prompt carries moves from request to request, and the
+// latest prompt comes as a block where later ones are a string, so a prompt is
+// known by its blocks without it.
+const promptHash = (m: ApiMsg) => hash(JSON.stringify(typeof m.content === 'string' ? { ...m, content: [{ type: 'text', text: m.content }] } : m, (k, v) => (k === 'cache_control' ? undefined : v)))
 
 // Each turn's prompt index, by turn: prompts[t - 1] starts turn t.
 const promptsOf = (msgs: readonly ApiMsg[]) => msgs.flatMap((m, i) => (isPrompt(m) ? [i] : []))
