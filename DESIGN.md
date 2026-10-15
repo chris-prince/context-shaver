@@ -236,6 +236,21 @@ A request with no breakpoints in its messages (a side request branched off
 the conversation) never advances: it reads none of them whatever is cached,
 so it says nothing about whether advancing would pay.
 
+Claude Code's message breakpoints are all near the end, so on their own an
+advance finds no entry in reach of its first change and rewrites everything
+after the system prompt. So the proxy adds one breakpoint of its own
+(`anchored`), on the last block before the messages first differ from them
+settled, trimmed as far as the policy ever takes them (`settledEnd`). No
+advance changes anything before that block, so every request keeps its entry
+live, and an advance reads through it and rewrites only from there. It is
+found on the messages as kept, before the request's own advance, and it takes
+Claude Code's settings and skips thinking blocks. The API allows 4
+breakpoints per request, and Claude Code often sends 4 (two in the system
+prompt, two in the messages). Then the added one replaces Claude Code's
+message breakpoints before the last, whose entries the last one's lookback
+normally reaches. A request where that would leave less read from the cache
+goes without it. `decide` prices both candidates with it.
+
 ## Heavy compaction
 
 A conversation's early turns can be replaced with a record of their memorable

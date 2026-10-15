@@ -25,7 +25,7 @@ import { history, latest, record } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
-import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
+import { anchored, apply, decide, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { forkMessages, forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
@@ -129,19 +129,31 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
     records = chain.length
     keep = summarized(apply(msgs, policy, held), msgs, chain)
   }
+  // One more breakpoint where the messages stop matching them settled
+  // (anchored), unless it leaves less read from the cache.
+  const end = settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, policy), msgs, chain.slice(0, records)).msgs, seed, thinking)
+  const spare = 4 - [body.system, body.tools, msgs].reduce((n, v) => n + JSON.stringify(v ?? null).split('"cache_control"').length - 1, 0)
+  const reads = (m: ApiMsg[]) => {
+    const ps = positionsOf(m, seed, thinking)
+    return ps.slice(0, readThrough(ps, live) + 1).reduce((n, q) => n + q.size, 0)
+  }
+  const anchor = (m: ApiMsg[]) => {
+    const x = anchored(m, end, seed, thinking, spare)
+    return reads(x) >= reads(m) ? x : m
+  }
   let sent = keep
   let applied = held
   let next = keep
   let d: Decision | undefined
   if (clock.steps > held.steps || clock.turns > held.turns) {
     next = summarized(apply(msgs, policy, clock), msgs, chain.slice(0, records))
-    d = decide(keep.msgs, next.msgs, live, seed, body.model, thinking)
+    d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, body.model, thinking)
     if (d.advanced) [sent, applied] = [next, clock]
   }
-  body.messages = sent.msgs
+  body.messages = anchor(sent.msgs)
   // The entries this request writes or reads: one at each breakpoint, and the
   // one it reads through.
-  const pos = positionsOf(sent.msgs, seed, thinking)
+  const pos = positionsOf(body.messages, seed, thinking)
   const r = readThrough(pos, live)
   const touched = pos.filter((q, i) => q.breakpoint || i === r).map((q) => q.prefix)
   // Where trimming ends in the messages as sent, which drops shorten.
@@ -179,7 +191,7 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
+    p.logLine = { event: 'request', time, model: body.model, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, body.messages), ...writeDefs(p.logDir, body) }
   }
   return p
 }

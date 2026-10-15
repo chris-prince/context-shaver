@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { parsePolicy, seedPolicy, treatment, type Policy } from '../src/policy.ts'
-import { apply, decide, isStubbed, LOOKBACK, positionsOf, readThrough, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { anchored, apply, decide, isStubbed, LOOKBACK, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'stub' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
@@ -371,6 +371,41 @@ test('advancing reads only through an entry the cache holds', () => {
   assert.equal(atEnd.cold, false)
   assert.equal(atEnd.advanced, false)
   assert.ok(atEnd.rewriteChars > 23000)
+})
+
+test('a breakpoint where the messages stop matching them settled lets a move read through it', () => {
+  // As above, but the requests before the move carried a breakpoint on the last
+  // block before the change, so the move reads the head and rewrites the rest.
+  const head: ApiMsg[] = [{ role: 'user', content: 'h'.repeat(20000) }, { role: 'user', content: 'p' }]
+  const keep = [...head, { role: 'user', content: 'x'.repeat(1000) } as ApiMsg, { role: 'user', content: 'y'.repeat(2000) } as ApiMsg]
+  const drop = [...head, { role: 'user', content: '' } as ApiMsg, keep[3]]
+  const end = settledEnd(keep, drop, 's', new Map())
+  const [a, b] = [anchored(tailed(keep), end, 's', new Map(), 1), anchored(tailed(drop), end, 's', new Map(), 1)]
+  assert.deepEqual(blocks(a[1])[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(blocks(b[1])[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+  const live = new Set(positionsOf(a, 's', new Map()).filter((p) => p.breakpoint).map((p) => p.prefix))
+  const d = decide(a, b, live, 's', 'claude-haiku-5-5')
+  assert.equal(d.advanced, true)
+  assert.ok(d.rewriteChars < 4000)
+})
+
+test('the settled breakpoint skips thinking, and with no spare replaces the earlier message ones', () => {
+  const end = settledEnd(msgs, apply(msgs, stubAll, { steps: Infinity, turns: Infinity }).msgs, 's', new Map())
+  // Turn 1's first response is where trimming starts: its thinking and call
+  // change, so the breakpoint goes on the prompt before them.
+  const spare = anchored(tailed(msgs), end, 's', new Map(), 1)
+  assert.ok(blocks(spare[0])[1].cache_control)
+  assert.equal(spare.flatMap(blocks).filter((b) => b.cache_control).length, 5)
+  const none = anchored(tailed(msgs), end, 's', new Map(), 0)
+  assert.deepEqual(
+    none.flatMap((m, i) => blocks(m).flatMap((b, j) => (b.cache_control ? [[i, j]] : []))),
+    [
+      [0, 1],
+      [14, 0],
+    ],
+  )
+  // Nothing settled differs: the last block already has a breakpoint, so none is added.
+  assert.equal(anchored(tailed(msgs), settledEnd(msgs, msgs, 's', new Map()), 's', new Map(), 1).flatMap(blocks).filter((b) => b.cache_control).length, 4)
 })
 
 test('an entry more than LOOKBACK blocks before every breakpoint is not read', () => {

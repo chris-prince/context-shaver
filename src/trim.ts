@@ -106,7 +106,13 @@ export type Applied = {
 //   empty: an empty message is refused. One left empty by dropped calls is
 //   removed; the API joins the neighbours that leaves in the same role.
 export function apply(msgs: readonly ApiMsg[], policy: Policy, clock: Clock): Applied {
-  const c = heldTo(clock, msgs)
+  return applyAt(msgs, policy, heldTo(clock, msgs))
+}
+
+// The messages trimmed as far as the policy ever takes them: every rule due.
+export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: Policy) => applyAt(msgs, policy, { steps: Infinity, turns: Infinity })
+
+function applyAt(msgs: readonly ApiMsg[], policy: Policy, c: Clock): Applied {
   const items = new Map(itemsOf(msgs).map((it) => [it.id, it]))
   const undroppable = new Set<unknown>()
   for (;;) {
@@ -308,6 +314,52 @@ export function readThrough(pos: readonly Position[], live: ReadonlySet<string>)
       }
   })
   return r
+}
+
+// Claude Code's breakpoints are all on the last few messages, so a frontier
+// move, which changes messages before them, finds no entry in reach and
+// rewrites everything after the system prompt. The proxy adds one more where
+// the messages as sent first differ from them settled (trimmed as far as the
+// policy goes): no later move changes what is before it, so the entry there
+// lets a move read up to its first change. It goes on the last block before
+// that difference that can carry one (not thinking), with Claude Code's own
+// settings. It is found on the messages as kept, before any move, so a move's
+// own request reads the entry the requests before it wrote (settledEnd), and
+// placed on the messages sent (anchored). The API takes 4 breakpoints: when
+// the request has no spare, it takes the place of Claude Code's message
+// breakpoints before the last one, which the last one's lookback normally
+// makes redundant. The caller keeps the request as it came when the
+// prediction says the move reads less.
+export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], seed: string, thinking: Thinking): string | undefined {
+  const [a, b] = [positionsOf(msgs, seed, thinking), positionsOf(final, seed, thinking)]
+  const first = a.findIndex((p, i) => p.prefix !== b[i]?.prefix)
+  const bs = msgs.flatMap(blocks)
+  let k = (first < 0 ? a.length : first) - 1
+  while (k >= 0 && isThinking(bs[k])) k--
+  return a[k]?.prefix
+}
+
+export function anchored(msgs: readonly ApiMsg[], end: string | undefined, seed: string, thinking: Thinking, spare: number): ApiMsg[] {
+  const a = positionsOf(msgs, seed, thinking)
+  const at: Array<[number, number]> = msgs.flatMap((m, i) => blocks(m).map((_, j): [number, number] => [i, j]))
+  const marks = at.filter(([i, j]) => blocks(msgs[i])[j].cache_control !== undefined)
+  const last = marks.at(-1)
+  const k = a.findIndex((p) => p.prefix === end)
+  if (k < 0 || !last || a[k].breakpoint || (spare <= 0 && marks.length - 1 < 1 - spare)) return [...msgs]
+  const control = blocks(msgs[last[0]])[last[1]].cache_control
+  const drop = spare > 0 ? [] : marks.slice(0, -1)
+  return msgs.map((m, i) => {
+    if (i !== at[k][0] && !drop.some(([d]) => d === i)) return m
+    const content = blocks(m).map((bl, j) => {
+      if (i === at[k][0] && j === at[k][1]) return { ...bl, cache_control: control }
+      if (drop.some(([d, e]) => d === i && e === j)) {
+        const { cache_control, ...rest } = bl
+        return rest
+      }
+      return bl
+    })
+    return { ...m, content }
+  })
 }
 
 // What a request's messages cost, in cache reads: a written character costs
