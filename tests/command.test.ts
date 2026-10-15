@@ -9,6 +9,7 @@ const assistant = (text: string) => ({ role: 'assistant', content: [{ type: 'tex
 test('a command is a user message whose only text is one', () => {
   assert.equal(commandOf(user(' :shaver stats\n')), ':shaver stats')
   assert.equal(commandOf({ role: 'user', content: ':shaver policy' }), ':shaver policy')
+  assert.equal(commandOf(user(': shaver stats')), ':shaver stats')
   assert.equal(commandOf(user(':shaver stats please')), undefined)
   assert.equal(commandOf(user(':shaver other')), undefined)
   assert.equal(commandOf(assistant(':shaver stats')), undefined)

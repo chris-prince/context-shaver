@@ -38,6 +38,7 @@ chains in front of that proxy (see DESIGN.md).
 
 When running against the proxy, the prompt `:shaver stats` will return details
 on how ctx-shaver is doing this session and where your context is being spent.
+`: shaver stats`, with a space, works too.
 
 ctx-shaver requires only bash and Node 26. It has been tested against Claude
 Code 2.1.289.

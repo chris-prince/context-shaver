@@ -31,11 +31,11 @@ function withControl<M extends Msg>(m: M, control: unknown): M {
 const isReminder = (b: Block) => b.type === 'text' && (b.text ?? '').trimStart().startsWith('<system-reminder>')
 
 // The command a message is, if any: a user message whose only text, besides
-// reminders, is one.
+// reminders, is one. `: shaver` counts as `:shaver`.
 export function commandOf(m: Msg): string | undefined {
   if (m.role !== 'user') return undefined
   const texts = typeof m.content === 'string' ? [m.content] : m.content.filter((b) => b.type === 'text' && !isReminder(b)).map((b) => b.text ?? '')
-  return texts.length === 1 ? COMMANDS.find((c) => c === texts[0].trim()) : undefined
+  return texts.length === 1 ? COMMANDS.find((c) => c === texts[0].trim().replace(/^: shaver/, ':shaver')) : undefined
 }
 
 // The command a request asks for: its last message but for the system messages
