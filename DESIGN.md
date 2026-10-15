@@ -271,7 +271,8 @@ record is kept apart from sending it.
   In `:shaver stats` each record counts as `summary` and is dated by the first
   message it replaced, so several records can fall in several age rows.
 
-A fork's cost is in the session's actual cost in `:shaver stats`.
+A fork's cost is in the session's actual cost in `:shaver stats`, which also
+shows how many forks have been answered, as `Summaries: N requests`.
 
 ## Logs
 

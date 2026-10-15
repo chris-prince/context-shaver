@@ -75,13 +75,14 @@ const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key
 // A conversation's records (summary.ts), and the dollars its forks have cost.
 // They are kept apart from its state, which a request answered after a fork
 // began, and prepared before it ended, would save over.
-type Summaries = { chain: Summary[]; spent: number }
+type Summaries = { chain: Summary[]; spent: number; requests: number }
 const summariesOf = (key: string) => path.join(stateDir, `${key}.summaries.json`)
 function loadSummaries(key: string): Summaries {
   try {
-    return JSON.parse(readFileSync(summariesOf(key), 'utf8'))
+    const s = JSON.parse(readFileSync(summariesOf(key), 'utf8'))
+    return { ...s, requests: s.requests ?? s.chain.length }
   } catch {
-    return { chain: [], spent: 0 }
+    return { chain: [], spent: 0, requests: 0 }
   }
 }
 
@@ -227,9 +228,10 @@ function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: s
   if (policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
   const key = keyOf(sent, agent)
   const { stats: s, cost: c } = currentOf(key)
-  const { spent: forks } = loadSummaries(key)
+  const { spent: forks, requests } = loadSummaries(key)
   const withForks = c && { ...c, actual: c.actual + forks }
-  const text = s ? render(s, key, false, withForks) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks)
+  const summaries = policy.summary_threshold_tokens ? requests : undefined
+  const text = s ? render(s, key, false, withForks, summaries) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks, summaries)
   return '```\n' + text + '\n```'
 }
 
@@ -421,7 +423,7 @@ async function summarize(key: string, f: Fork, target: string, headers: Record<s
     const time = new Date().toISOString()
     const record = recordOf(out.content ?? [], f, time)
     const s = loadSummaries(key)
-    writeFileSync(summariesOf(key), JSON.stringify({ chain: record ? [...s.chain, record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0) }))
+    writeFileSync(summariesOf(key), JSON.stringify({ chain: record ? [...s.chain, record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0), requests: s.requests + 1 }))
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
     console.error('ctx-shaver: summary fork failed:', err)

@@ -92,6 +92,13 @@ test('before any request is answered, the request is estimated from its bytes', 
   assert.match(out, /0 requests across 0 turns, spanning 0m\n\nContext Summary \(estimated\)\n  Tokens \(current\)\n.*\n.*\n     +0 saved \(0%\)\n/)
 })
 
+test('the Summaries line counts summary requests, and is left out when they are off', () => {
+  const s = estimate(describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'))
+  assert.match(render(s, 'session', true, undefined, 1), /\n  Summaries: 1 request\n/)
+  assert.match(render(s, 'session', true, undefined, 3), /\n  Summaries: 3 requests\n/)
+  assert.doesNotMatch(render(s, 'session', true), /Summaries:/)
+})
+
 test('an advance removes what the earlier parts cost less what they cost now', () => {
   const a: ApiMsg = { role: 'user', content: 'a'.repeat(400) }
   const b: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b'.repeat(400) }] }
