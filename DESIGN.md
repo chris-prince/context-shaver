@@ -158,7 +158,7 @@ entries are prefixes of it, so neither carries over to another history. Its
 key is the session ID, the agent ID and a hash of its first message:
 
 - Claude Code sends the session ID with every request. It keeps apart sessions
-  whose first message is the same, as when two start with `:shaver stats` in
+  whose first message is the same, as when two start with `:shaver info` in
   the same repo state: once the command is stripped, both first messages are
   the same reminders.
 - Each subagent's requests carry `x-claude-code-agent-id`; the main loop's
@@ -287,10 +287,10 @@ record is kept apart from sending it.
   response (the preamble and the first prompt) stay. Assistant messages fit
   after them where a user one can't, since they can end with a system message.
   Every request after sends the same records, so the cache keeps reading them.
-  In `:shaver stats` each record counts as `summary` and is dated by the first
+  In `:shaver info` each record counts as `summary` and is dated by the first
   message it replaced, so several records can fall in several age rows.
 
-A fork's cost is in the session's actual cost in `:shaver stats`, which also
+A fork's cost is in the session's actual cost in `:shaver info`, which also
 shows how many forks have been sent, answered or not, as `Summaries: N
 creation requests`.
 
@@ -321,7 +321,7 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
 
 Scripts:
 
-- Typing `:shaver stats` as a prompt shows the session's latest request,
+- Typing `:shaver info` as a prompt shows the session's latest request,
   logged or not, in three sections: the base, the conversation before the
   frontier (by age, then by type), and the frontier. Every percentage is of
   the whole request. After each request the proxy counts its parts' tokens
@@ -364,7 +364,7 @@ Scripts:
   are left out, as the journal leaves them out.
 - `node scripts/stats-from-logs.ts <conversation dir> [--request N]
   [--check-journal]` replays a logged conversation through `src/stats.ts`
-  and prints what `:shaver stats` would have said. `--check-journal` also
+  and prints what `:shaver info` would have said. `--check-journal` also
   checks that the journal replays to the same stats after every
   request.
 - `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings

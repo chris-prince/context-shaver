@@ -1,4 +1,4 @@
-// `:shaver stats` from the conversation's journal alone, with no logs. After each
+// `:shaver info` from the conversation's journal alone, with no logs. After each
 // answered request the proxy counts its parts' tokens (observe) as
 // scripts/defs.py's part_tokens does from the logs, and keeps only what the
 // next request and the stats need: the latest request's parts, and their

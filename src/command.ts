@@ -1,4 +1,4 @@
-// `:shaver stats` and `:shaver policy`, typed as a prompt, are answered by the
+// `:shaver info` and `:shaver policy`, typed as a prompt, are answered by the
 // proxy and never reach the model. Claude Code keeps the command and the
 // proxy's reply in its history and sends them again with every later request,
 // so the proxy strips each command, the system messages after it and the reply
@@ -12,7 +12,7 @@
 // Code's prompt suggestion puts one on the last reply, and when that is the
 // proxy's, the suggestion would otherwise read only the system prompt.
 
-export const COMMANDS = [':shaver stats', ':shaver policy']
+export const COMMANDS = [':shaver info', ':shaver policy']
 
 type Block = { type: string; text?: string; cache_control?: unknown }
 type Msg = { role: string; content: string | Block[] }

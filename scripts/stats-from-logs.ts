@@ -1,5 +1,5 @@
 // Replays a conversation's logs through src/stats.ts and prints what
-// `:shaver stats` would have said at a request. With --check-journal it also
+// `:shaver info` would have said at a request. With --check-journal it also
 // journals each request (src/journal.ts) and checks that replaying the journal
 // gives the stats observed after every one.
 //

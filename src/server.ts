@@ -56,7 +56,7 @@ mkdirSync(stateDir, { recursive: true })
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
 // tokens each thinking block it was answered with bills, by the signature's
 // hash (trim.ts, sizeOf); how many of its records it sends (summary.ts), and
-// the turn the last fork was offered at. Its stats, for `:shaver stats`, are
+// the turn the last fork was offered at. Its stats, for `:shaver info`, are
 // in its journal.
 type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; offered?: number }
 
@@ -218,7 +218,7 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
 // history is a new one, and each starts with fresh state.
 //
 // The session ID keeps apart sessions whose first message is the same, as
-// happens when two start with `:shaver stats` in the same repo state: once
+// happens when two start with `:shaver info` in the same repo state: once
 // the command is stripped, all that is left of it is the same reminders.
 // Without a session ID (other clients), the first message is the key alone.
 function keyOf(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }, agent?: string): string {
@@ -240,7 +240,7 @@ function policyText(): string {
   }
 }
 
-// The answer to `:shaver stats`: the conversation's latest answered request,
+// The answer to `:shaver info`: the conversation's latest answered request,
 // from its journal (stats.ts), or before there is one, this request estimated
 // as it will be sent once the command is answered, tools deferred.
 function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: string } }, agent?: string): string {

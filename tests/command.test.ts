@@ -7,39 +7,39 @@ const system = (text: string) => ({ role: 'system', content: text })
 const assistant = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] })
 
 test('a command is a user message whose only text is one', () => {
-  assert.equal(commandOf(user(' :shaver stats\n')), ':shaver stats')
+  assert.equal(commandOf(user(' :shaver info\n')), ':shaver info')
   assert.equal(commandOf({ role: 'user', content: ':shaver policy' }), ':shaver policy')
-  assert.equal(commandOf(user(': shaver stats')), ':shaver stats')
-  assert.equal(commandOf(user(':shaver stats please')), undefined)
+  assert.equal(commandOf(user(': shaver info')), ':shaver info')
+  assert.equal(commandOf(user(':shaver info please')), undefined)
   assert.equal(commandOf(user(':shaver other')), undefined)
-  assert.equal(commandOf(assistant(':shaver stats')), undefined)
+  assert.equal(commandOf(assistant(':shaver info')), undefined)
 })
 
 const firstPrompt = (text: string) => ({ role: 'user', content: [{ type: 'text', text: '<system-reminder>\nAGENTS.md\n</system-reminder>' }, { type: 'text', text: '<system-reminder>\ngit status\n</system-reminder>\n' }, { type: 'text', text }] })
 
 test('a first prompt is a command despite the reminders before it', () => {
-  assert.equal(commandOf(firstPrompt(':shaver stats')), ':shaver stats')
+  assert.equal(commandOf(firstPrompt(':shaver info')), ':shaver info')
   assert.equal(commandOf(firstPrompt('hello')), undefined)
 })
 
 test('a request asks for a command despite the system messages after it', () => {
-  assert.equal(pendingCommand([firstPrompt(':shaver stats'), system('environment')]), ':shaver stats')
+  assert.equal(pendingCommand([firstPrompt(':shaver info'), system('environment')]), ':shaver info')
   assert.equal(pendingCommand([user('a'), assistant('A'), user(':shaver policy')]), ':shaver policy')
-  assert.equal(pendingCommand([user(':shaver stats'), assistant('stats')]), undefined)
+  assert.equal(pendingCommand([user(':shaver info'), assistant('stats')]), undefined)
 })
 
 test('the pending command is left out but for its reminders', () => {
-  assert.deepEqual(withoutPending([firstPrompt(':shaver stats'), system('environment')]), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, system('environment')])
-  assert.deepEqual(withoutPending([user('a'), assistant('b'), user(':shaver stats')]), [user('a'), assistant('b')])
+  assert.deepEqual(withoutPending([firstPrompt(':shaver info'), system('environment')]), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, system('environment')])
+  assert.deepEqual(withoutPending([user('a'), assistant('b'), user(':shaver info')]), [user('a'), assistant('b')])
 })
 
 test('an answered first-prompt command is stripped but for its reminders', () => {
-  const msgs = [firstPrompt(':shaver stats'), assistant('stats'), user('b')]
+  const msgs = [firstPrompt(':shaver info'), assistant('stats'), user('b')]
   assert.deepEqual(stripCommands(msgs), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, user('b')])
 })
 
 test('an answered command and its reply are stripped, the system messages between moved before the next reply', () => {
-  const msgs = [user('a'), assistant('A'), user(':shaver stats'), system('nudge'), assistant('stats'), user('b')]
+  const msgs = [user('a'), assistant('A'), user(':shaver info'), system('nudge'), assistant('stats'), user('b')]
   assert.deepEqual(stripCommands(msgs), [user('a'), assistant('A'), user('b'), system('nudge')])
   assert.deepEqual(stripCommands([...msgs, assistant('B')]), [user('a'), assistant('A'), user('b'), system('nudge'), assistant('B')])
 })
@@ -48,19 +48,19 @@ test('a breakpoint on a stripped reply moves to the message before the command',
   const control = { type: 'ephemeral', ttl: '1h' }
   const mark = (m: { role: string; content: { type: string; text: string }[] }) => ({ ...m, content: [{ ...m.content[0], cache_control: control }] })
   // Claude Code's suggestion marks the last reply, here the proxy's.
-  const msgs = [user('a'), assistant('A'), user(':shaver stats'), mark(assistant('stats')), user('suggest')]
+  const msgs = [user('a'), assistant('A'), user(':shaver info'), mark(assistant('stats')), user('suggest')]
   assert.deepEqual(stripCommands(msgs), [user('a'), mark(assistant('A')), user('suggest')])
   const thought = { role: 'assistant', content: [{ type: 'text', text: 'A' }, { type: 'thinking', thinking: '' }] }
   assert.deepEqual(stripCommands([user('a'), thought, ...msgs.slice(2)])[1].content, [{ type: 'text', text: 'A', cache_control: control }, { type: 'thinking', thinking: '' }])
 })
 
 test("a first-prompt command keeps Claude Code's preamble", () => {
-  const msgs = [firstPrompt(':shaver stats'), system('preamble'), assistant('stats'), user('b'), assistant('B')]
+  const msgs = [firstPrompt(':shaver info'), system('preamble'), assistant('stats'), user('b'), assistant('B')]
   assert.deepEqual(stripCommands(msgs), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, user('b'), system('preamble'), assistant('B')])
 })
 
 test('a command not yet answered stays', () => {
-  const msgs = [user('a'), assistant('A'), user(':shaver stats'), system('nudge')]
+  const msgs = [user('a'), assistant('A'), user(':shaver info'), system('nudge')]
   assert.deepEqual(stripCommands(msgs), msgs)
 })
 
@@ -77,6 +77,6 @@ test('the reply streams as one text block, reporting the context as cache reads'
 test('a command the model answered with a tool call stays', () => {
   const call = { role: 'assistant', content: [{ type: 'text', text: 'Let me look' }, { type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }
   const result = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] }
-  const msgs = [user('a'), assistant('A'), user(':shaver stats'), call, result]
+  const msgs = [user('a'), assistant('A'), user(':shaver info'), call, result]
   assert.deepEqual(stripCommands(msgs), msgs)
 })
