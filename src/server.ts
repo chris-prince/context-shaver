@@ -188,6 +188,9 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
         turns: clock.turns,
         transitions: transitions(keep, next),
         context,
+        // To test the anchor breakpoint's efficacy: the decision without it.
+        // Remove this (and the logged field) once we're confident in it.
+        unanchored: (({ advanced, extraChars }) => ({ advanced, extraChars }))(decide(keep.msgs, next.msgs, live, seed, body.model, thinking)),
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
