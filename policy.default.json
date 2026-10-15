@@ -14,5 +14,5 @@
     { "on": "turn", "wait": 0, "action": "drop" }
   ],
   "tools_not_deferred": ["ToolSearch", "Bash", "Edit", "Read", "Write"],
-  "summary_threshold_tokens": 10000
+  "summary_threshold_tokens": 20000
 }
