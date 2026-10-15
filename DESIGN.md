@@ -236,6 +236,14 @@ A request with no breakpoints in its messages (a side request branched off
 the conversation) never advances: it reads none of them whatever is cached,
 so it says nothing about whether advancing would pay.
 
+Claude Code sends each prompt suggestion twice: first with a breakpoint on
+the last reply, then, seconds to an hour later, the same request without one,
+which reads only the system prompt. The proxy puts the breakpoint back on the
+second, copying the system prompt's `cache_control`, when an entry it would
+read is live (`markedSuggestion`); with nothing live it would only write, at
+twice the price of plain input, so the request goes as it came. The request
+log marks it `markedSuggestion`.
+
 ## Heavy compaction
 
 A conversation's early turns can be replaced with a record of their memorable

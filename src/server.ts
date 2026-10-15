@@ -25,7 +25,7 @@ import { history, latest, record } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
-import { apply, decide, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
+import { apply, decide, markedSuggestion, positionsOf, readThrough, seedOf, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { forkMessages, forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
@@ -138,6 +138,14 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
     d = decide(keep.msgs, next.msgs, live, seed, body.model, thinking)
     if (d.advanced) [sent, applied] = [next, clock]
   }
+  const suggestion = isSuggestion(msgs)
+  let marked = false
+  if (suggestion) {
+    const control = (Array.isArray(body.system) ? body.system : []).find((b: Block) => b.cache_control)?.cache_control
+    const m = markedSuggestion(sent.msgs, control, seed, thinking, live)
+    marked = m !== sent.msgs
+    sent = { ...sent, msgs: [...m] }
+  }
   body.messages = sent.msgs
   // The entries this request writes or reads: one at each breakpoint, and the
   // one it reads through.
@@ -154,7 +162,6 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   // Each record is dated by the first message it covers.
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
-  const suggestion = isSuggestion(msgs)
   const after = policy.summary_threshold_tokens
   // Whether to fork is known once the response's counts are in.
   const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
@@ -179,7 +186,7 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
+    p.logLine = { event: 'request', time, model: body.model, ...(records && { summaries: records }), ...(marked && { markedSuggestion: true }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, sent.msgs), ...writeDefs(p.logDir, body) }
   }
   return p
 }
