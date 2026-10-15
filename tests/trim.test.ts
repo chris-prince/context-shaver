@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { parsePolicy, seedPolicy, treatment, type Policy } from '../src/policy.ts'
-import { apply, decide, isStubbed, LOOKBACK, markedSuggestion, positionsOf, readThrough, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { apply, decide, isStubbed, LOOKBACK, positionsOf, readThrough, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'stub' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
@@ -386,23 +386,4 @@ test('a run of tool calls or results is one lookback position', () => {
   const results: ApiMsg = { role: 'user', content: Array.from({ length: LOOKBACK + 5 }, (_, i) => ({ type: 'tool_result', tool_use_id: `t${i}`, content: 'x' })) }
   const pos = positionsOf(tailed([{ role: 'user', content: 'go' }, calls, results]), 's', new Map())
   assert.equal(readThrough(pos, new Set([pos[0].prefix])), 0)
-})
-
-test('a suggestion sent without a breakpoint gets one on its last reply, where it reads what is live', () => {
-  const control = { type: 'ephemeral', ttl: '1h' }
-  const reply: ApiMsg = { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm', signature: 'x' }, { type: 'text', text: 'done' }] }
-  const ask: ApiMsg = { role: 'user', content: '[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]' }
-  const before: ApiMsg[] = [{ role: 'user', content: 'prompt 1' }, { role: 'assistant', content: [{ type: 'text', text: 'answer 1' }] }, { role: 'user', content: 'prompt 2' }]
-  const plain = [...before, reply, ask]
-  // The first suggestion had its breakpoint there, and wrote the entry.
-  const first = [...before, { ...reply, content: [reply.content[0] as never, { type: 'text', text: 'done', cache_control: control }] }, ask]
-  const live = new Set(positionsOf(first, 's', new Map()).filter((p) => p.breakpoint).map((p) => p.prefix))
-  const marked = markedSuggestion(plain, control, 's', new Map(), live)
-  assert.deepEqual(marked, first)
-  assert.equal(readThrough(positionsOf(marked, 's', new Map()), live), positionsOf(marked, 's', new Map()).length - 2)
-  // Nothing live to read: left as it came, since a breakpoint would only write.
-  assert.equal(markedSuggestion(plain, control, 's', new Map(), new Set()), plain)
-  // Sent with a breakpoint already, or with none in the system prompt to copy.
-  assert.equal(markedSuggestion(first, control, 's', new Map(), live), first)
-  assert.equal(markedSuggestion(plain, undefined, 's', new Map(), live), plain)
 })

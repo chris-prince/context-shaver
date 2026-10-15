@@ -43,6 +43,16 @@ test('an answered command and its reply are stripped, the system messages betwee
   assert.deepEqual(stripCommands([...msgs, assistant('B')]), [user('a'), assistant('A'), user('b'), system('nudge'), assistant('B')])
 })
 
+test('a breakpoint on a stripped reply moves to the message before the command', () => {
+  const control = { type: 'ephemeral', ttl: '1h' }
+  const mark = (m: { role: string; content: { type: string; text: string }[] }) => ({ ...m, content: [{ ...m.content[0], cache_control: control }] })
+  // Claude Code's suggestion marks the last reply, here the proxy's.
+  const msgs = [user('a'), assistant('A'), user(':shaver stats'), mark(assistant('stats')), user('suggest')]
+  assert.deepEqual(stripCommands(msgs), [user('a'), mark(assistant('A')), user('suggest')])
+  const thought = { role: 'assistant', content: [{ type: 'text', text: 'A' }, { type: 'thinking', thinking: '' }] }
+  assert.deepEqual(stripCommands([user('a'), thought, ...msgs.slice(2)])[1].content, [{ type: 'text', text: 'A', cache_control: control }, { type: 'thinking', thinking: '' }])
+})
+
 test("a first-prompt command keeps Claude Code's preamble", () => {
   const msgs = [firstPrompt(':shaver stats'), system('preamble'), assistant('stats'), user('b'), assistant('B')]
   assert.deepEqual(stripCommands(msgs), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, user('b'), system('preamble'), assistant('B')])

@@ -7,12 +7,26 @@
 // assistant one. A command the model answered instead, with a tool call, stays,
 // since dropping the call would orphan its result. The first prompt of a session
 // comes with `<system-reminder>` blocks holding the instructions and context;
-// they don't stop it being a command, and stripping it keeps them.
+// they don't stop it being a command, and stripping it keeps them. A
+// breakpoint on a stripped message moves to the message before it: Claude
+// Code's prompt suggestion puts one on the last reply, and when that is the
+// proxy's, the suggestion would otherwise read only the system prompt.
 
 export const COMMANDS = [':shaver stats', ':shaver policy']
 
-type Block = { type: string; text?: string }
+type Block = { type: string; text?: string; cache_control?: unknown }
 type Msg = { role: string; content: string | Block[] }
+
+const marked = (m: Msg) => Array.isArray(m.content) && m.content.some((b) => b.cache_control !== undefined)
+
+// The message with `control` on its last block that can carry one: thinking
+// blocks can't.
+function withControl<M extends Msg>(m: M, control: unknown): M {
+  const content = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content
+  const at = content.findLastIndex((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking')
+  if (at < 0 || content[at].cache_control !== undefined) return m
+  return { ...m, content: content.map((b, i) => (i === at ? { ...b, cache_control: control } : b)) }
+}
 
 const isReminder = (b: Block) => b.type === 'text' && (b.text ?? '').trimStart().startsWith('<system-reminder>')
 
@@ -62,6 +76,9 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
     if (r?.role === 'assistant' && !(Array.isArray(r.content) && r.content.some((b) => b.type === 'tool_use'))) {
       const reminders = Array.isArray(msgs[i].content) ? (msgs[i].content as Block[]).filter(isReminder) : []
       if (reminders.length) out.push({ ...msgs[i], content: reminders })
+      const control = [msgs[i], r].filter(marked).flatMap((m) => m.content as Block[]).find((b) => b.cache_control !== undefined)?.cache_control
+      const k = out.findLastIndex((m) => m.role !== 'system')
+      if (control !== undefined && k >= 0) out[k] = withControl(out[k], control)
       moved.push(...msgs.slice(i + 1, j))
       i = j
     } else out.push(msgs[i])

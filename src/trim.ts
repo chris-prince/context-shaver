@@ -310,22 +310,6 @@ export function readThrough(pos: readonly Position[], live: ReadonlySet<string>)
   return r
 }
 
-// A prompt suggestion with a breakpoint on its last reply, where it reads what
-// is live. Claude Code sends each suggestion twice: first with that breakpoint,
-// then again without one, which reads only the preamble. Unchanged when the
-// suggestion has a breakpoint already, or there is nothing live to read: a
-// breakpoint there would only write, at twice the price of plain input.
-export function markedSuggestion(msgs: readonly ApiMsg[], control: unknown, seed: string, thinking: Thinking, live: ReadonlySet<string>): readonly ApiMsg[] {
-  const reply = msgs.at(-2)
-  if (!control || reply?.role !== 'assistant' || typeof reply.content === 'string') return msgs
-  if (msgs.some((m) => blocks(m).some((b) => b.cache_control !== undefined))) return msgs
-  const at = reply.content.findLastIndex((b) => !isThinking(b))
-  if (at < 0) return msgs
-  const content = reply.content.map((b, i) => (i === at ? { ...b, cache_control: control } : b))
-  const marked = [...msgs.slice(0, -2), { ...reply, content }, msgs.at(-1)!]
-  return readThrough(positionsOf(marked, seed, thinking), live) < 0 ? msgs : marked
-}
-
 // What a request's messages cost, in cache reads: a written character costs
 // M + 1 reads, and plain input half that (a 1-hour write is 2x input).
 function costOf(pos: readonly Position[], r: number, M: number): number {
