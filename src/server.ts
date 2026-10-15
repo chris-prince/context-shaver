@@ -25,7 +25,7 @@ import { history, latest, record } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
-import { anchored, apply, decide, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
+import { anchored, apply, freedSystem, decide, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { forkMessages, forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
@@ -132,13 +132,16 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
   const end = settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, policy), msgs, chain.slice(0, records)).msgs, seed, thinking)
-  const spare = 4 - [body.system, body.tools, msgs].reduce((n, v) => n + JSON.stringify(v ?? null).split('"cache_control"').length - 1, 0)
+  const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
+  const spare = 4 - [body.system, body.tools, msgs].reduce((n, v) => n + marks(v), 0)
+  const freed = spare > 0 ? undefined : freedSystem(body.system)
   const reads = (m: ApiMsg[]) => {
     const ps = positionsOf(m, seed, thinking)
     return ps.slice(0, readThrough(ps, live) + 1).reduce((n, q) => n + q.size, 0)
   }
   const anchor = (m: ApiMsg[]) => {
-    const x = anchored(m, end, seed, thinking, spare)
+    if (spare <= 0 && !freed) return m
+    const x = anchored(m, end, seed, thinking)
     return reads(x) >= reads(m) ? x : m
   }
   let sent = keep
@@ -151,6 +154,7 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
     if (d.advanced) [sent, applied] = [next, clock]
   }
   body.messages = anchor(sent.msgs)
+  if (freed && marks(body.messages) > marks(sent.msgs)) body.system = freed
   // The entries this request writes or reads: one at each breakpoint, and the
   // one it reads through.
   const pos = positionsOf(body.messages, seed, thinking)

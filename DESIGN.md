@@ -246,10 +246,14 @@ live, and an advance reads through it and rewrites only from there. It is
 found on the messages as kept, before the request's own advance, and it takes
 Claude Code's settings and skips thinking blocks. The API allows 4
 breakpoints per request, and Claude Code often sends 4 (two in the system
-prompt, two in the messages). Then the added one replaces Claude Code's
-message breakpoints before the last, whose entries the last one's lookback
-normally reaches. A request where that would leave less read from the cache
-goes without it. `decide` prices both candidates with it.
+prompt, two in the messages). Then the added one replaces the system
+prompt's first, which ends after the identity line. A request reads that
+entry only when the system prompt changed but the tools did not, which the
+logs show 3 times in 2,740 requests. Claude Code's message breakpoints stay,
+because a step that adds more than 20 blocks puts the previous request's
+entry out of the last one's lookback, and the one before it still reaches
+it. A request where the swap would leave less read from the cache goes
+without it. `decide` prices both candidates with it.
 
 ## Heavy compaction
 

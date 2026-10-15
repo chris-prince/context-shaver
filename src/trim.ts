@@ -326,10 +326,9 @@ export function readThrough(pos: readonly Position[], live: ReadonlySet<string>)
 // settings. It is found on the messages as kept, before any move, so a move's
 // own request reads the entry the requests before it wrote (settledEnd), and
 // placed on the messages sent (anchored). The API takes 4 breakpoints: when
-// the request has no spare, it takes the place of Claude Code's message
-// breakpoints before the last one, which the last one's lookback normally
-// makes redundant. The caller keeps the request as it came when the
-// prediction says the move reads less.
+// the request has no spare, the caller frees the system prompt's first one
+// (freedSystem). The caller keeps the request as it came when the prediction
+// says the move reads less.
 export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], seed: string, thinking: Thinking): string | undefined {
   const [a, b] = [positionsOf(msgs, seed, thinking), positionsOf(final, seed, thinking)]
   const first = a.findIndex((p, i) => p.prefix !== b[i]?.prefix)
@@ -339,26 +338,30 @@ export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], se
   return a[k]?.prefix
 }
 
-export function anchored(msgs: readonly ApiMsg[], end: string | undefined, seed: string, thinking: Thinking, spare: number): ApiMsg[] {
+export function anchored(msgs: readonly ApiMsg[], end: string | undefined, seed: string, thinking: Thinking): ApiMsg[] {
   const a = positionsOf(msgs, seed, thinking)
   const at: Array<[number, number]> = msgs.flatMap((m, i) => blocks(m).map((_, j): [number, number] => [i, j]))
   const marks = at.filter(([i, j]) => blocks(msgs[i])[j].cache_control !== undefined)
   const last = marks.at(-1)
   const k = a.findIndex((p) => p.prefix === end)
-  if (k < 0 || !last || a[k].breakpoint || (spare <= 0 && marks.length - 1 < 1 - spare)) return [...msgs]
+  if (k < 0 || !last || a[k].breakpoint) return [...msgs]
   const control = blocks(msgs[last[0]])[last[1]].cache_control
-  const drop = spare > 0 ? [] : marks.slice(0, -1)
-  return msgs.map((m, i) => {
-    if (i !== at[k][0] && !drop.some(([d]) => d === i)) return m
-    const content = blocks(m).map((bl, j) => {
-      if (i === at[k][0] && j === at[k][1]) return { ...bl, cache_control: control }
-      if (drop.some(([d, e]) => d === i && e === j)) {
-        const { cache_control, ...rest } = bl
-        return rest
-      }
-      return bl
-    })
-    return { ...m, content }
+  return msgs.map((m, i) => (i === at[k][0] ? { ...m, content: blocks(m).map((bl, j) => (j === at[k][1] ? { ...bl, cache_control: control } : bl)) } : m))
+}
+
+// The system prompt with its first breakpoint taken out, freeing a slot for
+// the anchor; undefined unless it has two. Claude Code puts one after its
+// identity line, covering the tools, and one at the end of the system prompt.
+// The first is read only when the system prompt changed and the tools did
+// not: 3 requests in the logs of 2026-10-15, against 154 for the second.
+export function freedSystem(system: unknown): unknown[] | undefined {
+  if (!Array.isArray(system)) return
+  const marked = system.flatMap((b, i) => (b?.cache_control ? [i] : []))
+  if (marked.length < 2) return
+  return system.map((b, i) => {
+    if (i !== marked[0]) return b
+    const { cache_control, ...rest } = b
+    return rest
   })
 }
 

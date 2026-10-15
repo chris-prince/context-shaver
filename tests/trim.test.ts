@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { parsePolicy, seedPolicy, treatment, type Policy } from '../src/policy.ts'
-import { anchored, apply, decide, isStubbed, LOOKBACK, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { anchored, apply, decide, freedSystem, isStubbed, LOOKBACK, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'stub' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
@@ -380,7 +380,7 @@ test('a breakpoint where the messages stop matching them settled lets a move rea
   const keep = [...head, { role: 'user', content: 'x'.repeat(1000) } as ApiMsg, { role: 'user', content: 'y'.repeat(2000) } as ApiMsg]
   const drop = [...head, { role: 'user', content: '' } as ApiMsg, keep[3]]
   const end = settledEnd(keep, drop, 's', new Map())
-  const [a, b] = [anchored(tailed(keep), end, 's', new Map(), 1), anchored(tailed(drop), end, 's', new Map(), 1)]
+  const [a, b] = [anchored(tailed(keep), end, 's', new Map()), anchored(tailed(drop), end, 's', new Map())]
   assert.deepEqual(blocks(a[1])[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.deepEqual(blocks(b[1])[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   const live = new Set(positionsOf(a, 's', new Map()).filter((p) => p.breakpoint).map((p) => p.prefix))
@@ -389,23 +389,23 @@ test('a breakpoint where the messages stop matching them settled lets a move rea
   assert.ok(d.rewriteChars < 4000)
 })
 
-test('the settled breakpoint skips thinking, and with no spare replaces the earlier message ones', () => {
+test('the settled breakpoint skips thinking and leaves the message ones in place', () => {
   const end = settledEnd(msgs, apply(msgs, stubAll, { steps: Infinity, turns: Infinity }).msgs, 's', new Map())
   // Turn 1's first response is where trimming starts: its thinking and call
   // change, so the breakpoint goes on the prompt before them.
-  const spare = anchored(tailed(msgs), end, 's', new Map(), 1)
-  assert.ok(blocks(spare[0])[1].cache_control)
-  assert.equal(spare.flatMap(blocks).filter((b) => b.cache_control).length, 5)
-  const none = anchored(tailed(msgs), end, 's', new Map(), 0)
-  assert.deepEqual(
-    none.flatMap((m, i) => blocks(m).flatMap((b, j) => (b.cache_control ? [[i, j]] : []))),
-    [
-      [0, 1],
-      [14, 0],
-    ],
-  )
+  const a = anchored(tailed(msgs), end, 's', new Map())
+  assert.ok(blocks(a[0])[1].cache_control)
+  assert.equal(a.flatMap(blocks).filter((b) => b.cache_control).length, 5)
   // Nothing settled differs: the last block already has a breakpoint, so none is added.
-  assert.equal(anchored(tailed(msgs), settledEnd(msgs, msgs, 's', new Map()), 's', new Map(), 1).flatMap(blocks).filter((b) => b.cache_control).length, 4)
+  assert.equal(anchored(tailed(msgs), settledEnd(msgs, msgs, 's', new Map()), 's', new Map()).flatMap(blocks).filter((b) => b.cache_control).length, 4)
+})
+
+test('the system prompt gives up its first breakpoint, and only when it has two', () => {
+  const c = { type: 'ephemeral', ttl: '1h' }
+  const system = [{ type: 'text', text: 'billing' }, { type: 'text', text: 'identity', cache_control: c }, { type: 'text', text: 'prompt', cache_control: c }]
+  assert.deepEqual(freedSystem(system), [system[0], { type: 'text', text: 'identity' }, system[2]])
+  assert.equal(freedSystem([system[0], system[2]]), undefined)
+  assert.equal(freedSystem('a string'), undefined)
 })
 
 test('an entry more than LOOKBACK blocks before every breakpoint is not read', () => {
