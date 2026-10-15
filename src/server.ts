@@ -315,6 +315,11 @@ function thinkingOf(u: Usage | undefined, c: Content): Record<string, number> {
 }
 
 const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive'])
+// The account's usage limits from the latest answer the API sent, which Claude
+// Code shows in the status line. Answers made here carry them too, or the
+// status line loses them for that turn.
+const LIMIT = 'anthropic-ratelimit-unified-'
+let limits: Record<string, string> = {}
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = []
@@ -353,7 +358,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const command = body.tools?.length && pendingCommand(msgs)
         if (command) {
           const text = command === ':shaver policy' ? policyText() : stats({ ...body, messages: msgs }, agent)
-          res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
+          res.writeHead(200, { ...limits, 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
           const context = latestOf(keyOf({ ...body, messages: withoutPending(msgs) }, agent))?.inputTokens ?? 0
           return void res.end(reply(text, body.model, !!body.stream, context))
         }
@@ -386,6 +391,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   up.headers.forEach((v, k) => {
     if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v
   })
+  if (up.status === 200 && Object.keys(out).some((k) => k.startsWith(LIMIT)))
+    limits = Object.fromEntries(Object.entries(out).filter(([k]) => k.startsWith(LIMIT)))
   res.writeHead(up.status, out)
   const usage = usageReader()
   if (up.body)
