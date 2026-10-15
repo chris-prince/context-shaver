@@ -66,5 +66,5 @@ test('render shows the cost after the tokens', () => {
   const s = { ...at(2, 13_000, 9000), first: at(0, 0, 0).time, requests: 3, turns: 2, tokens: {}, bound: {}, answers: {}, seen: {}, parts: [], defs: { key: 'd', systemPrompt: 1, tools: 1 }, ends: { tools: 0, reasoning: 0 } } as Stats
   const c = cost([{ stats: at(0, 12_000, 9000), usage: usage(0, 0, 12_000) }, { stats: at(2, 13_000, 9000), usage: usage(0, 12_000, 1000) }], HOUR)
   const out = render(s, 'session', false, c)
-  assert.match(out, /saved \(41%\)\n  Costs \(session\)\n    \$0\.18 if no shaver \(estimated\)\n    \$0\.11 actual\n    \$0\.07 saved \(41%\)\n\nContext Details\n\n  Base/)
+  assert.match(out, /saved \(41%\)\n  Costs \(session\)\n    \$0\.18 if no shaver \(estimated\)\n    \$0\.11 actual\n    \$0\.07 saved \(41%\)\n  Summaries: 0 creation requests\n\nContext Details\n\n  Base/)
 })

@@ -230,8 +230,7 @@ function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: s
   const { stats: s, cost: c } = currentOf(key)
   const { spent: forks, requests } = loadSummaries(key)
   const withForks = c && { ...c, actual: c.actual + forks }
-  const summaries = policy.summary_threshold_tokens ? requests : undefined
-  const text = s ? render(s, key, false, withForks, summaries) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks, summaries)
+  const text = s ? render(s, key, false, withForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks, requests)
   return '```\n' + text + '\n```'
 }
 
@@ -414,6 +413,8 @@ async function summarize(key: string, f: Fork, target: string, headers: Record<s
   const began = Date.now()
   const body = JSON.parse(sent.toString('utf8'))
   const asked = { start: f.start, current: f.current, maxTokens: body.max_tokens, thinking: body.thinking }
+  const before = loadSummaries(key)
+  writeFileSync(summariesOf(key), JSON.stringify({ ...before, requests: before.requests + 1 }))
   try {
     body.messages = forkMessages(body.messages, instructions(f))
     body.stream = false
@@ -423,7 +424,7 @@ async function summarize(key: string, f: Fork, target: string, headers: Record<s
     const time = new Date().toISOString()
     const record = recordOf(out.content ?? [], f, time)
     const s = loadSummaries(key)
-    writeFileSync(summariesOf(key), JSON.stringify({ chain: record ? [...s.chain, record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0), requests: s.requests + 1 }))
+    writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain, record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0) }))
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
     console.error('ctx-shaver: summary fork failed:', err)
