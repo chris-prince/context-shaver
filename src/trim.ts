@@ -7,7 +7,7 @@
 // trimmed prefix and the prompt cache keeps reading it; decide says when moving
 // it pays. The latest step and the current turn are never touched.
 
-import { PRICES } from './cost.ts'
+import type { Model } from './models.ts'
 import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
 import { treatment, type Action, type Policy } from './policy.ts'
@@ -247,12 +247,12 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock
 
 // Claude Code writes 1-hour cache entries at 2x input. A read costs 0.1x on
 // most models, so a written character costs M + 1 = 20 reads; the models
-// priced to read for less (cost.ts, PRICES) pay more reads for a write. K is
+// priced to read for less (models.ts) pay more reads for a write. K is
 // the warm requests expected to read what a trim saved before the cache next
 // goes cold: 40 at an hour's TTL (ctx-shaver's local/notes.md, "Light compaction").
 // Automatic caching writes at the input price, so a written character costs
 // half the reads.
-export const writeCost = (model: string, automatic = false) => (automatic ? 1 : 2) / (PRICES[model] ? PRICES[model].read / PRICES[model].input : 0.1) - 1 // M
+export const writeCost = (m: Model, automatic = false) => (automatic ? 1 : 2) / (m.price ? m.price.read / m.price.input : 0.1) - 1 // M
 export const K = 40
 
 // What a thinking block bills, which its length does not show: Claude Code
@@ -277,12 +277,12 @@ export function sizeOf(b: Block, thinking: Thinking): number {
 // The prompt cache keeps an entry for each prefix a request ended a breakpoint
 // (a block with cache_control) at, for the TTL from when it was last written or
 // read. A request reads the longest entry it finds by looking back from each
-// of its breakpoints over at most LOOKBACK positions (a block, or a run of a
+// of its breakpoints over at most the model's lookback (models.ts) of
+// positions (a block, or a run of a
 // message's tool_use or tool_result blocks), and writes from there to its
 // last breakpoint; what follows that is plain input. Only the messages are
 // tracked: a conversation's tools and system go in the seed, so changing them,
 // or the model, finds no entry.
-export const LOOKBACK = 20
 
 // Each block of the messages: the hash of the prefix through it, which names
 // its entry (cache_control left out, since it moves from request to request
@@ -315,11 +315,11 @@ export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thi
 }
 
 // The position the request reads through, given the live entries; -1 for none.
-export function readThrough(pos: readonly Position[], live: ReadonlySet<string>): number {
+export function readThrough(pos: readonly Position[], live: ReadonlySet<string>, lookback: number): number {
   let r = -1
   pos.forEach((p, b) => {
     if (!p.breakpoint) return
-    for (let j = b, n = 0; j > r && n <= LOOKBACK; n += pos[j--].joined ? 0 : 1)
+    for (let j = b, n = 0; j > r && n <= lookback; n += pos[j--].joined ? 0 : 1)
       if (live.has(pos[j].prefix)) {
         r = j
         break
@@ -401,13 +401,13 @@ export type Decision = {
 // with no breakpoints in its messages (a side request branched off the
 // conversation) reads nothing of them whatever is cached, so says nothing of
 // the cache: it never advances.
-export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: string, thinking: Thinking = new Map(), automatic = false): Decision {
+export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: Model, thinking: Thinking = new Map(), automatic = false): Decision {
   const M = writeCost(model, automatic)
   const a = positionsOf(before, seed, thinking, automatic)
   const b = positionsOf(after, seed, thinking, automatic)
   const sum = (ps: Position[]) => ps.reduce((n, p) => n + p.size, 0)
   const savedChars = sum(a) - sum(b)
-  const [ra, rb] = [readThrough(a, live), readThrough(b, live)]
+  const [ra, rb] = [readThrough(a, live, model.lookback), readThrough(b, live, model.lookback)]
   const cold = ra < 0
   if (a.at(-1)?.prefix === b.at(-1)?.prefix || savedChars <= 0 || !a.some((p) => p.breakpoint)) return { advanced: false, cold, savedChars: 0, rewriteChars: 0, extraChars: 0 }
   const rewriteChars = sum(a.slice(0, ra + 1)) - sum(b.slice(0, rb + 1))

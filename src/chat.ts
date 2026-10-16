@@ -66,7 +66,7 @@ export function canonical(wire: Record<string, unknown>): { body: Canonical; ren
   }
   const tools = ((wire.tools ?? []) as { function?: { name?: string } }[]).map((t) => ({ name: t.function?.name, ...t }))
   const system = head.flatMap((m) => partsOf(m.content).map((p) => ({ type: 'text', text: p.text ?? '' })))
-  const body: Canonical = { model: String(wire.model ?? ''), messages, system, tools, stream: !!wire.stream, prompt_cache_key: wire.prompt_cache_key, user: wire.user }
+  const body: Canonical = { model: String(wire.model ?? ''), messages, system, tools, stream: !!wire.stream, provider: (wire.provider as { order?: string[] } | undefined)?.order?.[0], prompt_cache_key: wire.prompt_cache_key, user: wire.user }
 
   // A message the core left is sent as it came. One it changed is rebuilt
   // from the wire message it was made from, each block it left sent as it came.

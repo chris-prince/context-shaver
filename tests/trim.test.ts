@@ -6,7 +6,8 @@ import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { parsePolicy, seedPolicy, treatment, type Policy } from '../src/policy.ts'
-import { anchored, apply, decide, freedSystem, isStubbed, LOOKBACK, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { anchored, apply, decide, freedSystem, isStubbed, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { modelOf } from '../src/models.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: Policy = { tool: [{ on: 'step', wait: 0, action: 'stub' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] }
@@ -24,7 +25,7 @@ const tailed = (msgs: readonly ApiMsg[]): ApiMsg[] =>
 // entry at every block of `cached` (none, for a cold one), so either request
 // can read up to its first change.
 const gate = (before: readonly ApiMsg[], after: readonly ApiMsg[], cached: readonly ApiMsg[], model = 'claude-haiku-5-5', thinking = new Map<string, number>()) =>
-  decide(tailed(before), tailed(after), new Set(positionsOf(cached, 's', thinking).map((p) => p.prefix)), 's', model, thinking)
+  decide(tailed(before), tailed(after), new Set(positionsOf(cached, 's', thinking).map((p) => p.prefix)), 's', modelOf(model), thinking)
 
 // The items an application changed, counted by kind and treatment.
 const counts = (a: Applied) => transitions({ msgs: [], origin: [], treated: new Map() }, a)
@@ -326,7 +327,7 @@ test('a request with no breakpoints in its messages never advances', () => {
   const unmarked = (ms: readonly ApiMsg[]): ApiMsg[] => JSON.parse(JSON.stringify(ms, (k, v) => (k === 'cache_control' ? undefined : v)))
   const keep = unmarked(apply(msgs, stubAll, { steps: 0, turns: 0 }).msgs)
   const adv = unmarked(apply(msgs, stubAll, { steps: 5, turns: 2 }).msgs)
-  assert.equal(decide(keep, adv, new Set(), 's', 'claude-haiku-5-5').advanced, false)
+  assert.equal(decide(keep, adv, new Set(), 's', modelOf('claude-haiku-5-5')).advanced, false)
 })
 
 test('a thinking block is sized by the tokens it bills, not its signature', () => {
@@ -350,8 +351,8 @@ test('a model with cheaper reads makes a rewrite cost more of them', () => {
   const head: ApiMsg[] = [{ role: 'user', content: 'p' }]
   const keep = [...head, { role: 'user', content: 'x'.repeat(1000) } as ApiMsg, { role: 'user', content: 'y'.repeat(2000) } as ApiMsg]
   const drop = [...head, { role: 'user', content: '' } as ApiMsg, keep[2]]
-  assert.equal(writeCost('claude-haiku-5-5'), 19)
-  assert.equal(writeCost('claude-opus-5-5'), 39)
+  assert.equal(writeCost(modelOf('claude-haiku-5-5')), 19)
+  assert.equal(writeCost(modelOf('claude-opus-5-5')), 39)
   assert.equal(gate(keep, drop, keep).advanced, true)
   assert.equal(gate(keep, drop, keep, 'claude-opus-5-5').advanced, false)
 })
@@ -367,7 +368,7 @@ test('advancing reads only through an entry the cache holds', () => {
   assert.equal(atHead.advanced, true)
   assert.equal(atHead.rewriteChars, positionsOf(tailed(keep), 's', new Map()).slice(2).reduce((n, p) => n + p.size, 0))
   const live = new Set(positionsOf(tailed(keep), 's', new Map()).filter((p) => p.breakpoint).map((p) => p.prefix))
-  const atEnd = decide(tailed(keep), tailed(drop), live, 's', 'claude-haiku-5-5')
+  const atEnd = decide(tailed(keep), tailed(drop), live, 's', modelOf('claude-haiku-5-5'))
   assert.equal(atEnd.cold, false)
   assert.equal(atEnd.advanced, false)
   assert.ok(atEnd.rewriteChars > 23000)
@@ -384,7 +385,7 @@ test('a breakpoint where the messages stop matching them settled lets a move rea
   assert.deepEqual(blocks(a[1])[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.deepEqual(blocks(b[1])[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   const live = new Set(positionsOf(a, 's', new Map()).filter((p) => p.breakpoint).map((p) => p.prefix))
-  const d = decide(a, b, live, 's', 'claude-haiku-5-5')
+  const d = decide(a, b, live, 's', modelOf('claude-haiku-5-5'))
   assert.equal(d.advanced, true)
   assert.ok(d.rewriteChars < 4000)
 })
@@ -408,19 +409,19 @@ test('the system prompt gives up its first breakpoint, and only when it has two'
   assert.equal(freedSystem('a string'), undefined)
 })
 
-test('an entry more than LOOKBACK blocks before every breakpoint is not read', () => {
-  const msgs = Array.from({ length: LOOKBACK + 3 }, (_, i): ApiMsg => ({ role: 'user', content: `m${i}` }))
+test('an entry more than 20 blocks before every breakpoint is not read', () => {
+  const msgs = Array.from({ length: 20 + 3 }, (_, i): ApiMsg => ({ role: 'user', content: `m${i}` }))
   const first = msgs.slice(0, 2)
-  assert.equal(decide(tailed(msgs), tailed(msgs.slice(1)), new Set(positionsOf(first, 's', new Map()).map((p) => p.prefix)), 's', 'claude-haiku-5-5').cold, true)
+  assert.equal(decide(tailed(msgs), tailed(msgs.slice(1)), new Set(positionsOf(first, 's', new Map()).map((p) => p.prefix)), 's', modelOf('claude-haiku-5-5')).cold, true)
   const near = msgs.slice(0, 3)
-  assert.equal(decide(tailed(msgs), tailed(msgs.slice(1)), new Set(positionsOf(near, 's', new Map()).map((p) => p.prefix)), 's', 'claude-haiku-5-5').cold, false)
+  assert.equal(decide(tailed(msgs), tailed(msgs.slice(1)), new Set(positionsOf(near, 's', new Map()).map((p) => p.prefix)), 's', modelOf('claude-haiku-5-5')).cold, false)
 })
 
 test('a run of tool calls or results is one lookback position', () => {
-  const calls: ApiMsg = { role: 'assistant', content: Array.from({ length: LOOKBACK + 5 }, (_, i) => ({ type: 'tool_use', id: `t${i}`, name: 'Read', input: {} })) }
-  const results: ApiMsg = { role: 'user', content: Array.from({ length: LOOKBACK + 5 }, (_, i) => ({ type: 'tool_result', tool_use_id: `t${i}`, content: 'x' })) }
+  const calls: ApiMsg = { role: 'assistant', content: Array.from({ length: 20 + 5 }, (_, i) => ({ type: 'tool_use', id: `t${i}`, name: 'Read', input: {} })) }
+  const results: ApiMsg = { role: 'user', content: Array.from({ length: 20 + 5 }, (_, i) => ({ type: 'tool_result', tool_use_id: `t${i}`, content: 'x' })) }
   const pos = positionsOf(tailed([{ role: 'user', content: 'go' }, calls, results]), 's', new Map())
-  assert.equal(readThrough(pos, new Set([pos[0].prefix])), 0)
+  assert.equal(readThrough(pos, new Set([pos[0].prefix]), 20), 0)
 })
 
 test('with automatic caching, a request reads back only 20 user runs from its end', () => {
@@ -438,8 +439,8 @@ test('with automatic caching, a request reads back only 20 user runs from its en
   const grown = [...before, { role: 'user', content: [{ type: 'text', text: 'next' }] } as ApiMsg]
   const pos = (msgs: ApiMsg[]) => positionsOf(msgs, 's', new Map(), true)
   // Growing reads up to the end of the last request.
-  assert.equal(readThrough(pos(grown), live), pos(before).length - 1)
+  assert.equal(readThrough(pos(grown), live, 20), pos(before).length - 1)
   // A change within reach reads up to the user run before it; one further back, nothing.
-  assert.equal(readThrough(pos(stubbedAt(110)), live), 108)
-  assert.equal(readThrough(pos(stubbedAt(2)), live), -1)
+  assert.equal(readThrough(pos(stubbedAt(110)), live, 20), 108)
+  assert.equal(readThrough(pos(stubbedAt(2)), live, 20), -1)
 })

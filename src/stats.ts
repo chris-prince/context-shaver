@@ -25,6 +25,7 @@ export type Tool = { name?: string; defer_loading?: boolean }
 export type Sent = {
   time: string
   model: string
+  provider?: string
   // The prompts among its messages (items.ts, isPrompt).
   turns: number
   parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number; born?: string }>
@@ -40,6 +41,7 @@ export type Stats = {
   turns: number
   time: string
   model: string
+  provider?: string
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
@@ -84,7 +86,7 @@ function referenced(m: ApiMsg): string[] {
   return out
 }
 
-export function describe(body: { model: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[] }, ends: Sent['ends'], time: string, advanced = false): Sent {
+export function describe(body: { model: string; provider?: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[] }, ends: Sent['ends'], time: string, advanced = false): Sent {
   const msgs = body.messages
   const responded = msgs.findIndex((m) => m.role === 'assistant')
   const tools = body.tools ?? []
@@ -103,6 +105,7 @@ export function describe(body: { model: string; messages: ApiMsg[]; system?: unk
   return {
     time,
     model: body.model,
+    ...(body.provider && { provider: body.provider }),
     turns: msgs.filter(isPrompt).length,
     parts,
     defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0) },
@@ -198,6 +201,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     turns: r.turns,
     time: r.time,
     model: r.model,
+    ...(r.provider && { provider: r.provider }),
     inputTokens,
     removedTokens,
     tokens: known,

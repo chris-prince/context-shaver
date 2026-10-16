@@ -14,6 +14,7 @@
 //   miss.
 // Output is the same either way.
 
+import { modelOf, type Price } from './models.ts'
 import type { Stats } from './stats.ts'
 
 export type Usage = {
@@ -24,19 +25,6 @@ export type Usage = {
   output_tokens?: number
 }
 
-// Dollars a million tokens. Writes cost 1.25x input at the 5-minute TTL and
-// 2x at the hour. A long prompt, over `long.over` tokens, costs `long.times`
-// as much in all.
-type Price = { input: number; output: number; read: number; long?: { over: number; times: number } }
-export const PRICES: Record<string, Price> = {
-  'claude-opus-5-5': { input: 4, output: 20, read: 0.2 },
-  'claude-fable-5-1': { input: 10, output: 50, read: 0.25 },
-  'claude-mythos-5-1': { input: 10, output: 50, read: 0.25 },
-  'claude-sonnet-5-5': { input: 2, output: 10, read: 0.2 },
-  'claude-haiku-5-5': { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } },
-  // At DeepInfra, which OpenCode pins it to; other providers price it apart.
-  'deepseek/deepseek-v4.1-flash': { input: 0.14, output: 0.42, read: 0.0042 },
-}
 
 export type Tokens = { uncached: number; reads: number; writes: number; output: number }
 // Dollars, without the trims and as it was.
@@ -68,8 +56,8 @@ function dollars(p: Price, t: Tokens, short: number): number {
 
 // What a request the client never saw cost, as a summary fork (summary.ts);
 // nothing for a model with no price.
-export function spent(model: string, u: Usage): number {
-  const p = PRICES[model]
+export function spent(model: string, provider: string | undefined, u: Usage): number {
+  const p = modelOf(model, provider).price
   const t: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
   return p ? dollars(p, t, u.cache_creation?.ephemeral_5m_input_tokens ?? 0) : 0
 }
@@ -77,7 +65,7 @@ export function spent(model: string, u: Usage): number {
 // The cost so far with a request's added, given the stats it leaves, the stats
 // before it, and its usage; none once a request's model has no price.
 export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number): Cost | undefined {
-  const p = PRICES[s.model]
+  const p = modelOf(s.model, s.provider).price
   if (!c || !p) return undefined
   const actual: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
   const wo = without(prev, s, u, ttlMs)

@@ -28,6 +28,7 @@ import { history, latest, record } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
+import { modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { forkMessages, forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
 
@@ -134,13 +135,14 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
   const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= ttlMs))
   const live = new Set(Object.keys(entries))
   const seed = seedOf(body.model, body.tools, body.system)
+  const model = modelOf(body.model, body.provider)
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
   // The records it sends: those sent before, and on a cold cache, all there are.
   const chain = policy.summary_threshold_tokens ? validChain(loadSummaries(key).chain, msgs) : []
   const before = Math.min(s?.summarized ?? 0, chain.length)
   let records = before
   let keep = summarized(apply(msgs, policy, held, conv), msgs, chain.slice(0, records))
-  const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live) < 0
+  const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   if (records < chain.length && cold(positionsOf(keep.msgs, seed, thinking, auto))) {
     records = chain.length
     keep = summarized(apply(msgs, policy, held, conv), msgs, chain)
@@ -153,7 +155,7 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
   const freed = spare > 0 ? undefined : freedSystem(body.system)
   const reads = (m: ApiMsg[]) => {
     const ps = positionsOf(m, seed, thinking, auto)
-    return ps.slice(0, readThrough(ps, live) + 1).reduce((n, q) => n + q.size, 0)
+    return ps.slice(0, readThrough(ps, live, model.lookback) + 1).reduce((n, q) => n + q.size, 0)
   }
   const anchor = (m: ApiMsg[]) => {
     if (auto || (spare <= 0 && !freed)) return m
@@ -166,7 +168,7 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
   let d: Decision | undefined
   if (clock.steps > held.steps || clock.turns > held.turns) {
     next = summarized(apply(msgs, policy, clock, conv), msgs, chain.slice(0, records))
-    d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, body.model, thinking, auto)
+    d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto)
     if (d.advanced) [sent, applied] = [next, clock]
   }
   body.messages = anchor(sent.msgs)
@@ -174,7 +176,7 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
   // The entries this request writes or reads: one at each breakpoint, or with
   // automatic caching at each user message's end, and the one it reads through.
   const pos = positionsOf(body.messages, seed, thinking, auto)
-  const r = readThrough(pos, live)
+  const r = readThrough(pos, live, model.lookback)
   const touched = pos.filter((q, i) => q.breakpoint || (auto && !q.joined) || i === r).map((q) => q.prefix)
   // Where trimming ends in the messages as sent, which drops shorten.
   const ends = trimmedEnd(msgs, policy, applied)
@@ -211,11 +213,11 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
         // To test the anchor breakpoint's efficacy: the decision without it,
         // or the entry it keeps, which lookback would otherwise still find.
         // Remove this (and the logged field) once we're confident in it.
-        unanchored: (({ advanced, extraChars }) => ({ advanced, extraChars }))(decide(keep.msgs, next.msgs, new Set([...live].filter((e) => e !== end)), seed, body.model, thinking, auto)),
+        unanchored: (({ advanced, extraChars }) => ({ advanced, extraChars }))(decide(keep.msgs, next.msgs, new Set([...live].filter((e) => e !== end)), seed, model, thinking, auto)),
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, protocol: proto.name, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, body.messages), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, body.messages), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -412,7 +414,7 @@ async function summarize(key: string, f: Fork, target: string, headers: Record<s
     const time = new Date().toISOString()
     const record = recordOf(out.content ?? [], f, time)
     const s = loadSummaries(key)
-    writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, out.usage) : 0) }))
+    writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, body.provider, out.usage) : 0) }))
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
     console.error('ctx-shaver: summary fork failed:', err)

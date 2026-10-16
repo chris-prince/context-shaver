@@ -10,7 +10,8 @@ import type { ApiMsg, Conventions } from './items.ts'
 import type { Tool } from './stats.ts'
 
 // A request in the core's shape. Fields the core doesn't read ride along.
-export type Canonical = { model: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[]; stream?: boolean; [k: string]: unknown }
+// `provider` is the one it pins behind a router, which prices it (models.ts).
+export type Canonical = { model: string; provider?: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[]; stream?: boolean; [k: string]: unknown }
 
 // A response's thinking blocks' signatures and the characters of everything
 // else, for what its thinking bills (server.ts, thinkingOf).
