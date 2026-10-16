@@ -14,6 +14,9 @@ export type Model = {
   price?: Price
   // How far back from a breakpoint a request finds an entry (trim.ts, readThrough).
   lookback: number
+  // Tokens of earlier turns that start a summary fork, in place of the policy's
+  // summary_threshold_tokens; the policy still decides whether there are any.
+  summaryThreshold?: number
 }
 type Settings = Partial<Model>
 
@@ -31,7 +34,7 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
       // TTL, writes at the input price, and an entry for every 128-token
       // prefix, found however far back it is. Warm requests read their entry
       // reliably (26 of 26 there; every one in a real OpenCode session here).
-      deepinfra: { price: { input: 0.14, output: 0.42, read: 0.0042 }, lookback: Infinity },
+      deepinfra: { price: { input: 0.14, output: 0.42, read: 0.0042 }, lookback: Infinity, summaryThreshold: 7000 },
     },
   },
 }

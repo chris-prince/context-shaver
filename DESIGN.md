@@ -178,8 +178,9 @@ sessions once.
 
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens
-before the frontier. The default is 10000. Without the key no record is made or
-sent.
+before the frontier. The default is 20000; a model can set its own
+(`summaryThreshold` in `models.ts`, 7000 for DeepSeek at DeepInfra). Without the
+key no record is made or sent.
 
 The proxy reads the file when it starts; restart it after editing.
 
