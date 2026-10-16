@@ -31,9 +31,11 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   'claude-haiku-5-5': { price: { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } } },
   // OpenAI's pricing page and prompt-caching guide (local/notes.md, "Check
   // Codex in use"): writes at 1.25x input, the latest 50 breakpoints looked
-  // through, and entries kept at least 30 minutes after their last use. Past
-  // 272K input tokens, input doubles and output is 1.5x, which `long` can't say.
-  'gpt-6-luna': { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 1800 },
+  // through, and entries kept at least 30 minutes after their last use; an
+  // hour here, since a Codex session read nearly all of it after 35 minutes
+  // and nothing after 73. Past 272K input tokens, input doubles and output is
+  // 1.5x, which `long` can't say.
+  'gpt-6-luna': { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 3600 },
   // Priced apart by each provider, so only per provider.
   'deepseek/deepseek-v4.1-flash': {
     providers: {
