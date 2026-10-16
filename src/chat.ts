@@ -195,14 +195,14 @@ export const CHAT: Protocol = {
   automatic: true,
   conventions: OPENCODE,
   defers: false,
-  // The fork's question is a user message of its own after the request's, so
-  // every message before it is sent as it came. A stream's options go with
-  // the stream.
-  fork: (sent, text) => {
+  // The summary fork's question is a user message of its own after the
+  // request's, so every message before it is sent as it came. A stream's
+  // options go with the stream.
+  summaryFork: (sent, text) => {
     const { stream_options: _, ...rest } = sent
     return { ...rest, stream: false, messages: [...(sent.messages as WireMsg[]), { role: 'user', content: text }] }
   },
-  forkAnswer: (out) => {
+  summaryForkAnswer: (out) => {
     const o = out as { choices?: { message?: WireMsg }[]; usage?: Parameters<typeof usageOf>[0] }
     const m = o.choices?.[0]?.message
     const content: Block[] = [...partsOf(m?.content).map((p): Block => ({ type: 'text', text: p.text ?? '' })), ...(m?.tool_calls ?? []).map((c): Block => ({ type: 'tool_use', id: c.id, name: c.function.name, input: c.function.arguments }))]

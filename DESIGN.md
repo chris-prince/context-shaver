@@ -117,9 +117,9 @@ The cache differs too. Messages marks breakpoints; Chat Completions providers
 cache each request's prefix themselves and read the longest part of it within
 20 user or tool-result runs of the new request's end (measured on GPT-5.6), with
 writes priced as input. `positionsOf` models that as one breakpoint at the end,
-with entries at each user message's end. Record forks work on both: each
-protocol builds its own fork request and reads its answer. The anchor breakpoint
-and tool deferral are Messages-only for now.
+with entries at each user message's end. Summary forks work on both: each
+protocol builds its own summary fork request and reads its answer. The anchor
+breakpoint and tool deferral are Messages-only for now.
 
 OpenCode reaches the proxy through `/via/` with OpenRouter's or OpenAI's base
 URL (`/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`).
@@ -176,10 +176,10 @@ not. Without the key nothing is deferred, and with tool search off (no
 `ENABLE_TOOL_SEARCH`, so no list) neither. Changing the list rewrites the cache of open
 sessions once.
 
-`summary_threshold_tokens` turns on heavy compaction (below): a fork is made
-once the completed turns past the last one offered hold that many tokens
-before the frontier. The
-default is 10000. Without the key no record is made or sent.
+`summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
+made once the completed turns past the last one offered hold that many tokens
+before the frontier. The default is 10000. Without the key no record is made or
+sent.
 
 The proxy reads the file when it starts; restart it after editing.
 
@@ -299,23 +299,23 @@ landed, the user's decisions and the traps hit (`src/summary.ts`). Making a
 record is kept apart from sending it.
 
 - **Made while the cache is warm.** Once a request's completed turns, since
-  the turn the last fork was offered at, hold `summary_threshold_tokens` tokens as
-  sent before the frontier, counted as the stats count them from the API's
-  usage, the proxy forks
-  it after it is answered: the same request with
-  instructions appended to its last message, after the breakpoint. The fork
-  reads the request's cache entry and pays only for the instructions and the
-  record. Claude Code never sees it, and only one runs at a time per
-  conversation.
+  the turn the last summary fork was offered at, hold
+  `summary_threshold_tokens` tokens as sent before the frontier, counted as the
+  stats count them from the API's usage, the proxy sends a summary fork of it
+  after it is answered: the same request with instructions appended to its last
+  message, after the breakpoint. The summary fork reads the request's cache
+  entry and pays only for the instructions and the record. Claude Code never
+  sees it, and only one runs at a time per conversation.
 - **Made in parts.** The instructions list the uncovered turns by number, each
   with its prompt quoted, and ask for complete arcs only, ending with the turn
   the record stops before. A record ending where a turn starts leaves no tool
-  call without its result. The next fork asks from that turn on. A fork that
-  finds no complete arc, or calls a tool, makes no record.
+  call without its result. The next summary fork asks from that turn on. A
+  summary fork that finds no complete arc, or calls a tool, makes no record.
 - **Kept** in `proxy-data/state/<key>.summaries.json`, apart from the state,
-  which a request answered while a fork runs would save over. Each record holds
-  a hash of the prompt it stops before; when that prompt is no longer there
-  (the conversation was rewound), it goes with the records after it.
+  which a request answered while a summary fork runs would save over. Each
+  record holds a hash of the prompt it stops before; when that prompt is no
+  longer there (the conversation was rewound), it goes with the records after
+  it.
 - **Sent once the cache is cold.** A request that reads nothing from the cache
   writes everything anyway, so it takes all the records there are: everything
   from the first response to the last record's end is replaced by the records,
@@ -326,9 +326,9 @@ record is kept apart from sending it.
   In `:shaver info` each record counts as `summary` and is dated by the first
   message it replaced, so several records can fall in several age rows.
 
-A fork's cost is in the session's actual cost in `:shaver info`, which also
-shows how many forks have been sent, answered or not, as `Summaries: N
-creation requests`.
+A summary fork's cost is in the session's actual cost in `:shaver info`, which
+also shows how many summary forks have been sent, answered or not, as
+`Summaries: N creation requests`.
 
 ## Logs
 
@@ -348,10 +348,10 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind
     and treatment, as `{"tool:stub": 2, "reasoning:drop": 1}`;
-  - a `summary` line for each fork: the turns it was offered (`start` to
-    `current`), the turn its record ends before (none if it made none), the
-    record's characters and the fork's usage. A request line's `summaries` is
-    how many records it sent.
+  - a `summary` line for each summary fork: the turns it was offered (`start`
+    to `current`), the turn its record ends before (none if it made none), the
+    record's characters and the summary fork's usage. A request line's
+    `summaries` is how many records it sent.
 - `parts/`, where each distinct message is saved once, together with its bytes
   split by kind. A trimmed message shares a lineage with the original.
 

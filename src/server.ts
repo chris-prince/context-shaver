@@ -30,7 +30,7 @@ import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
-import { forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
+import { summaryForkOf, instructions, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -60,8 +60,8 @@ mkdirSync(stateDir, { recursive: true })
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
 // tokens each thinking block it was answered with bills, by the signature's
 // hash (trim.ts, sizeOf); how many of its records it sends (summary.ts), and
-// the turn the last fork was offered at. Its stats, for `:shaver info`, are
-// in its journal.
+// the turn the last summary fork was offered at. Its stats, for `:shaver info`,
+// are in its journal.
 type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; offered?: number }
 
 // A state saved before the applied clock, with a frontier, is read as none.
@@ -85,9 +85,9 @@ function save(key: string, s: State): void {
   writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify({ ...s, entries, thinking: { ...was?.thinking, ...s.thinking } }))
 }
 
-// A conversation's records (summary.ts), and the dollars its forks have cost.
-// They are kept apart from its state, which a request answered after a fork
-// began, and prepared before it ended, would save over.
+// A conversation's records (summary.ts), and the dollars its summary forks have
+// cost. They are kept apart from its state, which a request answered after a
+// summary fork began, and prepared before it ended, would save over.
 type Summaries = { chain: Summary[]; spent: number; requests: number }
 const summariesOf = (key: string) => path.join(stateDir, `${key}.summaries.json`)
 function loadSummaries(key: string): Summaries {
@@ -114,7 +114,7 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; fork?: (tokens: number[]) => Fork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
 // are trimmed: those are the main loop and subagents. Claude Code's side
@@ -190,9 +190,9 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
   const suggestion = isSuggestion(msgs)
   const after = policy.summary_threshold_tokens
-  // Whether to fork is known once the response's counts are in.
-  const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, fork, stats: latestOf(key), sent: described, suggestion }
+  // Whether to send a summary fork is known once the response's counts are in.
+  const summaryFork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, summaryFork, stats: latestOf(key), sent: described, suggestion }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
@@ -246,9 +246,9 @@ function stats(proto: Protocol, body: Canonical, headers: IncomingHttpHeaders): 
   if (proto.defers && policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
   const key = proto.conversationId(sent, headers)
   const { stats: s, cost: c } = currentOf(key)
-  const { spent: forks, requests } = loadSummaries(key)
-  const withForks = c && { ...c, actual: c.actual + forks }
-  const text = s ? render(s, key, false, withForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks, requests)
+  const { spent: summaryForks, requests } = loadSummaries(key)
+  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks }
+  const text = s ? render(s, key, false, withSummaryForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withSummaryForks, requests)
   return '```\n' + text + '\n```'
 }
 
@@ -374,9 +374,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     record(journalOf(p.key), c.stats, next, u)
     current.set(p.key, { stats: next, cost: add(c.cost, c.stats, next, u!, ttlMs) })
   }
-  const forked = p.fork && next && !p.suggestion && !forking.has(p.key) ? p.fork(settled(p.sent, next.tokens)) : undefined
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, summarized: p.summarized, offered: forked?.current ?? p.offered })
-  if (forked) void summarize(p, forked, upstream + url, headers)
+  const due = p.summaryFork && next && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, summarized: p.summarized, offered: due?.current ?? p.offered })
+  if (due) void summarize(p, due, upstream + url, headers)
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
       ...p.logLine,
@@ -391,19 +391,19 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 }
 
-// The conversations with a fork under way, which get no second one.
-const forking = new Set<string>()
+// The conversations with a summary fork under way, which get no second one.
+const summaryForking = new Set<string>()
 
-// Forks an answered request for a record of its turns (summary.ts): the
-// request as sent, with the instructions asked after it, in its protocol's
-// form, not streamed. Its cost goes
-// to the conversation's records whatever it answers. Its record follows the
-// ones the fork started after; any later ones no longer fit the messages.
-async function summarize(p: Prepared, f: Fork, target: string, headers: Record<string, string>): Promise<void> {
+// Sends a summary fork of an answered request for a record of its turns
+// (summary.ts): the request as sent, with the instructions asked after it, in
+// its protocol's form, not streamed. Its cost goes to the conversation's
+// records whatever it answers. Its record follows the ones the summary fork
+// started after; any later ones no longer fit the messages.
+async function summarize(p: Prepared, f: SummaryFork, target: string, headers: Record<string, string>): Promise<void> {
   const { key, logDir } = p
-  forking.add(key)
+  summaryForking.add(key)
   const began = Date.now()
-  const body = p.proto.fork(JSON.parse(p.body.toString('utf8')), instructions(f))
+  const body = p.proto.summaryFork(JSON.parse(p.body.toString('utf8')), instructions(f))
   const asked = { start: f.start, current: f.current, maxTokens: body.max_tokens, thinking: body.thinking }
   const before = loadSummaries(key)
   writeFileSync(summariesOf(key), JSON.stringify({ ...before, requests: before.requests + 1 }))
@@ -411,7 +411,7 @@ async function summarize(p: Prepared, f: Fork, target: string, headers: Record<s
     const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
     const json = await r.json()
     if (!r.ok) throw new Error(`${r.status} ${JSON.stringify(json).slice(0, 500)}`)
-    const out = p.proto.forkAnswer(json)
+    const out = p.proto.summaryForkAnswer(json)
     const time = new Date().toISOString()
     const record = recordOf(out.content, f, time)
     const s = loadSummaries(key)
@@ -421,7 +421,7 @@ async function summarize(p: Prepared, f: Fork, target: string, headers: Record<s
     console.error('ctx-shaver: summary fork failed:', err)
     if (logDir) writeLine(logDir, { event: 'summary', time: new Date().toISOString(), ...asked, ms: Date.now() - began, error: String(err).slice(0, 500) })
   } finally {
-    forking.delete(key)
+    summaryForking.delete(key)
   }
 }
 

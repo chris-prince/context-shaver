@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { apply } from '../src/trim.ts'
-import { forkMessages, forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from '../src/summary.ts'
+import { summaryForkMessages, summaryForkOf, instructions, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -21,27 +21,27 @@ const session = (): ApiMsg[] => [
 const none = (msgs: ApiMsg[]) => apply(msgs, {}, { steps: 0, turns: 0 })
 // Each message's count as the stats have it: a tool result 1,000 tokens, the rest 100.
 const counts = (msgs: ApiMsg[]) => msgs.map((m) => (JSON.stringify(m).includes('tool_result') ? 1000 : 100))
-const forkAt = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000, tokens = counts(msgs)) => forkOf(none(msgs), msgs, chain, offered, threshold, new Map(), tokens)
+const summaryForkAt = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000, tokens = counts(msgs)) => summaryForkOf(none(msgs), msgs, chain, offered, threshold, new Map(), tokens)
 
-test('a fork covers the completed turns from the last record on, once they are big enough', () => {
+test('a summary fork covers the completed turns from the last record on, once they are big enough', () => {
   const msgs = session()
-  const f = forkAt(msgs)!
+  const f = summaryForkAt(msgs)!
   assert.deepEqual([f.start, f.current], [1, 4])
   assert.deepEqual(f.prompts.map((p) => p.quote), ['turn one', 'turn two', 'turn three', 'turn four'])
   assert.ok(f.chars > 3 * 4000 && f.chars < 4 * 4000) // turns 1–3, not the current one
   // Turns 1–3 hold 3,000 tokens of results and 800 of the rest.
-  assert.equal(forkAt(msgs, [], 0, 3800)?.start, 1)
-  assert.equal(forkAt(msgs, [], 0, 3801), undefined)
+  assert.equal(summaryForkAt(msgs, [], 0, 3800)?.start, 1)
+  assert.equal(summaryForkAt(msgs, [], 0, 3801), undefined)
   // Counted in tokens, not characters: the same turns at a token each are too few.
-  assert.equal(forkAt(msgs, [], 0, 1000, msgs.map(() => 1)), undefined)
+  assert.equal(summaryForkAt(msgs, [], 0, 1000, msgs.map(() => 1)), undefined)
   // Offered at turn 3: only turn 3 counts towards the next, but it still asks from the start.
-  assert.equal(forkAt(msgs, [], 3, 1301), undefined)
-  assert.equal(forkAt(msgs, [], 3, 1300)?.start, 1)
+  assert.equal(summaryForkAt(msgs, [], 3, 1301), undefined)
+  assert.equal(summaryForkAt(msgs, [], 3, 1300)?.start, 1)
 })
 
-test("a fork's record is read back, and only one that covers a complete arc is kept", () => {
+test("a summary fork's record is read back, and only one that covers a complete arc is kept", () => {
   const msgs = session()
-  const f = forkAt(msgs)!
+  const f = summaryForkAt(msgs)!
   const r = recordOf([{ type: 'text', text: '## Arc\n- did it\n\nEnds before: [3]' }], f, 'now')!
   assert.equal(r.text, '## Arc\n- did it')
   assert.equal(r.endsBefore, 3)
@@ -55,16 +55,16 @@ test("a fork's record is read back, and only one that covers a complete arc is k
   assert.match(instructions(f), /\[1\] "turn one"\n\[2\] "turn two"\n\[3\] "turn three"\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
 })
 
-test('a fork appends its instructions after the breakpoint, so it reads the cached prefix', () => {
+test('a summary fork appends its instructions after the breakpoint, so it reads the cached prefix', () => {
   const msgs = session()
-  const out = forkMessages(msgs.slice(0, -1), 'compact')
+  const out = summaryForkMessages(msgs.slice(0, -1), 'compact')
   assert.deepEqual(out.slice(0, -1), msgs.slice(0, -2))
   assert.deepEqual(out.at(-1)!.content, [{ type: 'tool_result', tool_use_id: 't4', content: long }, { type: 'text', text: 'compact' }])
 })
 
 test('records replace the turns they cover, after the base, and go when their prompt does', () => {
   const msgs = session()
-  const f = forkAt(msgs)!
+  const f = summaryForkAt(msgs)!
   const r1 = recordOf([{ type: 'text', text: 'one\nEnds before: [2]' }], f, 'now')!
   const r2 = recordOf([{ type: 'text', text: 'two\nEnds before: [3]' }], { ...f, start: 2 }, 'now')!
   const out = summarized(none(msgs), msgs, [r1, r2])
@@ -74,8 +74,9 @@ test('records replace the turns they cover, after the base, and go when their pr
   assert.deepEqual(out.msgs.slice(5), msgs.slice(10))
   assert.deepEqual(startsOf(msgs, [r1, r2]), [3, 6])
   assert.deepEqual(out.origin, [0, 1, 2, 3, 6, ...msgs.slice(10).map((_, i) => 10 + i)])
-  // The next fork asks from turn 3, and counts only what follows the records.
-  assert.equal(forkAt(msgs, [r1, r2], 0, 1000)?.start, 3)
+  // The next summary fork asks from turn 3, and counts only what follows the
+  // records.
+  assert.equal(summaryForkAt(msgs, [r1, r2], 0, 1000)?.start, 3)
   // Rewound to turn 2 with a new prompt: the second record goes.
   const rewound = [...msgs.slice(0, 10), { role: 'user', content: 'turn three, again' }, ...msgs.slice(11)] as ApiMsg[]
   assert.deepEqual(validChain([r1, r2], rewound), [r1])

@@ -2,12 +2,13 @@
 // their memorable events (local/notes.md, "Heavy compaction").
 //
 // Making a record is kept apart from applying it. Once a request leaves
-// `summary_threshold_tokens` (policy.ts) uncovered, the proxy forks it after it is
-// answered: the same request with instructions appended, which reads its cache
-// entry and pays only for the instructions and the record. A record covers only
-// complete arcs, so it ends where some turn starts, and the next fork asks from
-// there on. Records are applied when the cache is cold, when everything is
-// written anyway, and every request after sends the same.
+// `summary_threshold_tokens` (policy.ts) uncovered, the proxy sends a summary
+// fork of it after it is answered: the same request with instructions appended,
+// which reads its cache entry and pays only for the instructions and the
+// record. A record covers only complete arcs, so it ends where some turn
+// starts, and the next summary fork asks from there on. Records are applied
+// when the cache is cold, when everything is written anyway, and every request
+// after sends the same.
 
 import { blocks, isPrompt, SUMMARY_HEAD, type ApiMsg, type Block } from './items.ts'
 import { hash } from './log.ts'
@@ -65,16 +66,16 @@ export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly 
   return out
 }
 
-// What a fork asks about: the turns from `start` (the last record's end, or
-// the first) to the current one, each prompt quoted and hashed, and their
-// characters in the messages as sent.
-export type Fork = { start: number; current: number; prompts: Array<{ quote: string; hash: string }>; chars: number }
+// What a summary fork asks about: the turns from `start` (the last record's
+// end, or the first) to the current one, each prompt quoted and hashed, and
+// their characters in the messages as sent.
+export type SummaryFork = { start: number; current: number; prompts: Array<{ quote: string; hash: string }>; chars: number }
 
-// The fork a request calls for: one when the turns completed since `from`
-// (the turn the last fork was offered at, or the last record's end) hold at
-// least `threshold` tokens before the frontier in the messages as sent, by
-// each one's count in `tokens` (stats.ts, settled).
-export function forkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[]): Fork | undefined {
+// The summary fork a request calls for: one when the turns completed since
+// `from` (the turn the last summary fork was offered at, or the last record's
+// end) hold at least `threshold` tokens before the frontier in the messages as
+// sent, by each one's count in `tokens` (stats.ts, settled).
+export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[]): SummaryFork | undefined {
   const prompts = promptsOf(msgs)
   const current = prompts.length
   const start = chain.at(-1)?.endsBefore ?? 1
@@ -92,9 +93,9 @@ export function forkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summ
   return { start, current, prompts: turns, chars: charsFrom(start) }
 }
 
-// The instructions a fork appends: local/prompts/arcs5.md, recast for a model
-// compacting its own context rather than a transcript it is shown.
-export function instructions(f: Fork): string {
+// The instructions a summary fork appends: local/prompts/arcs5.md, recast for a
+// model compacting its own context rather than a transcript it is shown.
+export function instructions(f: SummaryFork): string {
   const list = f.prompts.map((p, k) => `[${f.start + k}] "${p.quote}"`)
   const current = list.pop()
   return `[ctx-shaver] This message is not from the user, and your answer will not be shown to them. Pause the task: don't call any tools, and answer with text only.
@@ -128,18 +129,19 @@ Your record must be at most a tenth the length of the turns it covers; the turns
 Keep exact identifiers you may need: paths, hashes, names, numbers, commands. Drop narration and tool output. Start directly with the first arc.`
 }
 
-// A fork's messages: the request's, with the instructions appended to the
-// last message, which is the user's. They go after its blocks, so the prefix
-// through its last breakpoint is the same and the fork reads its cache entry.
-export function forkMessages(msgs: readonly ApiMsg[], text: string): ApiMsg[] {
+// A summary fork's messages: the request's, with the instructions appended to
+// the last message, which is the user's. They go after its blocks, so the
+// prefix through its last breakpoint is the same and the summary fork reads its
+// cache entry.
+export function summaryForkMessages(msgs: readonly ApiMsg[], text: string): ApiMsg[] {
   const last = msgs.at(-1)!
   return [...msgs.slice(0, -1), { ...last, content: [...blocks(last), { type: 'text', text }] }]
 }
 
-// The record a fork answered with, if it covers anything: its text without
-// the closing line, ending before a turn after `start` and no later than the
-// current one.
-export function recordOf(content: readonly Block[], f: Fork, time: string): Summary | undefined {
+// The record a summary fork answered with, if it covers anything: its text
+// without the closing line, ending before a turn after `start` and no later
+// than the current one.
+export function recordOf(content: readonly Block[], f: SummaryFork, time: string): Summary | undefined {
   if (content.some((b) => b.type === 'tool_use')) return
   const text = content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
   const m = [...text.matchAll(/^Ends before: \[(\d+)\]\s*$/gm)].at(-1)

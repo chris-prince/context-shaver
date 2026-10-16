@@ -43,9 +43,9 @@ export type Protocol = {
   conventions: Conventions
   // Whether tools can be deferred (defer.ts).
   defers: boolean
-  // A heavy-compaction fork (summary.ts): the request as sent, not streamed,
-  // with `text` asked after its messages, so it reads the request's cache
-  // entry; and the fork's answer as blocks, with its usage.
-  fork(sent: Record<string, unknown>, text: string): Record<string, unknown>
-  forkAnswer(out: unknown): { content: Block[]; usage?: Usage }
+  // A heavy-compaction summary fork (summary.ts): the request as sent, not
+  // streamed, with `text` asked after its messages, so it reads the request's
+  // cache entry; and the summary fork's answer as blocks, with its usage.
+  summaryFork(sent: Record<string, unknown>, text: string): Record<string, unknown>
+  summaryForkAnswer(out: unknown): { content: Block[]; usage?: Usage }
 }

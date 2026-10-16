@@ -93,9 +93,9 @@ test('a record the core adds is sent as a plain assistant message', () => {
   assert.strictEqual(out[3], wire.messages[5])
 })
 
-test('a fork asks after the messages as sent, without streaming', () => {
+test('a summary fork asks after the messages as sent, without streaming', () => {
   const sent = canonical(wire).render(canonical(wire).body) as Record<string, unknown>
-  const f = CHAT.fork(sent, 'summarize')
+  const f = CHAT.summaryFork(sent, 'summarize')
   assert.equal(f.stream, false)
   assert.equal(f.stream_options, undefined)
   const m = f.messages as unknown[]
@@ -103,8 +103,8 @@ test('a fork asks after the messages as sent, without streaming', () => {
   assert.deepEqual(m.at(-1), { role: 'user', content: 'summarize' })
 })
 
-test("a fork's answer becomes blocks and usage", () => {
-  const out = CHAT.forkAnswer({ choices: [{ message: { role: 'assistant', content: 'the record', reasoning: 'hmm' } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 900 } } })
+test("a summary fork's answer becomes blocks and usage", () => {
+  const out = CHAT.summaryForkAnswer({ choices: [{ message: { role: 'assistant', content: 'the record', reasoning: 'hmm' } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 900 } } })
   assert.deepEqual(out.content, [{ type: 'text', text: 'the record' }])
   assert.deepEqual(out.usage, { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, output_tokens: 20 })
 })
