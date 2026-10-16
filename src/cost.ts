@@ -34,6 +34,8 @@ export const PRICES: Record<string, Price> = {
   'claude-mythos-5-1': { input: 10, output: 50, read: 0.25 },
   'claude-sonnet-5-5': { input: 2, output: 10, read: 0.2 },
   'claude-haiku-5-5': { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } },
+  // At DeepInfra, which OpenCode pins it to; other providers price it apart.
+  'deepseek/deepseek-v4.1-flash': { input: 0.14, output: 0.42, read: 0.0042 },
 }
 
 export type Tokens = { uncached: number; reads: number; writes: number; output: number }
