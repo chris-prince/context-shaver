@@ -21,6 +21,7 @@ import { clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Protocol } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
+import { RESPONSES } from './responses.ts'
 import { forceDefer } from './defer.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
@@ -283,7 +284,7 @@ function refuse(res: ServerResponse, proto: Protocol, status: 400 | 403, message
 
 // The protocol a path is, after any /via/; Messages for any other path, which
 // is passed through.
-const protocolOf = (url: string) => [MESSAGES, CHAT].find((p) => p.serves(url.split('?')[0])) ?? MESSAGES
+const protocolOf = (url: string) => [MESSAGES, CHAT, RESPONSES].find((p) => p.serves(url.split('?')[0])) ?? MESSAGES
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const original = await readBody(req)
@@ -337,7 +338,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const headers: Record<string, string> = {}
   for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && v !== undefined) headers[k] = Array.isArray(v) ? v.join(', ') : v
   const abort = new AbortController()
-  res.on('close', () => res.writableFinished || abort.abort())
+  const usage = proto.usageReader()
+  // A client that leaves once its answer is complete hasn't interrupted it:
+  // Codex closes before the stream's last bytes, which are still read for the
+  // usage.
+  res.on('close', () => res.writableFinished || usage.done || abort.abort())
   const send = (body: Buffer | undefined) =>
     fetch(upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
   let up = await send(p?.body ?? raw)
@@ -352,15 +357,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   up.headers.forEach((v, k) => {
     if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v
   })
-  const prefix = proto.limitPrefix
-  if (prefix && up.status === 200 && Object.keys(out).some((k) => k.startsWith(prefix)))
-    limits.set(proto, Object.fromEntries(Object.entries(out).filter(([k]) => k.startsWith(prefix))))
+  const re = proto.limits
+  if (re && up.status === 200 && Object.keys(out).some((k) => re.test(k))) limits.set(proto, Object.fromEntries(Object.entries(out).filter(([k]) => re.test(k))))
   res.writeHead(up.status, out)
-  const usage = proto.usageReader()
   if (up.body)
     for await (const chunk of up.body) {
-      res.write(chunk)
-      if (p) usage.push(chunk)
+      if (!res.destroyed) res.write(chunk)
+      usage.push(chunk)
     }
   res.end()
   if (!p || up.status !== 200) return
@@ -408,10 +411,10 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
   const before = loadSummaries(key)
   writeFileSync(summariesOf(key), JSON.stringify({ ...before, requests: before.requests + 1 }))
   try {
-    const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
-    const json = await r.json()
-    if (!r.ok) throw new Error(`${r.status} ${JSON.stringify(json).slice(0, 500)}`)
-    const out = p.proto.summaryForkAnswer(json)
+    const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
+    const text = await r.text()
+    if (!r.ok) throw new Error(`${r.status} ${text.slice(0, 500)}`)
+    const out = p.proto.summaryForkAnswer(text)
     const time = new Date().toISOString()
     const record = recordOf(out.content, f, time)
     const s = loadSummaries(key)

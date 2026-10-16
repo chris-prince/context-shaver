@@ -6,7 +6,7 @@ import { reply } from './command.ts'
 import type { Usage } from './cost.ts'
 import { CLAUDE_CODE, type ApiMsg, type Block } from './items.ts'
 import { hash } from './log.ts'
-import type { Canonical, Content, Protocol } from './protocol.ts'
+import { eventReader, type Canonical, type Content, type Protocol } from './protocol.ts'
 import { summaryForkMessages } from './summary.ts'
 
 // A conversation's ID. Claude Code sends the session ID with every request,
@@ -38,12 +38,8 @@ function conversationId(c: Canonical, headers: IncomingHttpHeaders): string {
 function usageReader() {
   let usage: Usage | undefined
   const content: Content = { signatures: [], visibleChars: 0 }
-  let buf = ''
-  const dec = new TextDecoder()
-  const line = (l: string) => {
-    if (!l.startsWith('data: ')) return
-    try {
-      const e = JSON.parse(l.slice(6))
+  return eventReader({
+    event(e) {
       if (e.type === 'message_start') usage = { ...e.message?.usage }
       if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
       if (e.type === 'content_block_start' && e.content_block?.type === 'thinking') content.signatures.push('')
@@ -54,28 +50,16 @@ function usageReader() {
         if (d.type === 'text_delta') content.visibleChars += d.text.length
         if (d.type === 'input_json_delta') content.visibleChars += d.partial_json.length
       }
-    } catch {}
-  }
-  return {
-    push(chunk: Uint8Array) {
-      buf += dec.decode(chunk, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() ?? ''
-      lines.forEach(line)
     },
-    end(): { usage?: Usage; content: Content } {
-      if (usage) return { usage, content }
-      try {
-        const b = JSON.parse(buf)
-        for (const c of b.content ?? [])
-          if (c.type === 'thinking') content.signatures.push(c.signature ?? '')
-          else content.visibleChars += c.type === 'text' ? c.text.length : c.type === 'tool_use' ? JSON.stringify(c.name).length + JSON.stringify(c.input).length : 0
-        return { usage: b.usage, content }
-      } catch {
-        return { content }
-      }
+    body(b) {
+      for (const c of b.content ?? [])
+        if (c.type === 'thinking') content.signatures.push(c.signature ?? '')
+        else content.visibleChars += c.type === 'text' ? c.text.length : c.type === 'tool_use' ? JSON.stringify(c.name).length + JSON.stringify(c.input).length : 0
+      usage = b.usage
     },
-  }
+    result: () => ({ usage, content }),
+    final: (e) => e.type === 'message_stop',
+  })
 }
 
 const errorType = (status: number) => (status === 403 ? 'permission_error' : status === 400 ? 'invalid_request_error' : 'api_error')
@@ -88,13 +72,13 @@ export const MESSAGES: Protocol = {
   usageReader,
   reply,
   error: (status, message) => JSON.stringify({ type: 'error', error: { type: errorType(status), message } }),
-  limitPrefix: 'anthropic-ratelimit-unified-',
+  limits: /^anthropic-ratelimit-unified-/,
   automatic: false,
   conventions: CLAUDE_CODE,
   defers: true,
   summaryFork: (sent, text) => ({ ...sent, messages: summaryForkMessages(sent.messages as ApiMsg[], text), stream: false }),
-  summaryForkAnswer: (out) => {
-    const o = out as { content?: Block[]; usage?: Usage }
+  summaryForkAnswer: (body) => {
+    const o = JSON.parse(body) as { content?: Block[]; usage?: Usage }
     return { content: o.content ?? [], usage: o.usage }
   },
 }

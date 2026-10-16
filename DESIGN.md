@@ -90,14 +90,15 @@ whatever it had the proxy fetch from your network.
 
 ## Protocols
 
-The proxy speaks Anthropic's Messages protocol (`/v1/messages`, Claude Code)
-and OpenAI's Chat Completions (`…/chat/completions`, OpenCode); the request's
-path picks which (`src/protocol.ts`). The trim, the policy, the cache model and
-the journal work on one message model, the Messages shape (`src/items.ts`). A
-protocol turns its requests into that and back (`src/messages.ts`,
-`src/chat.ts`), and supplies what only it knows: how a conversation is named,
-what a response's usage is, how an answer made here looks, and the client's
-conventions (`Conventions`: which tools are skills and tool loads, which inputs
+The proxy speaks Anthropic's Messages protocol (`/v1/messages`, Claude Code),
+OpenAI's Chat Completions (`…/chat/completions`, OpenCode) and OpenAI's
+Responses (`…/responses`, Codex); the request's path picks which
+(`src/protocol.ts`). The trim, the policy, the cache model and the journal work
+on one message model, the Messages shape (`src/items.ts`). A protocol turns its
+requests into that and back (`src/messages.ts`, `src/chat.ts`,
+`src/responses.ts`), and supplies what only it knows: how a conversation is
+named, what a response's usage is and when its answer is complete, how an
+answer made here looks, and the client's conventions (`Conventions`: which tools are skills and tool loads, which inputs
 can be stubbed, which tool runs shell commands).
 
 Each convention is the client's half of something the core needs. The
@@ -107,14 +108,24 @@ Claude Code's comes from its session and agent IDs. A Chat Completions
 request's first message is the system prompt, the same for every session in a
 repository, so its ID is the session OpenCode names (`prompt_cache_key`,
 `user` or a session header) with the first message after the system's.
+Codex's is its session's (`prompt_cache_key` or the `session-id` header), named
+the same way.
 
-A Chat Completions request is rebuilt only where the core changed it: every
-message and block it left is sent as it came, since the cache matches bytes.
-Streams are asked for their usage (`stream_options.include_usage`), which is
-otherwise left out.
+A Chat Completions or Responses request is rebuilt only where the core changed
+it: every message, item and block it left is sent as it came, since the cache
+matches bytes. Chat Completions streams are asked for their usage
+(`stream_options.include_usage`), which is otherwise left out. A Responses
+request's input is a list of items: its leading developer messages, its tools
+item and Codex's environment and AGENTS.md messages are the system; an answer's
+reasoning, messages and tool calls are one assistant message, and a run of tool
+outputs one user message of tool results.
 
-The cache differs too. Messages marks breakpoints; Chat Completions providers
-cache each request's prefix themselves and read the longest part of it within
+A client may hang up once its answer is complete, before the stream's last
+bytes: Codex does. That isn't an interruption, so the proxy keeps reading the
+stream for the usage (`UsageReader.done`).
+
+The cache differs too. Messages marks breakpoints; OpenAI and Chat Completions
+providers cache each request's prefix themselves and read the longest part of it within
 20 user or tool-result runs of the new request's end (measured on GPT-5.6), with
 writes priced as input. `positionsOf` models that as one breakpoint at the end,
 with entries at each user message's end. Summary forks work on both: each
@@ -122,7 +133,21 @@ protocol builds its own summary fork request and reads its answer. The anchor
 breakpoint and tool deferral are Messages-only for now.
 
 OpenCode reaches the proxy through `/via/` with OpenRouter's or OpenAI's base
-URL (`/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`).
+URL (`/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`). Codex does too, with
+ChatGPT's backend, through a provider of its own in `~/.codex/config.toml`.
+Pointing the built-in provider elsewhere (`openai_base_url`) isn't enough: it
+tries a WebSocket first on every request, which the proxy doesn't take.
+
+```toml
+model_provider = "shaver"
+
+[model_providers.shaver]
+name = "ctx-shaver"
+base_url = "http://127.0.0.1:8787/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false
+```
 
 ## Policy
 

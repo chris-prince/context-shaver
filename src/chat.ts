@@ -12,8 +12,7 @@
 import type { IncomingHttpHeaders } from 'node:http'
 import type { Usage } from './cost.ts'
 import type { ApiMsg, Block, Conventions } from './items.ts'
-import { hash } from './log.ts'
-import type { Canonical, Content, Protocol } from './protocol.ts'
+import { eventReader, openaiError, openaiUsage, sessionConversation, type Canonical, type Content, type Protocol } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Call = { id: string; type: 'function'; function: { name: string; arguments: string } }
@@ -112,58 +111,29 @@ const partsOf = (c: WireMsg['content']): Part[] => (typeof c === 'string' ? [{ t
 // its session's ID as prompt_cache_key (to OpenAI) or user, or as a header; with
 // none, the first message after the system's names the conversation, which two
 // sessions started the same way share.
-function conversationId(c: Canonical, headers: IncomingHttpHeaders): string {
-  const first = hash(JSON.stringify(c.messages[0])).slice(0, 8)
-  const session = [c.prompt_cache_key, c.user, headers['x-session-id'], headers['session_id']].find((v) => typeof v === 'string' && v)
-  return `chat-${session ? `${session}-` : ''}${first}`
-}
+const conversationId = (c: Canonical, headers: IncomingHttpHeaders) => sessionConversation('chat', c, [c.prompt_cache_key, c.user, headers['x-session-id'], headers['session_id']])
 
-// A response's usage, from its last chunk for a stream (render asks for it), in
-// the core's terms: what Chat Completions counts as the prompt is the
-// uncached, read and written tokens together.
+// A response's usage, from its last chunk for a stream (render asks for it).
 function usageOf(u: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } } | undefined): Usage | undefined {
   if (!u?.prompt_tokens) return undefined
-  const read = u.prompt_tokens_details?.cached_tokens ?? 0
-  const written = u.prompt_tokens_details?.cache_write_tokens ?? 0
-  return { input_tokens: u.prompt_tokens - read - written, cache_read_input_tokens: read, cache_creation_input_tokens: written, output_tokens: u.completion_tokens ?? 0 }
+  return openaiUsage(u.prompt_tokens, u.prompt_tokens_details?.cached_tokens ?? 0, u.prompt_tokens_details?.cache_write_tokens ?? 0, u.completion_tokens ?? 0)
 }
 
 function usageReader() {
   let usage: Usage | undefined
   const content: Content = { signatures: [], visibleChars: 0 }
-  let buf = ''
-  let streamed = false
-  const dec = new TextDecoder()
-  const line = (l: string) => {
-    if (!l.startsWith('data: ')) return
-    streamed = true
-    try {
-      const e = JSON.parse(l.slice(6))
+  return eventReader({
+    event(e) {
       usage = usageOf(e.usage) ?? usage
       for (const ch of e.choices ?? []) {
         const d = ch.delta ?? {}
         if (typeof d.content === 'string') content.visibleChars += d.content.length
         for (const t of d.tool_calls ?? []) content.visibleChars += (t.function?.name?.length ?? 0) + (t.function?.arguments?.length ?? 0)
       }
-    } catch {}
-  }
-  return {
-    push(chunk: Uint8Array) {
-      buf += dec.decode(chunk, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() ?? ''
-      lines.forEach(line)
     },
-    end(): { usage?: Usage; content: Content } {
-      if (streamed) return { usage, content }
-      try {
-        const b = JSON.parse(buf)
-        return { usage: usageOf(b.usage), content }
-      } catch {
-        return { content }
-      }
-    },
-  }
+    body: (b) => (usage = usageOf(b.usage)),
+    result: () => ({ usage, content }),
+  })
 }
 
 function reply(text: string, model: string, stream: boolean, context: number): string {
@@ -201,7 +171,7 @@ export const CHAT: Protocol = {
   conversationId,
   usageReader,
   reply,
-  error: (status, message) => JSON.stringify({ error: { message, type: status === 403 ? 'permission_error' : status === 400 ? 'invalid_request_error' : 'api_error', code: status } }),
+  error: openaiError,
   automatic: true,
   conventions: OPENCODE,
   defers: false,
@@ -212,8 +182,8 @@ export const CHAT: Protocol = {
     const { stream_options: _, ...rest } = sent
     return { ...rest, stream: false, messages: [...(sent.messages as WireMsg[]), { role: 'user', content: text }] }
   },
-  summaryForkAnswer: (out) => {
-    const o = out as { choices?: { message?: WireMsg }[]; usage?: Parameters<typeof usageOf>[0] }
+  summaryForkAnswer: (body) => {
+    const o = JSON.parse(body) as { choices?: { message?: WireMsg }[]; usage?: Parameters<typeof usageOf>[0] }
     const m = o.choices?.[0]?.message
     const content: Block[] = [...partsOf(m?.content).map((p): Block => ({ type: 'text', text: p.text ?? '' })), ...(m?.tool_calls ?? []).map((c): Block => ({ type: 'tool_use', id: c.id, name: c.function.name, input: c.function.arguments }))]
     return { content, usage: usageOf(o.usage) }

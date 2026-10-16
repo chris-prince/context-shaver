@@ -77,7 +77,9 @@ test('usage counts the prompt as uncached, read and written together', () => {
   const ev = (o: unknown) => new TextEncoder().encode(`data: ${JSON.stringify(o)}\n\n`)
   r.push(ev({ choices: [{ delta: { content: 'hello' } }] }))
   r.push(ev({ choices: [], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 800, cache_write_tokens: 150 } } }))
+  assert.equal(r.done, false)
   r.push(new TextEncoder().encode('data: [DONE]\n\n'))
+  assert.equal(r.done, true)
   const { usage, content } = r.end()
   assert.deepEqual(usage, { input_tokens: 50, cache_read_input_tokens: 800, cache_creation_input_tokens: 150, output_tokens: 20 })
   assert.equal(content.visibleChars, 5)
@@ -104,7 +106,7 @@ test('a summary fork asks after the messages as sent, without streaming', () => 
 })
 
 test("a summary fork's answer becomes blocks and usage", () => {
-  const out = CHAT.summaryForkAnswer({ choices: [{ message: { role: 'assistant', content: 'the record', reasoning: 'hmm' } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 900 } } })
+  const out = CHAT.summaryForkAnswer(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'the record', reasoning: 'hmm' } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 900 } } }))
   assert.deepEqual(out.content, [{ type: 'text', text: 'the record' }])
   assert.deepEqual(out.usage, { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, output_tokens: 20 })
 })
