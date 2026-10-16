@@ -5,7 +5,7 @@
 // to do about its findings: the report prints that under any audit that has
 // some, so a reader needs nothing but the report and this file.
 //
-// Usage: node scripts/audit.ts [--since <date>] [--all]
+// Usage: bin/node-wrapper scripts/audit.ts [--since <date>] [--all]
 // --since skips messages first logged before the date, so findings already
 // looked at stop coming back. --all prints every finding, not the first 20.
 

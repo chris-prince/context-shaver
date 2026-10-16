@@ -472,3 +472,7 @@ createServer((req, res) => {
 }).listen(Number(a.port), '127.0.0.1', () => console.error(`context-shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
 
 const abortedBy = (err: unknown) => err instanceof Error && err.name === 'AbortError'
+
+// Node restores SIGHUP's default, undoing nohup, so the terminal that started
+// the proxy closing would stop it. It stops on /ctx-shaver/shutdown instead.
+process.on('SIGHUP', () => {})

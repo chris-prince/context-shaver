@@ -42,8 +42,10 @@ When running against the proxy, the prompt `:shaver info` will return details
 on how context-shaver is doing this session and where your context is being
 spent. `: shaver info`, with a space, works too.
 
-context-shaver requires only bash and Node 26. It has been tested most
-thoroughly with Claude Code 2.x, and less so with Codex 0.x and OpenCode 2.x.
+context-shaver requires only bash and Node 24 or newer, which `bin/run-proxy`
+installs with npm if need be ([DESIGN.md](DESIGN.md#node)). It has been
+tested most thoroughly with Claude Code 2.x, and less so with Codex 0.x and
+OpenCode 2.x.
 
 See [DESIGN.md](DESIGN.md) for options, the policy file, how trimming works,
 logs, and limits.

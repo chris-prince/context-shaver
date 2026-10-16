@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Runs Node 24 or newer, which runs this repo's TypeScript directly, with the
+# arguments given: one installed under proxy-data/node if there is one, else the
+# `node` on the PATH if it is new enough. Otherwise it first installs one there
+# with npm (node@24 from npm's registry). If that fails, as where the default
+# registry is blocked, it lists the registries that .npmrc files on this machine
+# name, and on a terminal asks which to install from; it uses none unasked.
+#
+# With --nohup <log>, it starts Node in the background, apart from the
+# terminal, with its output appended to the log, and returns; any install comes
+# first, in the foreground, so it can still ask. (Backgrounded or redirected by
+# the caller, it could not: bash gives a script's background job no terminal to
+# read.)
+set -euo pipefail
+
+repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+dir=$repo/proxy-data/node
+PATH=$dir/bin:$PATH
+die() { echo "node-wrapper: $*" >&2; exit 1; }
+log=
+if [[ ${1:-} == --nohup ]]; then
+  [[ $# -ge 3 ]] || die "usage: node-wrapper [--nohup <log>] <node arguments>"
+  log=$2
+  shift 2
+fi
+
+ok() { (($(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0) >= 24)); }
+install() { npm install -g --prefix "$dir" "$@" node@24 >&2 && ok; }
+
+# Prints the paths of .npmrc files under $1, at most $2 levels down.
+search() {
+  if command -v rg >/dev/null; then
+    rg --files -uu -g .npmrc --max-depth "$2" "$1" 2>/dev/null || true
+  else
+    find "$1" -maxdepth "$2" -name .npmrc -type f 2>/dev/null || true
+  fi
+}
+
+# Lists the default registries (registry=, not @scope:registry=) that .npmrc
+# files name, under / to depth 4 (as /src/<repo>/.npmrc) and $HOME to depth 4
+# (as ~/src/<org>/<repo>/.npmrc); each registry once, with the first file that
+# names it, so a file reached by two paths, as through a bind mount, is listed
+# once. On a terminal, asks for one and prints it.
+pick() {
+  local f r n seen=" " files=() regs=()
+  while IFS= read -r f; do
+    # npm takes the last registry= line.
+    r=$(sed -nE 's/^[[:space:]]*registry[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$f" 2>/dev/null | tail -n1)
+    [[ -z $r || $seen == *" $r "* ]] && continue
+    seen+="$r "
+    files+=("$f") regs+=("$r")
+  done < <({ search / 4; search "$HOME" 4; } | sort -u)
+  ((${#files[@]})) || return 1
+  {
+    echo "node-wrapper: registries named in .npmrc files on this machine:"
+    for n in "${!files[@]}"; do
+      printf '  %d) %s\n       registry=%s\n' $((n + 1)) "${files[n]}" "${regs[n]}"
+    done
+  } >&2
+  [[ -t 0 ]] || return 1
+  read -rp "Install Node 24 from which (1-${#files[@]}, or Enter for none)? " n
+  [[ $n =~ ^[0-9]+$ ]] && ((n >= 1 && n <= ${#files[@]})) || return 1
+  echo "${regs[n - 1]}"
+}
+
+if ! ok; then
+  command -v npm >/dev/null || die "Node 24 or newer is needed, and there is no npm to install it with"
+  echo "node-wrapper: Node 24 or newer is needed; installing it under $dir with npm" >&2
+  install || { r=$(pick) && install --registry="$r"; } ||
+    die "could not install Node 24; set a registry npm can reach (npm config set registry <url>)"
+fi
+if [[ -n $log ]]; then
+  # Node restores SIGHUP's default, undoing nohup; the proxy ignores it itself.
+  nohup node "$@" >>"$log" 2>&1 </dev/null &
+else
+  exec node "$@"
+fi

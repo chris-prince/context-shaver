@@ -4,7 +4,7 @@
 // show a model fetching again what a trim took. WAIT, the step wait of the drop
 // policy the run used, also checks the rebuild: what the proxy sent should be
 // what that policy gives the rebuilt request at some clock.
-// Usage: [WAIT=<n>] node scripts/replay.ts proxy-data/logs/<conversation> [from ISO] [to ISO]
+// Usage: [WAIT=<n>] bin/node-wrapper scripts/replay.ts proxy-data/logs/<conversation> [from ISO] [to ISO]
 import { readFileSync } from 'node:fs'
 import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'

@@ -36,15 +36,28 @@ body, so the upstream's own error text is on record.
 Claude Code cannot reach the API while the proxy is down, so a session started
 this way fails if the proxy is stopped.
 
-To run the proxy by hand (Node 26 runs the TypeScript directly):
+To run the proxy by hand (Node 24 or newer runs the TypeScript directly):
 
 ```bash
-node src/server.ts [options]
+bin/node-wrapper src/server.ts [options]
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
 ```
 
 It works with a claude.ai login as well as an API key: the proxy forwards the
 headers as they come.
+
+### Node
+
+`bin/node-wrapper` runs Node with the arguments given, as `node` would: one
+installed under `proxy-data/node` if there is one, else the `node` on the PATH
+if it is 24 or newer. Otherwise it installs `node@24` there with npm first, so
+every run from the checkout uses it from then on. Where npm's registry is
+blocked, as behind some corporate proxies, it lists the `registry=` lines of
+the `.npmrc` files it finds on the machine, each with its file, and on a
+terminal asks which to install from; it uses none unasked. Setting a registry
+npm can reach (`npm config set registry <url>`) avoids the question. Deleting
+`proxy-data/node` makes the next run install the newest 24.x. `bin/run-proxy`
+starts the proxy through it.
 
 | Option | Default | |
 | --- | --- | --- |
@@ -497,14 +510,14 @@ Scripts:
   Output is the same in both. Dollars use a per-model price table; for an
   unknown model the costs are left out. Prompt suggestions and command replies
   are left out, as the journal leaves them out.
-- `node scripts/stats-from-logs.ts <conversation dir> [--request N]
+- `bin/node-wrapper scripts/stats-from-logs.ts <conversation dir> [--request N]
   [--check-journal]` replays a logged conversation through `src/stats.ts`
   and prints what `:shaver info` would have said. `--check-journal` also
   checks that the journal replays to the same stats after every
   request.
 - `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
-- `node scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's
+- `bin/node-wrapper scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's
   logged parts with the current part-type rules. The proxy labels a part once,
   when it first logs it, so run this after changing the rules in `src/log.ts`.
 - `python3 scripts/reruns.py [conversation dir]` lists tool calls that fetched again
@@ -516,12 +529,12 @@ Scripts:
   user prompt across sessions, such as runs of the same prompt under different
   policies: from the prompt to the next one, its steps, duration, cost, tool
   calls, trims applied and peak context.
-- `node scripts/audit.ts [--since <date>] [--all]` runs the checks listed in
+- `bin/node-wrapper scripts/audit.ts [--since <date>] [--all]` runs the checks listed in
   the script over every logged conversation and reports which need action,
   with what to do about each. It exits 1 when any check has findings.
   `--since` skips messages first logged before the date, so findings already
   looked at stop coming back.
-- `[WAIT=<n>] node scripts/replay.ts <conversation dir> [from] [to]` replays
+- `[WAIT=<n>] bin/node-wrapper scripts/replay.ts <conversation dir> [from] [to]` replays
   one logged conversation under several policies with the model's actions
   held fixed: it rebuilds each request untrimmed, runs the proxy's logic on
   it, and prices the result with the cache model. WAIT, the drop wait the run
@@ -557,5 +570,5 @@ those fields.
 ## Tests
 
 ```bash
-node --test tests/*.test.ts
+bin/node-wrapper --test tests/*.test.ts
 ```

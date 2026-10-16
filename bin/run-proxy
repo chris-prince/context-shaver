@@ -6,7 +6,8 @@
 # policy changes.
 # Sessions running through it resume with their next request, once it is back
 # up. With --stop, only stops it. With --log, the proxy it starts logs every
-# request under proxy-data/logs/.
+# request under proxy-data/logs/. It runs the proxy on Node 24 or newer, through
+# bin/node-wrapper, which installs one if need be.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -58,8 +59,8 @@ fi
 
 if ! up; then
   mkdir -p "$repo/proxy-data"
-  nohup node "$repo/src/server.ts" --port "$port" ${log[@]+"${log[@]}"} \
-    >>"$repo/proxy-data/proxy.log" 2>&1 &
+  "$repo/bin/node-wrapper" --nohup "$repo/proxy-data/proxy.log" \
+    "$repo/src/server.ts" --port "$port" ${log[@]+"${log[@]}"}
   for _ in $(seq 50); do up && break; sleep 0.1; done
   up || { echo "run-proxy: the proxy did not start; see $repo/proxy-data/proxy.log" >&2; exit 1; }
 fi

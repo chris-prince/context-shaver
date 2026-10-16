@@ -3,7 +3,7 @@
 // journals each request (src/journal.ts) and checks that replaying the journal
 // gives the stats observed after every one.
 //
-// Usage: node scripts/stats-from-logs.ts <session dir> [--request N] [--check-journal]
+// Usage: bin/node-wrapper scripts/stats-from-logs.ts <session dir> [--request N] [--check-journal]
 
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
@@ -16,7 +16,7 @@ import { record, replay } from '../src/journal.ts'
 const { values, positionals } = parseArgs({ allowPositionals: true, options: { request: { type: 'string' }, 'check-journal': { type: 'boolean' } } })
 const dir = positionals[0]
 if (!dir) {
-  console.error('usage: node scripts/stats-from-logs.ts <session dir> [--request N] [--check-journal]')
+  console.error('usage: bin/node-wrapper scripts/stats-from-logs.ts <session dir> [--request N] [--check-journal]')
   process.exit(1)
 }
 const part = (h: string) => JSON.parse(readFileSync(path.join(dir, 'parts', h + '.json'), 'utf8'))

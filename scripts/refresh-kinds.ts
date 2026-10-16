@@ -1,6 +1,6 @@
 // Rewrites every kinds sidecar of one conversation with the current kinds(),
 // so parts logged before a rule changed are attributed as new ones are.
-// Usage: node scripts/refresh-kinds.ts proxy-data/logs/<conversation>
+// Usage: bin/node-wrapper scripts/refresh-kinds.ts proxy-data/logs/<conversation>
 import { readFileSync, writeFileSync } from 'node:fs'
 import { kinds } from '../src/log.ts'
 
