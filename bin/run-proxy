@@ -27,23 +27,26 @@ stop() {
     printf 'POST /ctx-shaver/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nx-ctx-shaver: shutdown\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' >&3 &&
     while read -r -t 5 _ <&3; do :; done) 2>/dev/null || true
 }
-# The repo the proxy on the port runs from (server.ts); nothing from one that
-# doesn't say.
-repo_of() {
+# What the proxy on the port says about itself (server.ts), as lines of
+# "context-shaver <field>: <value>"; nothing from one that doesn't say.
+procinfo() {
   (exec 3<>"/dev/tcp/127.0.0.1/$port" &&
-    printf 'GET /ctx-shaver/repo HTTP/1.1\r\nHost: 127.0.0.1\r\nx-ctx-shaver: repo\r\nConnection: close\r\n\r\n' >&3 &&
+    printf 'GET /ctx-shaver/procinfo HTTP/1.1\r\nHost: 127.0.0.1\r\nx-ctx-shaver: procinfo\r\nConnection: close\r\n\r\n' >&3 &&
     while IFS= read -r -t 5 line <&3; do
       line=${line%$'\r'}
-      [[ $line == "context-shaver repo: "* ]] && echo "${line#context-shaver repo: }"
+      [[ $line == "context-shaver "*": "* ]] && echo "${line#context-shaver }"
     done) 2>/dev/null || true
 }
 
 if [[ -z $action ]] && up; then
-  other=$(repo_of)
+  info=$(procinfo)
+  other=$(sed -n 's/^repo: //p' <<<"$info")
   if [[ $other != "$repo" ]]; then
     from=${other:-"an older checkout, or is not one"}
     echo "run-proxy: the proxy on port $port runs from $from; restarting it from $repo" >&2
     action=--restart
+    # Keep its logging, so a wrapper's restart doesn't turn it off.
+    [[ $(sed -n 's/^logging: //p' <<<"$info") == on ]] && log=(--log-step-events)
   fi
 fi
 if [[ -n $action ]] && up; then

@@ -307,9 +307,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return void res.end('stopping\n', () => process.exit(0))
   }
   // bin/run-proxy asks this to tell whether the proxy on its port runs from its
-  // repo; one from elsewhere, or older than this, is restarted.
-  if (req.method === 'GET' && url === '/ctx-shaver/repo' && req.headers['x-ctx-shaver'] === 'repo') {
-    return void res.end(`context-shaver repo: ${path.resolve(import.meta.dirname, '..')}\n`)
+  // repo; one from elsewhere, or older than this, is restarted, keeping logging.
+  if (req.method === 'GET' && url === '/ctx-shaver/procinfo' && req.headers['x-ctx-shaver'] === 'procinfo') {
+    return void res.end(`context-shaver repo: ${path.resolve(import.meta.dirname, '..')}\ncontext-shaver logging: ${a['log-step-events'] ? 'on' : 'off'}\n`)
   }
   let p: Prepared | undefined
   if (req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length) {

@@ -29,7 +29,7 @@ well to keep logging on, as the new proxy doesn't inherit it. To stop it, run
 
 `bin/run-proxy`, and so each wrapper, asks a proxy already on the port which
 repo it runs from. One from another repo, or too old to say, is restarted from
-this one, with logging only if `--log` was passed. Whether or not requests are
+this one, with logging on if `--log` was passed or the old proxy had it on. Whether or not requests are
 logged, every 4xx or 5xx answer from the upstream goes to `proxy.log` with its
 body, so the upstream's own error text is on record.
 
