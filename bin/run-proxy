@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts the ctx-shaver proxy if nothing is listening on its port, and leaves
+# Starts the context-shaver proxy if nothing is listening on its port, and leaves
 # it running; its output goes to proxy-data/proxy.log. With --restart, asks the
 # proxy there to stop first, so a new one picks up code and policy changes.
 # Sessions running through it resume with their next request, once it is back

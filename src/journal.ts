@@ -101,7 +101,7 @@ export function latest(file: string): Stats | undefined {
     return s
   } catch (err) {
     renameSync(file, file.replace(/\.jsonl$/, '.bad.jsonl'))
-    console.error(`ctx-shaver: journal moved aside, stats start again: ${file}:`, err)
+    console.error(`context-shaver: journal moved aside, stats start again: ${file}:`, err)
     return undefined
   }
 }

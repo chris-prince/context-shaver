@@ -1,4 +1,4 @@
-// ctx-shaver: a local proxy between Claude Code and the Anthropic API that
+// context-shaver: a local proxy between Claude Code and the Anthropic API that
 // trims old tool output, long Edit/Write inputs and reasoning from each request
 // it forwards. The stored session and the screen are untouched; only what is
 // sent changes. See README.md.
@@ -51,7 +51,7 @@ const { values: a } = parseArgs({
 // --policy file given is taken as it is.
 if (a.policy === repoPolicy) seedPolicy(repoPolicy, path.resolve(import.meta.dirname, '..', 'policy.default.json'))
 const loaded = loadPolicy(a.policy)
-if (!loaded) console.error(`ctx-shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
+if (!loaded) console.error(`context-shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
 const policy = loaded ?? {}
 const ttlMs = Number(a['cache-ttl-seconds']) * 1000
 const stateDir = path.join(a.dir, 'state')
@@ -236,7 +236,7 @@ function policyText(): string {
   try {
     return '`' + a.policy + '`:\n```json\n' + readFileSync(a.policy, 'utf8').trimEnd() + '\n```'
   } catch {
-    return `ctx-shaver: no policy at ${a.policy}, so requests pass through untrimmed.`
+    return `context-shaver: no policy at ${a.policy}, so requests pass through untrimmed.`
   }
 }
 
@@ -294,16 +294,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   let raw = original
   const r = route(req.url ?? '/', a.upstream)
   const proto = protocolOf('error' in r ? '/' : r.url)
-  if (!localHost(req.headers.host)) return refuse(res, proto, 403, `ctx-shaver proxy: refused a request for Host ${req.headers.host}`)
-  if ('error' in r) return refuse(res, proto, 400, `ctx-shaver proxy: ${r.error}`)
+  if (!localHost(req.headers.host)) return refuse(res, proto, 403, `context-shaver proxy: refused a request for Host ${req.headers.host}`)
+  if ('error' in r) return refuse(res, proto, 400, `context-shaver proxy: ${r.error}`)
   const { upstream, url } = r
   const h = harnessOf(r.harness, req.headers)
-  if (h && 'error' in h) return refuse(res, proto, 400, `ctx-shaver proxy: ${h.error}`)
+  if (h && 'error' in h) return refuse(res, proto, 400, `context-shaver proxy: ${h.error}`)
   // bin/run-proxy --restart and --stop stop the proxy with this. The header
   // keeps a web page from sending it: browsers send a custom header only after a
   // CORS check this proxy doesn't answer.
   if (req.method === 'POST' && url === '/ctx-shaver/shutdown' && req.headers['x-ctx-shaver'] === 'shutdown') {
-    console.error('ctx-shaver: shutting down, as asked')
+    console.error('context-shaver: shutting down, as asked')
     return void res.end('stopping\n', () => process.exit(0))
   }
   let p: Prepared | undefined
@@ -313,7 +313,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       c = proto.canonical(JSON.parse(raw.toString('utf8')))
     } catch (err) {
-      console.error('ctx-shaver: request not read:', err)
+      console.error('context-shaver: request not read:', err)
     }
     const body = c?.body
     try {
@@ -332,12 +332,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         }
       }
     } catch (err) {
-      console.error('ctx-shaver: commands left in:', err)
+      console.error('context-shaver: commands left in:', err)
     }
     try {
       if (c && body) p = prepare(proto, h, body, c.render, req.headers, Date.now())
     } catch (err) {
-      console.error('ctx-shaver: request left untrimmed:', err)
+      console.error('context-shaver: request left untrimmed:', err)
     }
   }
   const headers: Record<string, string> = {}
@@ -354,7 +354,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // A changed request the API refuses is sent again as it came, so the proxy
   // never costs the user a turn.
   if ((p || raw !== original) && up.status === 400) {
-    console.error(`ctx-shaver: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
+    console.error(`context-shaver: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
     p = undefined
     up = await send(original)
   }
@@ -440,7 +440,7 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(p.model, p.provider, out.usage) : 0) }))
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
-    console.error('ctx-shaver: summary fork failed:', err)
+    console.error('context-shaver: summary fork failed:', err)
     if (logDir) writeLine(logDir, { event: 'summary', time: new Date().toISOString(), ...asked, ms: Date.now() - began, error: String(err).slice(0, 500) })
   } finally {
     summaryForking.delete(key)
@@ -450,12 +450,12 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
 createServer((req, res) => {
   handle(req, res).catch((err) => {
     if (abortedBy(err)) return res.end()
-    console.error('ctx-shaver:', err)
+    console.error('context-shaver:', err)
     if (!res.headersSent) {
       res.writeHead(502, { 'content-type': 'application/json' })
-      res.end(protocolOf((req.url ?? '/').replace(/^\/via\/[^/?#]*/, '')).error(502, `ctx-shaver proxy: ${err}`))
+      res.end(protocolOf((req.url ?? '/').replace(/^\/via\/[^/?#]*/, '')).error(502, `context-shaver proxy: ${err}`))
     } else res.end()
   })
-}).listen(Number(a.port), '127.0.0.1', () => console.error(`ctx-shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
+}).listen(Number(a.port), '127.0.0.1', () => console.error(`context-shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
 
 const abortedBy = (err: unknown) => err instanceof Error && err.name === 'AbortError'

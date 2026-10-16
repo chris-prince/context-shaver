@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs OpenCode through the ctx-shaver proxy, starting the proxy first if
+# Runs OpenCode through the context-shaver proxy, starting the proxy first if
 # nothing is listening on its port (bin/run-proxy). Arguments are passed to
 # OpenCode.
 #

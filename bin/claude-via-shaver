@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs Claude Code through the ctx-shaver proxy, starting the proxy first if
+# Runs Claude Code through the context-shaver proxy, starting the proxy first if
 # nothing is listening on its port (bin/run-proxy). Arguments are passed to
 # Claude Code. Claude Code turns tool search off behind a proxy unless told the
 # proxy forwards it; this one does.

@@ -1,4 +1,4 @@
-# Design of ctx-shaver
+# Design of context-shaver
 
 The details behind the [README](README.md).
 
@@ -52,7 +52,7 @@ headers as they come.
 ### When the model is already proxied
 
 If `ANTHROPIC_BASE_URL` is already set when `claude-via-shaver` runs, say to a
-company gateway, ctx-shaver goes in front of it rather than replacing it.
+company gateway, context-shaver goes in front of it rather than replacing it.
 Claude Code's base URL becomes `http://127.0.0.1:8787/harness/claude/via/<upstream>`, the
 upstream's base URL percent-encoded as one path segment, and
 the proxy sends that session's requests there with the prefix stripped
@@ -65,7 +65,7 @@ a teammate session inherits, is left as it is.
 Some setups set the base URL only after `claude` starts: a wrapper installed as
 `claude` that runs its own proxy for each session, on a new port each time, and
 then runs Claude Code. A launcher run before it can't see that URL, and the
-wrapper replaces the one it's given, so ctx-shaver would be bypassed. If the
+wrapper replaces the one it's given, so context-shaver would be bypassed. If the
 wrapper lets you choose the binary it runs (often an environment variable
 naming its path), give it `claude-via-shaver` itself: run by the wrapper, it
 sees the base URL the wrapper set and chains to it, as above. Tell it where the
@@ -162,7 +162,7 @@ put the provider in `~/.codex/config.toml` instead:
 model_provider = "shaver"
 
 [model_providers.shaver]
-name = "ctx-shaver"
+name = "context-shaver"
 base_url = "http://127.0.0.1:8787/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
 wire_api = "responses"
 requires_openai_auth = true
