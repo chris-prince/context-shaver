@@ -1,7 +1,9 @@
 // Runs checks over the logged conversations and reports which need action.
 // Each audit looks for a sign that an assumption in the proxy has stopped
 // holding; a finding is a line for a person to look at. To add one, write a
-// function from the conversations to findings and add it to AUDITS.
+// function from the conversations to findings and add it to AUDITS, with what
+// to do about its findings: the report prints that under any audit that has
+// some, so a reader needs nothing but the report and this file.
 //
 // Usage: node scripts/audit.ts [--since <date>] [--all]
 // --since skips messages first logged before the date, so findings already
@@ -49,17 +51,17 @@ const where = (c: Conversation, time: string, text: string) =>
   `${c.key.slice(0, 48)} ${time.slice(0, 19)}  ${JSON.stringify(text.trimStart().split('\n')[0].slice(0, 80))}`
 
 // The text the proxy recognizes by its start, shared by every harness, and the
-// harness each piece belongs to. The shared list is safe while each piece only
-// shows up in its own harness's traffic (src/items.ts, NOT_A_PROMPT).
-const MARKERS: Array<[RegExp, string]> = [
-  [/^\s*<command-name>/, 'claude'],
-  [/^\s*<local-command-/, 'claude'],
-  [/^\s*\[Request interrupted/, 'claude'],
-  [/^\s*<system-reminder>/, 'claude'],
-  [/^\s*\[SUGGESTION MODE:/, 'claude'],
-  [/^Base directory for this skill:/, 'claude'],
-  [new RegExp(READ.source, 'm'), 'claude'],
-  [/^\s*<environment_context>/, 'codex'],
+// harnesses each piece belongs to. The shared list is safe while each piece
+// only shows up in its own harnesses' traffic (src/items.ts, NOT_A_PROMPT).
+const MARKERS: Array<[RegExp, string[]]> = [
+  [/^\s*<command-name>/, ['claude']],
+  [/^\s*<local-command-/, ['claude']],
+  [/^\s*\[Request interrupted/, ['claude']],
+  [/^\s*<system-reminder>/, ['claude']],
+  [/^\s*\[SUGGESTION MODE:/, ['claude']],
+  [/^Base directory for this skill:/, ['claude']],
+  [new RegExp(READ.source, 'm'), ['claude']],
+  [/^\s*<environment_context>/, ['codex']],
 ]
 
 // A shared marker in another harness's conversation: that harness's own text
@@ -72,8 +74,8 @@ function markersOutOfPlace(cs: Conversation[]): string[] {
     for (const { msg, time } of c.messages) {
       if (msg.role !== 'user') continue
       for (const text of texts(msg)) {
-        const owner = MARKERS.find(([re]) => re.test(text))?.[1]
-        if (owner && owner !== c.harness) found.push(`${owner} marker in ${c.harness}: ${where(c, time, text)}`)
+        const owners = MARKERS.find(([re]) => re.test(text))?.[1]
+        if (owners && !owners.includes(c.harness)) found.push(`${owners.join('/')} marker in ${c.harness}: ${where(c, time, text)}`)
       }
       if (!isPrompt(msg) && !blocks(msg).some((b) => b.type === 'tool_result' || isSkillBody(b)) && texts(msg).some((t) => !MARKERS.some(([re]) => re.test(t))))
         found.push(`skipped with no marker listed here: ${where(c, time, texts(msg)[0] ?? '')}`)
@@ -95,9 +97,28 @@ function taggedPrompts(cs: Conversation[]): string[] {
   return found
 }
 
-const AUDITS: Array<{ name: string; run: (cs: Conversation[]) => string[] }> = [
-  { name: 'Shared markers stay in their own harness', run: markersOutOfPlace },
-  { name: 'Prompts that open with a tag', run: taggedPrompts },
+const AUDITS: Array<{ name: string; run: (cs: Conversation[]) => string[]; todo: string }> = [
+  {
+    name: 'Shared markers stay in their own harness',
+    run: markersOutOfPlace,
+    todo: `For "<owner> marker in <harness>", look at the message in that conversation's logs.
+- Text that harness adds, meaning the same as for the owner (not a prompt, or a
+  Read result): add the harness to the marker's owners in MARKERS.
+- A prompt the person typed, or harness text meaning something else: one shared
+  list no longer fits. Give each harness its own markers (src/harness.ts) and
+  have isPrompt and READ use the conversation's.
+For "skipped with no marker listed here": find the marker in NOT_A_PROMPT
+(src/items.ts) that matched it and add it to MARKERS with its harnesses.`,
+  },
+  {
+    name: 'Prompts that open with a tag',
+    run: taggedPrompts,
+    todo: `Look at each message in that conversation's logs, and at the request after it.
+- Text the harness adds, not typed by a person and not replied to as a turn:
+  add its tag to NOT_A_PROMPT (src/items.ts) and to MARKERS here.
+- A real prompt, such as Claude Code's ! commands (<bash-input>), which the
+  model replies to: nothing to change. Rerun with --since a date after it.`,
+  },
 ]
 
 const cs = load()
@@ -108,6 +129,7 @@ for (const a of AUDITS) {
   console.log(`${found.length ? 'ACTION' : 'ok    '}  ${a.name}${found.length ? ` (${found.length})` : ''}`)
   for (const f of values.all ? found : found.slice(0, 20)) console.log(`        ${f}`)
   if (!values.all && found.length > 20) console.log(`        … ${found.length - 20} more; --all lists them`)
+  if (found.length) console.log(`\n        What to do:\n${a.todo.replace(/^/gm, '        ')}\n`)
   if (found.length) failed++
 }
 process.exit(failed ? 1 : 0)
