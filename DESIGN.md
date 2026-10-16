@@ -468,6 +468,12 @@ Scripts:
   user prompt across sessions, such as runs of the same prompt under different
   policies: from the prompt to the next one, its steps, duration, cost, tool
   calls, trims applied and peak context.
+- `node scripts/audit.ts [--since <date>] [--all]` runs checks over every
+  logged conversation and reports, for each, whether it needs action: that the
+  text markers shared by all harnesses only show up in their own harness, and
+  prompts that open with a tag and may be harness text wanting a marker. It
+  exits 1 when any check has findings. `--since` skips messages first logged
+  before the date, so findings already looked at stop coming back.
 - `[WAIT=<n>] node scripts/replay.ts <conversation dir> [from] [to]` replays
   one logged conversation under several policies with the model's actions
   held fixed: it rebuilds each request untrimmed, runs the proxy's logic on
