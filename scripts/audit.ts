@@ -50,7 +50,7 @@ const where = (c: Conversation, time: string, text: string) =>
 
 // The text the proxy recognizes by its start, shared by every harness, and the
 // harness each piece belongs to. The shared list is safe while each piece only
-// shows up in its own harness's traffic (DESIGN.md, "Harnesses").
+// shows up in its own harness's traffic (src/items.ts, NOT_A_PROMPT).
 const MARKERS: Array<[RegExp, string]> = [
   [/^\s*<command-name>/, 'claude'],
   [/^\s*<local-command-/, 'claude'],
