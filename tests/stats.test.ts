@@ -77,6 +77,11 @@ test('render prints the stats from the state alone', () => {
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
 })
 
+test('render names the provider only when a request pins one', () => {
+  const pinned = observe(undefined, describe({ ...body([{ role: 'user', content: 'hi' }]), provider: 'deepinfra' }, ends, '2026-10-11T10:00:00Z'), 1000, 0)
+  assert.match(render(pinned, 'session'), /^Session: session\nModel: m\nProvider: deepinfra\n\n/)
+})
+
 test('Base lists the system prompt, the tools and the preamble\'s sections, by name', () => {
   const preamble: ApiMsg = { role: 'system', content: '# Environment\nmacOS\nThe following skills are available:\n' + '- skill: does things\n'.repeat(20) }
   const s = observe(undefined, describe(body([preamble, { role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)

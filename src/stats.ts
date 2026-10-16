@@ -326,7 +326,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, '', estimated ? 'Context Summary (estimated)' : 'Context Summary', ...tally(total, s.removedTokens ?? 0), ...(cost ? costLines(cost) : []), `  Summaries: ${counted(summaries, 'creation request')}`]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, '', estimated ? 'Context Summary (estimated)' : 'Context Summary', ...tally(total, s.removedTokens ?? 0), ...(cost ? costLines(cost) : []), `  Summaries: ${counted(summaries, 'creation request')}`]
   out.push('', 'Context Details', '', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
   // The system prompt, the tools, and the preamble by section, side by side.
   const baseRows: Array<[string, number]> = [['system-prompt', by.systemPrompt ?? 0], ['tools', by.tools ?? 0], ...Object.entries(sections)]
