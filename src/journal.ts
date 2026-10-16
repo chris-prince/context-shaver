@@ -15,7 +15,7 @@ import { appendFileSync, existsSync, readFileSync, renameSync } from 'node:fs'
 import type { Usage } from './cost.ts'
 import type { Stats } from './stats.ts'
 
-const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
+const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'provider', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
 const RECORDS = ['tokens', 'bound', 'answers', 'seen'] as const
 
 type Part = Stats['parts'][number]

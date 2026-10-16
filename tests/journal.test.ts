@@ -36,6 +36,13 @@ test('replaying the journal gives the stats after every request', () => {
   assert.deepEqual(latest(file), observed.at(-1))
 })
 
+test('replaying the journal keeps the pinned provider', () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
+  const next = observe(undefined, describe({ ...body([user('a')]), provider: 'deepinfra' }, ends, '2026-10-11T10:00:00Z'), 1000, 30)
+  record(file, undefined, next, { input_tokens: 10, output_tokens: 30 })
+  assert.equal(latest(file)?.provider, 'deepinfra')
+})
+
 test('a line keeps runs of unchanged parts as ranges', () => {
   const s1 = observe(undefined, describe(body([user('a'), reply('b'), user('c')]), ends, '2026-10-11T10:00:00Z'), 900, 0)
   const s2 = observe(s1, describe(body([user('a'), reply('b'), user('c'), reply('d'), user('e')]), ends, '2026-10-11T10:01:00Z'), 1000, 0)
