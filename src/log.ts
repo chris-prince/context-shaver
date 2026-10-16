@@ -89,10 +89,10 @@ const HEADINGS: Array<[string, string]> = [
 // A preamble text block's bytes by section. A section runs from its heading,
 // at the start of a line, to the next; what comes before the first heading
 // joins it.
-function sections(b: Block): Array<[string, number]> {
+export function sections(b: Block, headings = HEADINGS): Array<[string, number]> {
   const text = b.text as string
   const starts: Array<[number, string]> = []
-  for (const [h, s] of HEADINGS) {
+  for (const [h, s] of headings) {
     const at = text.search(new RegExp('^' + h, 'm'))
     if (at >= 0) starts.push([at, 'system:' + s])
   }

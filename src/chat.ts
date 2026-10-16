@@ -182,6 +182,16 @@ export const OPENCODE: Conventions = {
   kinds: {},
   stubbedInputs: { edit: ['oldString', 'newString'], write: ['content'] },
   shell: 'shell',
+  // OpenCode puts the skills, the rules files and the environment in its
+  // system prompt. '' matches at the start, so the text before the first
+  // heading is a section of its own.
+  promptHeadings: [
+    ['', 'system-prompt'],
+    ['# Code Mode', 'tools-execute'],
+    ['Skills provide specialized', 'skills'],
+    ['Instructions from: ', 'agents-md'],
+    ['Here is some useful information about the environment', 'other'],
+  ],
 }
 
 export const CHAT: Protocol = {

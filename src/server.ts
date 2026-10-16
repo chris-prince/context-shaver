@@ -184,7 +184,7 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
   // A record takes its turns' prompts out of the messages; the stats count them still.
-  const described = { ...describe(body, trimmed, time, d?.advanced || records > before), turns: msgs.filter(isPrompt).length }
+  const described = { ...describe(body, trimmed, time, d?.advanced || records > before, conv), turns: msgs.filter(isPrompt).length }
   // Each record is dated by the first message it covers.
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
@@ -248,7 +248,7 @@ function stats(proto: Protocol, body: Canonical, headers: IncomingHttpHeaders): 
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests } = loadSummaries(key)
   const withSummaryForks = c && { ...c, actual: c.actual + summaryForks }
-  const text = s ? render(s, key, false, withSummaryForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withSummaryForks, requests)
+  const text = s ? render(s, key, false, withSummaryForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, proto.conventions)), key, true, withSummaryForks, requests)
   return '```\n' + text + '\n```'
 }
 

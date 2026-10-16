@@ -15,8 +15,8 @@
 // thinking of the replies after it, so those are counted again, at their bytes
 // less the thinking.
 
-import { hash, kinds as kindsOf } from './log.ts'
-import { blocks, isPrompt, type ApiMsg, type Block } from './items.ts'
+import { hash, kinds as kindsOf, sections as sectionsOf } from './log.ts'
+import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Conventions } from './items.ts'
 import type { Cost } from './cost.ts'
 
 export type Tool = { name?: string; defer_loading?: boolean }
@@ -29,7 +29,9 @@ export type Sent = {
   // The prompts among its messages (items.ts, isPrompt).
   turns: number
   parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number; born?: string }>
-  defs: { key: string; systemPrompt: number; tools: number }
+  // `sections` is the system prompt's bytes by section, when the protocol's
+  // conventions cut it (Conventions.promptHeadings).
+  defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number> }
   ends: { tools: number; reasoning: number }
   // Whether the proxy advanced its trim on this request.
   advanced: boolean
@@ -86,7 +88,7 @@ function referenced(m: ApiMsg): string[] {
   return out
 }
 
-export function describe(body: { model: string; provider?: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[] }, ends: Sent['ends'], time: string, advanced = false): Sent {
+export function describe(body: { model: string; provider?: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[] }, ends: Sent['ends'], time: string, advanced = false, conv: Conventions = CLAUDE_CODE): Sent {
   const msgs = body.messages
   const responded = msgs.findIndex((m) => m.role === 'assistant')
   const tools = body.tools ?? []
@@ -102,13 +104,20 @@ export function describe(body: { model: string; provider?: string; messages: Api
   const system: unknown[] = typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : Array.isArray(body.system) ? body.system : []
   const full = tools.filter((t) => !t.defer_loading).map((t) => JSON.stringify(t))
   const sys = system.map((s) => JSON.stringify(s))
+  const sections: Record<string, number> = {}
+  if (conv.promptHeadings.length)
+    for (const b of system as Block[])
+      for (const [s, n] of b.type === 'text' ? sectionsOf(b, conv.promptHeadings) : [['system', JSON.stringify(b).length] as [string, number]]) {
+        const name = s === 'system' ? 'system-prompt' : s.slice('system:'.length)
+        sections[name] = (sections[name] ?? 0) + n
+      }
   return {
     time,
     model: body.model,
     ...(body.provider && { provider: body.provider }),
     turns: msgs.filter(isPrompt).length,
     parts,
-    defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0) },
+    defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0), ...(Object.keys(sections).length && { sections }) },
     ends,
     advanced,
   }
@@ -301,6 +310,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const defBytes = s.defs.systemPrompt + s.defs.tools
   add('systemPrompt', (fixed * s.defs.systemPrompt) / defBytes)
   add('tools', (fixed * s.defs.tools) / defBytes)
+  for (const [name, n] of Object.entries(s.defs.sections ?? { 'system-prompt': s.defs.systemPrompt })) sections[name] = (sections[name] ?? 0) + (fixed * n) / defBytes
 
   const ref = day(s.time)
   const byDay: Record<number, number> = {}
@@ -328,8 +338,9 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
 
   const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, '', estimated ? 'Context Summary (estimated)' : 'Context Summary', ...tally(total, s.removedTokens ?? 0), ...(cost ? costLines(cost) : []), `  Summaries: ${counted(summaries, 'creation request')}`]
   out.push('', 'Context Details', '', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
-  // The system prompt, the tools, and the preamble by section, side by side.
-  const baseRows: Array<[string, number]> = [['system-prompt', by.systemPrompt ?? 0], ['tools', by.tools ?? 0], ...Object.entries(sections)]
+  // The system prompt and the preamble by section, and the tools, side by
+  // side.
+  const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections)]
   for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by age:')
   for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => b - a)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))

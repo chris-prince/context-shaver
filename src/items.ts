@@ -73,7 +73,9 @@ export const isSummary = (b: Block) => b.type === 'text' && typeof b.text === 's
 // "Protocols"): which tools' calls are skills and tool loads; which inputs of
 // which tools are long text a stub can stand in for; and which tool runs shell
 // commands, whose here-documents can be stubbed.
-export type Conventions = { kinds: Record<string, Kind>; stubbedInputs: Record<string, string[]>; shell: string }
+// `promptHeadings` cut the system prompt into the sections `:shaver info`
+// shows (log.ts, sections); with none it is one row, `system-prompt`.
+export type Conventions = { kinds: Record<string, Kind>; stubbedInputs: Record<string, string[]>; shell: string; promptHeadings: Array<[string, string]> }
 
 // Claude Code's: an edit's old and new text and a write's content are stubbed
 // (trim.ts, stubbedInput).
@@ -81,6 +83,7 @@ export const CLAUDE_CODE: Conventions = {
   kinds: { Skill: 'skill', ToolSearch: 'tool_search' },
   stubbedInputs: { Edit: ['old_string', 'new_string'], Write: ['content'] },
   shell: 'Bash',
+  promptHeadings: [],
 }
 
 // A Read that Claude Code sends as a system message's text, as when it
