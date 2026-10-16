@@ -35,9 +35,8 @@ Then each time you start your CLI, use the wrapper for it:
 Each wrapper makes sure the local proxy is running (on 127.0.0.1:8787), then
 runs your CLI with its model calls routed through the proxy, leaving the CLI's
 own config untouched. `claude-via-shaver` works with both claude.ai logins and
-Claude API keys. If Claude Code's model calls are already proxied
-(`ANTHROPIC_BASE_URL` is set, or a wrapper sets it), context-shaver chains in
-front of that proxy (see DESIGN.md).
+Claude API keys. If Codex or Claude Code calls are already proxied by a
+wrapper, context-shaver can be chained in front of that proxy (see DESIGN.md).
 
 When running against the proxy, the prompt `:shaver info` will return details
 on how context-shaver is doing this session and where your context is being

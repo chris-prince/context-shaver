@@ -5,16 +5,129 @@
 # The proxy is a provider set with -c flags, so Codex's config is left alone.
 # It speaks Responses to ChatGPT's Codex backend with the ChatGPT login, with
 # WebSockets off: Codex tries one first otherwise, which the proxy refuses.
+#
+# A provider already chosen in the arguments, as a wrapper does for a company
+# gateway, is kept instead: its base_url becomes the proxy's, with the gateway
+# as the upstream for this session, named in the path (src/via.ts), and only
+# its WebSockets are turned off. One already through this proxy is left as it is.
+#
+# Codex is `codex`, or CTX_SHAVER_REAL_CODEX_LOCATION if set: a path, or a glob
+# of versioned installs, of which the newest is taken. Set it when this stands
+# in for Codex under a wrapper that passes the provider itself once it starts
+# (DESIGN.md); there, running `codex` would run the wrapper, which would run
+# this again.
 set -euo pipefail
 
-bin=$(dirname "$(readlink -f "$0")")
+me=$(readlink -f "$0")
+bin=$(dirname "$me")
+die() { echo "codex-via-shaver: $*" >&2; exit 1; }
+
+if [[ -n ${CTX_SHAVER_REAL_CODEX_LOCATION:-} ]]; then
+  real=$(compgen -G "${CTX_SHAVER_REAL_CODEX_LOCATION/#\~/$HOME}" | sort -V | tail -1) || true
+  [[ -n $real && -x $real && $(readlink -f "$real") != "$me" ]] ||
+    die "CTX_SHAVER_REAL_CODEX_LOCATION ($CTX_SHAVER_REAL_CODEX_LOCATION) is not an executable Codex"
+else
+  # As in claude-via-shaver: a parent with the PID this last ran `codex` as is
+  # that `codex` running this again, a wrapper, which would loop.
+  depth=${CTX_SHAVER_DEPTH:-0}
+  [[ ${CTX_SHAVER_LAUNCHER_PID:-} != "$PPID" && $depth -lt 5 ]] ||
+    die "run again by the codex it ran, as a wrapper runs the Codex it is given; set CTX_SHAVER_REAL_CODEX_LOCATION (DESIGN.md)"
+  export CTX_SHAVER_LAUNCHER_PID=$$ CTX_SHAVER_DEPTH=$((depth + 1))
+  real=codex
+fi
+
+# --stand-in prints a Codex for a wrapper to be given in place of the real one,
+# for a wrapper that wants the files beside its Codex, as an install has:
+# a directory of links to all beside the real Codex, in which Codex itself is
+# a script running this with that Codex. A link to this would not do, as a
+# wrapper following it would look beside this instead.
+if [[ ${1:-} == --stand-in ]]; then
+  [[ -n ${CTX_SHAVER_REAL_CODEX_LOCATION:-} ]] || die "--stand-in needs CTX_SHAVER_REAL_CODEX_LOCATION"
+  real=$(readlink -f "$real")
+  from=$(dirname "$real")
+  dir=$bin/../proxy-data/stand-in/$(printf %s "$from" | cksum | cut -d' ' -f1)
+  stub=$dir/$(basename "$real")
+  script=$(printf '#!/usr/bin/env bash\nexport CTX_SHAVER_REAL_CODEX_LOCATION=%q\nexec %q "$@"' \
+    "$real" "$me")
+  # As an install is not changed in place, one made for it already will do.
+  if [[ ! -x $stub || $(<"$stub") != "$script" ]]; then
+    mkdir -p "$dir"
+    for f in "$from"/* "$from"/.[!.]*; do
+      [[ -e $f && $f != "$real" ]] && ln -sfn "$f" "$dir/"
+    done
+    printf '%s\n' "$script" > "$stub.$$"
+    chmod +x "$stub.$$"
+    mv -f "$stub.$$" "$stub"
+  fi
+  readlink -f "$stub"
+  exit
+fi
+
+# Percent-encodes all but unreserved characters (RFC 3986), for a path segment.
+encode() {
+  local LC_ALL=C s=$1 out= c i
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    case $c in
+      [a-zA-Z0-9.~_-]) out+=$c ;;
+      *) printf -v c '%%%02X' "'$c"; out+=$c ;;
+    esac
+  done
+  printf %s "$out"
+}
+
 "$bin/run-proxy"
 port=${CTX_SHAVER_PORT:-8787}
-exec codex \
-  -c model_provider=shaver \
-  -c model_providers.shaver.name=context-shaver \
-  -c "model_providers.shaver.base_url=\"http://127.0.0.1:$port/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex\"" \
-  -c model_providers.shaver.wire_api=responses \
-  -c model_providers.shaver.requires_openai_auth=true \
-  -c model_providers.shaver.supports_websockets=false \
-  "$@"
+
+# Where the last -c/--config value for a key is in args, as the last wins in
+# Codex, or nothing. Each is "-c key=value", "--config key=value" or
+# "--config=key=value".
+args=("$@")
+last() {
+  local i a v found=
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    a=${args[i]}
+    case $a in
+      --) break ;;
+      -c | --config) ((++i < ${#args[@]})) || break; v=${args[i]} ;;
+      --config=*) v=${a#--config=} ;;
+      *) continue ;;
+    esac
+    [[ ${v%%=*} == "$1" ]] && found=$i
+  done
+  printf %s "$found"
+}
+# A value as given, without the quotes TOML may have around it.
+value() {
+  local v=${args[$1]#--config=}
+  v=${v#*=}
+  [[ $v =~ ^\"(.*)\"$ || $v =~ ^\'(.*)\'$ ]] && v=${BASH_REMATCH[1]}
+  printf %s "$v"
+}
+
+j=$(last model_provider)
+if [[ -z $j ]]; then
+  exec "$real" \
+    -c model_provider=shaver \
+    -c model_providers.shaver.name=context-shaver \
+    -c "model_providers.shaver.base_url=\"http://127.0.0.1:$port/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex\"" \
+    -c model_providers.shaver.wire_api=responses \
+    -c model_providers.shaver.requires_openai_auth=true \
+    -c model_providers.shaver.supports_websockets=false \
+    "$@"
+fi
+
+provider=$(value "$j")
+key=model_providers.$provider.base_url
+j=$(last "$key")
+[[ -n $j ]] || die "model_provider is $provider, but no $key is given to chain to"
+up=$(value "$j")
+up=${up%/}
+if [[ ! $up =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
+  v="$key=\"http://127.0.0.1:$port/harness/codex/via/$(encode "$up")\""
+  [[ ${args[j]} == --config=* ]] && v=--config=$v
+  args[j]=$v
+fi
+# Right after the base URL, so among the same flags, before any subcommand.
+args=("${args[@]:0:j+1}" -c "model_providers.$provider.supports_websockets=false" "${args[@]:j+1}")
+exec "$real" "${args[@]}"

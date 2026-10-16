@@ -89,6 +89,47 @@ which would run it again; it notices and stops with an error instead. With it
 set, start sessions through the wrapper, as above: `claude-via-shaver` run
 directly would skip the wrapper and whatever it sets up.
 
+`codex-via-shaver` chains the same way, with `CTX_SHAVER_REAL_CODEX_LOCATION`.
+A Codex wrapper sets its gateway with `-c` flags rather than the environment:
+`model_provider` and that provider's `base_url`. When the arguments name a
+provider, `codex-via-shaver` keeps it and its other settings, puts the proxy's
+`/harness/codex/via/<upstream>` in its `base_url`, and turns off its
+WebSockets; with a provider but no `base_url` to chain to, it stops with an
+error.
+
+```bash
+export CTX_SHAVER_REAL_CODEX_LOCATION='~/path/to/codex/*/codex-<target>'
+export <WRAPPER_BINARY_VAR>=~/context-shaver/bin/codex-via-shaver
+codex [codex args ...]
+```
+
+Only a provider in the arguments is chained to; `codex-via-shaver` doesn't read
+Codex's `config.toml`. With none in the arguments, it gives Codex its own
+provider, straight to ChatGPT, and as `-c` flags win over `config.toml`, a proxy
+set only there is bypassed, not chained to. To chain to one, name it in the
+arguments, with its `base_url`:
+
+```bash
+codex-via-shaver -c model_provider=<name> \
+  -c 'model_providers.<name>.base_url="<its base URL>"' [codex args ...]
+```
+
+A wrapper may also want the files a Codex install has beside Codex, beside the
+binary it is given. `codex-via-shaver --stand-in` makes one with them: in
+`proxy-data/stand-in/`, links to all beside the newest Codex at
+`CTX_SHAVER_REAL_CODEX_LOCATION`, with Codex itself a script that runs
+`codex-via-shaver` with that Codex. It prints that script's path, for the
+wrapper to be given instead:
+
+```bash
+export CTX_SHAVER_REAL_CODEX_LOCATION='~/path/to/codex/*/codex-<target>'
+export <WRAPPER_BINARY_VAR>=$(~/context-shaver/bin/codex-via-shaver --stand-in)
+codex [codex args ...]
+```
+
+It is kept while it still matches the newest install, and made again when it
+doesn't, so it follows a newer install.
+
 The proxy serves only requests whose `Host` is `127.0.0.1` or `localhost`.
 Since a request can name any upstream, a web page that reached the proxy by DNS
 rebinding (which sends the page's own domain as `Host`) could otherwise read
