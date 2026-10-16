@@ -18,7 +18,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
-import type { Canonical, Content, Protocol } from './protocol.ts'
+import type { Canonical, Content, Protocol, UsageReader } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
@@ -360,13 +360,27 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const re = proto.limits
   if (re && up.status === 200 && Object.keys(out).some((k) => re.test(k))) limits.set(proto, Object.fromEntries(Object.entries(out).filter(([k]) => re.test(k))))
   res.writeHead(up.status, out)
+  // The answer's state is saved once it is complete, before the client sees
+  // its end: Codex sends the next request then, before the stream closes.
+  let finished = false
+  const finish = () => {
+    if (finished || !p || up.status !== 200) return
+    finished = true
+    answered(p, usage, upstream + url, headers)
+  }
   if (up.body)
     for await (const chunk of up.body) {
-      if (!res.destroyed) res.write(chunk)
       usage.push(chunk)
+      if (usage.done) finish()
+      if (!res.destroyed) res.write(chunk)
     }
   res.end()
-  if (!p || up.status !== 200) return
+  finish()
+}
+
+// Records an answered request: its stats, cost and cache entries, the
+// conversation's state, any summary fork due and its log line.
+function answered(p: Prepared, usage: UsageReader, target: string, headers: Record<string, string>): void {
   const { usage: u, content } = usage.end()
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
@@ -379,7 +393,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   const due = p.summaryFork && next && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, summarized: p.summarized, offered: due?.current ?? p.offered })
-  if (due) void summarize(p, due, upstream + url, headers)
+  if (due) void summarize(p, due, target, headers)
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
       ...p.logLine,
