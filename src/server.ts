@@ -264,7 +264,9 @@ function thinkingOf(u: Usage | undefined, c: Content): Record<string, number> {
   return Object.fromEntries(sigs.map((sg) => [hash(sg), Math.round((tokens * sg.length) / total)]))
 }
 
-const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive'])
+// Upgrade too: a WebSocket the client tries first (OpenCode's OpenAI provider)
+// goes up as plain HTTP, and the client falls back when it's refused.
+const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive', 'upgrade'])
 // The account's usage limits from the latest answer each protocol's API sent,
 // which Claude Code shows in the status line. Answers made here carry them
 // too, or the status line loses them for that turn.

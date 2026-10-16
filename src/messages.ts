@@ -18,15 +18,16 @@ import { summaryForkMessages } from './summary.ts'
 //
 // The session ID keeps apart sessions whose first message is the same, as
 // happens when two start with `:shaver info` in the same repo state: once the
-// command is stripped, all that is left of it is the same reminders. Without a
-// session ID (other clients), the first message is the ID alone.
+// command is stripped, all that is left of it is the same reminders. Other
+// clients give theirs in x-session-id (OpenCode); without one, the first
+// message is the ID alone.
 function conversationId(c: Canonical, headers: IncomingHttpHeaders): string {
   const agent = headers['x-claude-code-agent-id'] as string | undefined
   let session: string | undefined
   try {
     session = JSON.parse((c.metadata as { user_id?: string } | undefined)?.user_id ?? '{}').session_id
   } catch {}
-  return sessionConversation('claude', c, [session && `${session}-${agent ?? 'main'}`])
+  return sessionConversation('claude', c, [session && `${session}-${agent ?? 'main'}`, headers['x-session-id']])
 }
 
 // The usage a response reports: message_start's, with message_delta's output
@@ -64,7 +65,7 @@ const errorType = (status: number) => (status === 403 ? 'permission_error' : sta
 
 export const MESSAGES: Protocol = {
   name: 'messages',
-  serves: (p) => p === '/v1/messages',
+  serves: (p) => p === '/v1/messages' || p === '/messages',
   canonical: (wire) => ({ body: wire as Canonical, render: (c) => c }),
   conversationId,
   usageReader,

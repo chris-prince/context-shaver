@@ -20,4 +20,9 @@ test("a conversation's id is its session, agent and first message", () => {
   assert.match(MESSAGES.conversationId(body('s1'), { 'x-claude-code-agent-id': 'a7' }), /^claude-s1-a7-/)
   assert.notEqual(MESSAGES.conversationId(body('s2'), {}), main)
   assert.match(MESSAGES.conversationId({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }, {}), /^claude-[0-9a-f]{8}$/)
+  assert.match(MESSAGES.conversationId({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }, { 'x-session-id': 'ses_x' }), /^claude-ses_x-[0-9a-f]{8}$/)
+})
+
+test('a base URL ending in /v1 is served', () => {
+  assert.ok(MESSAGES.serves('/v1/messages') && MESSAGES.serves('/messages'))
 })

@@ -134,11 +134,14 @@ breakpoint and tool deferral are Messages-only for now.
 
 `bin/opencode-via-shaver` and `bin/codex-via-shaver` run OpenCode and Codex
 through the proxy as `claude-via-shaver` runs Claude Code, leaving their
-configs alone. OpenCode reaches it through `/via/` with OpenRouter's base URL
-(`/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`), set in
-`OPENCODE_CONFIG_CONTENT`, which OpenCode merges over its config. Its
-background service doesn't read that, so the TUI, `run` and `mini` get
-`--standalone`. Codex reaches it with ChatGPT's backend, through a provider of
+configs alone. OpenCode reaches it through `/via/` with each provider's base
+URL (OpenRouter's is `/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`; OpenAI's
+and Anthropic's are set the same way), in `OPENCODE_CONFIG_CONTENT`, which
+OpenCode merges over its config. Its background service doesn't read that, so
+the TUI, `run` and `mini` get `--standalone`. Through OpenAI it uses Responses
+and tries a WebSocket first, which the proxy refuses by not passing the
+upgrade on; through Anthropic it uses Messages with no `metadata.user_id`, so
+its session ID comes from `x-session-id`. Codex reaches it with ChatGPT's backend, through a provider of
 its own set with `-c` flags. Pointing the built-in provider elsewhere
 (`openai_base_url`) isn't enough: it tries a WebSocket first on every request,
 which the proxy doesn't take. To send every Codex session through the proxy,
