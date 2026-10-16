@@ -88,6 +88,41 @@ Since a request can name any upstream, a web page that reached the proxy by DNS
 rebinding (which sends the page's own domain as `Host`) could otherwise read
 whatever it had the proxy fetch from your network.
 
+## Protocols
+
+The proxy speaks Anthropic's Messages protocol (`/v1/messages`, Claude Code)
+and OpenAI's Chat Completions (`…/chat/completions`, OpenCode); the request's
+path picks which (`src/protocol.ts`). The trim, the policy, the cache model and
+the journal work on one message model, the Messages shape (`src/items.ts`). A
+protocol turns its requests into that and back (`src/messages.ts`,
+`src/chat.ts`), and supplies what only it knows: how a conversation is named,
+what a response's usage is, how an answer made here looks, and the client's
+conventions (`Conventions`: which tools are skills and tool loads, which inputs
+can be stubbed, which tool runs shell commands).
+
+Each convention is the client's half of something the core needs. The
+clearest is the conversation ID: the core needs one per conversation, the same
+on all its requests and on no other's, and keys state, journals and logs on it.
+Claude Code's comes from its session and agent IDs. A Chat Completions
+request's first message is the system prompt, the same for every session in a
+repository, so its ID is the session OpenCode names (`prompt_cache_key`,
+`user` or a session header) with the first message after the system's.
+
+A Chat Completions request is rebuilt only where the core changed it: every
+message and block it left is sent as it came, since the cache matches bytes.
+Streams are asked for their usage (`stream_options.include_usage`), which is
+otherwise left out.
+
+The cache differs too. Messages marks breakpoints; Chat Completions providers
+cache each request's prefix themselves and read the longest part of it within
+20 user or tool-result runs of the new request's end (measured on GPT-5.6), with
+writes priced as input. `positionsOf` models that as one breakpoint at the end,
+with entries at each user message's end. The anchor breakpoint, record forks and
+tool deferral are Messages-only for now.
+
+OpenCode reaches the proxy through `/via/` with OpenRouter's or OpenAI's base
+URL (`/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`).
+
 ## Policy
 
 The repo tracks only `policy.default.json`. When the proxy starts with the

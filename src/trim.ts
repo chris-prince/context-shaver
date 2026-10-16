@@ -8,7 +8,7 @@
 // it pays. The latest step and the current turn are never touched.
 
 import { PRICES } from './cost.ts'
-import { blocks, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Item, type Kind } from './items.ts'
+import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
 import { treatment, type Action, type Policy } from './policy.ts'
 
@@ -23,11 +23,11 @@ export const stub = (n: number) => `[CULLED ${n} B FROM CTX]`
 export const STUB = /^\[CULLED \d+ B FROM CTX\]$/
 export const bytes = (v: unknown) => Buffer.byteLength(typeof v === 'string' ? v : (JSON.stringify(v) ?? ''))
 
-// The inputs stubbed when longer than the stub: an edit's old and new text and
-// a write's content. The path stays, and the file has the text. A Bash command
-// keeps its lines but has each here-document's body stubbed (stubHeredocs);
-// other inputs are kept whole.
-const STUBBED_INPUTS: Record<string, string[]> = { Edit: ['old_string', 'new_string'], Write: ['content'] }
+// The inputs stubbed when longer than the stub are the client's
+// (Conventions.stubbedInputs): an edit's old and new text and a write's
+// content. The path stays, and the file has the text. A shell command keeps its
+// lines but has each here-document's body stubbed (stubHeredocs); other inputs
+// are kept whole.
 
 // A here-document operator, `<<WORD` or `<<-WORD`, its word bare or quoted, but
 // not a here-string (`<<<`). Its body runs from the next line to the line that
@@ -62,13 +62,13 @@ export function stubHeredocs(command: string): string {
 // Whether an input value carries a stub: is one, or has a here-document that is.
 export const isStubbed = (v: unknown) => typeof v === 'string' && (STUB.test(v) || STUBBED_HEREDOC.test(v))
 
-function stubbedInput(name: string, input: Record<string, unknown>): Record<string, unknown> | undefined {
-  const long = (STUBBED_INPUTS[name] ?? []).filter((k) => {
+function stubbedInput(name: string, input: Record<string, unknown>, conv: Conventions): Record<string, unknown> | undefined {
+  const long = (conv.stubbedInputs[name] ?? []).filter((k) => {
     const v = input[k]
     return typeof v === 'string' && !STUB.test(v) && bytes(v) > stub(bytes(v)).length
   })
   const out = { ...input, ...Object.fromEntries(long.map((k) => [k, stub(bytes(input[k]))])) }
-  if (name === 'Bash' && typeof input.command === 'string') {
+  if (name === conv.shell && typeof input.command === 'string') {
     const command = stubHeredocs(input.command)
     if (command !== input.command) return { ...out, command }
   }
@@ -105,18 +105,18 @@ export type Applied = {
 // - Dropped reasoning is the message's thinking, unless that would leave it
 //   empty: an empty message is refused. One left empty by dropped calls is
 //   removed; the API joins the neighbours that leaves in the same role.
-export function apply(msgs: readonly ApiMsg[], policy: Policy, clock: Clock): Applied {
-  return applyAt(msgs, policy, heldTo(clock, msgs))
+export function apply(msgs: readonly ApiMsg[], policy: Policy, clock: Clock, conv: Conventions = CLAUDE_CODE): Applied {
+  return applyAt(msgs, policy, heldTo(clock, msgs), conv)
 }
 
 // The messages trimmed as far as the policy ever takes them: every rule due.
-export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: Policy) => applyAt(msgs, policy, { steps: Infinity, turns: Infinity })
+export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: Policy, conv: Conventions = CLAUDE_CODE) => applyAt(msgs, policy, { steps: Infinity, turns: Infinity }, conv)
 
-function applyAt(msgs: readonly ApiMsg[], policy: Policy, c: Clock): Applied {
-  const items = new Map(itemsOf(msgs).map((it) => [it.id, it]))
+function applyAt(msgs: readonly ApiMsg[], policy: Policy, c: Clock, conv: Conventions): Applied {
+  const items = new Map(itemsOf(msgs, conv).map((it) => [it.id, it]))
   const undroppable = new Set<unknown>()
   for (;;) {
-    const out = applyKeeping(msgs, policy, c, items, undroppable)
+    const out = applyKeeping(msgs, policy, c, items, undroppable, conv)
     const n = undroppable.size
     out.msgs.forEach((m, j) => {
       if (m.role !== 'system') return
@@ -135,7 +135,7 @@ function pairsOf(m: ApiMsg | undefined, to: Set<unknown>) {
     else if (b.type === 'tool_result') to.add(b.tool_use_id)
 }
 
-function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: Map<string, Item>, undroppable: ReadonlySet<unknown>): Applied {
+function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: Map<string, Item>, undroppable: ReadonlySet<unknown>, conv: Conventions): Applied {
   const due = new Map<unknown, Action>()
   for (const it of items.values()) {
     const rules = policy[it.kind]
@@ -178,7 +178,7 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: 
       // A skill's result only names it; its body is what a stub cuts.
       if (due.get(idOf(b)) !== 'stub' || items.get(String(idOf(b)))?.kind === 'skill') return b
       if (b.type === 'tool_use' && b.input && typeof b.input === 'object') {
-        const input = stubbedInput(String(b.name), b.input as Record<string, unknown>)
+        const input = stubbedInput(String(b.name), b.input as Record<string, unknown>, conv)
         return input ? (mark(b.id, 'stub'), { ...b, input }) : b
       }
       const n = bytes(b.content ?? '')
@@ -250,7 +250,9 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock
 // priced to read for less (cost.ts, PRICES) pay more reads for a write. K is
 // the warm requests expected to read what a trim saved before the cache next
 // goes cold: 40 at an hour's TTL (ctx-shaver's local/notes.md, "Light compaction").
-export const writeCost = (model: string) => 2 / (PRICES[model] ? PRICES[model].read / PRICES[model].input : 0.1) - 1 // M
+// Automatic caching writes at the input price, so a written character costs
+// half the reads.
+export const writeCost = (model: string, automatic = false) => (automatic ? 1 : 2) / (PRICES[model] ? PRICES[model].read / PRICES[model].input : 0.1) - 1 // M
 export const K = 40
 
 // What a thinking block bills, which its length does not show: Claude Code
@@ -291,15 +293,25 @@ export type Position = { prefix: string; size: number; breakpoint: boolean; join
 const uncontrolled = (k: string, v: unknown) => (k === 'cache_control' ? undefined : v)
 export const seedOf = (model: string, tools: unknown, system: unknown) => hash(JSON.stringify([model, tools, system], uncontrolled))
 
-export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking): Position[] {
+// With automatic caching (OpenAI's, and most others' behind Chat Completions),
+// a request has no breakpoints of its own: the provider caches its prefix, and
+// a later one reads the longest of it within 20 user or tool-result runs of its
+// own end (measured on GPT-5.6; local/openai-design.md, "CacheModel"). That is
+// modelled as one breakpoint, on the last block, with only each user message's
+// end counted by the lookback (the rest joined); every such end of a request
+// sent is an entry (server.ts, prepare).
+export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking, automatic = false): Position[] {
   let prefix = seed
-  return msgs.flatMap((m) =>
+  const pos = msgs.flatMap((m) =>
     blocks(m).map((b, i, bs) => {
       prefix = hash(prefix + m.role + JSON.stringify(b, uncontrolled))
+      if (automatic) return { prefix, size: sizeOf(b, thinking), breakpoint: false, joined: m.role !== 'user' || i < bs.length - 1 }
       const joined = (b.type === 'tool_use' || b.type === 'tool_result') && bs[i - 1]?.type === b.type
       return { prefix, size: sizeOf(b, thinking), breakpoint: b.cache_control !== undefined, joined }
     }),
   )
+  if (automatic && pos.length) pos[pos.length - 1].breakpoint = true
+  return pos
 }
 
 // The position the request reads through, given the live entries; -1 for none.
@@ -389,10 +401,10 @@ export type Decision = {
 // with no breakpoints in its messages (a side request branched off the
 // conversation) reads nothing of them whatever is cached, so says nothing of
 // the cache: it never advances.
-export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: string, thinking: Thinking = new Map()): Decision {
-  const M = writeCost(model)
-  const a = positionsOf(before, seed, thinking)
-  const b = positionsOf(after, seed, thinking)
+export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: string, thinking: Thinking = new Map(), automatic = false): Decision {
+  const M = writeCost(model, automatic)
+  const a = positionsOf(before, seed, thinking, automatic)
+  const b = positionsOf(after, seed, thinking, automatic)
   const sum = (ps: Position[]) => ps.reduce((n, p) => n + p.size, 0)
   const savedChars = sum(a) - sum(b)
   const [ra, rb] = [readThrough(a, live), readThrough(b, live)]

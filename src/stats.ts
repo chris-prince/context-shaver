@@ -19,7 +19,7 @@ import { hash, kinds as kindsOf } from './log.ts'
 import { blocks, isPrompt, type ApiMsg, type Block } from './items.ts'
 import type { Cost } from './cost.ts'
 
-type Tool = { name?: string; defer_loading?: boolean }
+export type Tool = { name?: string; defer_loading?: boolean }
 
 // A request as it was sent, as observe needs it.
 export type Sent = {

@@ -69,7 +69,19 @@ export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 
 export const SUMMARY_HEAD = "[ctx-shaver] My record of this session's earlier turns, compacted in my context:"
 export const isSummary = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith(SUMMARY_HEAD)
 
-const KINDS: Record<string, Kind> = { Skill: 'skill', ToolSearch: 'tool_search' }
+// The client's half of what the core needs to know about its tools (DESIGN.md,
+// "Protocols"): which tools' calls are skills and tool loads; which inputs of
+// which tools are long text a stub can stand in for; and which tool runs shell
+// commands, whose here-documents can be stubbed.
+export type Conventions = { kinds: Record<string, Kind>; stubbedInputs: Record<string, string[]>; shell: string }
+
+// Claude Code's: an edit's old and new text and a write's content are stubbed
+// (trim.ts, stubbedInput).
+export const CLAUDE_CODE: Conventions = {
+  kinds: { Skill: 'skill', ToolSearch: 'tool_search' },
+  stubbedInputs: { Edit: ['old_string', 'new_string'], Write: ['content'] },
+  shell: 'Bash',
+}
 
 // A Read that Claude Code sends as a system message's text, as when it
 // re-attaches the files read before a compaction: the call's input, then the
@@ -78,7 +90,7 @@ const KINDS: Record<string, Kind> = { Skill: 'skill', ToolSearch: 'tool_search' 
 export const READ = /^(Called the Read tool with the following input: [^\n]*\nResult of calling the Read tool:\n)((?:\d+\t[^\n]*\n?)*)(\n*)/gm
 export const readsOf = (m: ApiMsg): number => blocks(m).reduce((n, b) => n + (b.type === 'text' ? String(b.text).match(READ)?.length ?? 0 : 0), 0)
 
-export function itemsOf(msgs: readonly ApiMsg[]): Item[] {
+export function itemsOf(msgs: readonly ApiMsg[], conv: Conventions = CLAUDE_CODE): Item[] {
   const { stepOf } = stepsOf(msgs)
   const { turnOf } = turnsOf(msgs)
   const out: Item[] = []
@@ -88,7 +100,7 @@ export function itemsOf(msgs: readonly ApiMsg[]): Item[] {
     if (m.role === 'system' && at.step > 0) for (let n = 0; n < readsOf(m); n++) out.push({ kind: 'tool', id: `read:${i}:${n}`, ...at })
     if (m.role !== 'assistant' || typeof m.content === 'string') return
     if (m.content.some(isThinking)) out.push({ kind: 'reasoning', id: String(i), ...at })
-    for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: KINDS[String(b.name)] ?? 'tool', id: String(b.id), ...at })
+    for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: conv.kinds[String(b.name)] ?? 'tool', id: String(b.id), ...at })
   })
   return out
 }

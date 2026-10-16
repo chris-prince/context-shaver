@@ -422,3 +422,24 @@ test('a run of tool calls or results is one lookback position', () => {
   const pos = positionsOf(tailed([{ role: 'user', content: 'go' }, calls, results]), 's', new Map())
   assert.equal(readThrough(pos, new Set([pos[0].prefix])), 0)
 })
+
+test('with automatic caching, a request reads back only 20 user runs from its end', () => {
+  const turn = (i: number): ApiMsg[] => [
+    { role: 'user', content: [{ type: 'text', text: `q${i}` }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: long }] },
+    { role: 'assistant', content: [{ type: 'text', text: `a${i}` }] },
+  ]
+  const before = Array.from({ length: 30 }, (_, i) => turn(i)).flat()
+  // What prepare records: each user message's end, and the request's own.
+  const ends = (msgs: ApiMsg[]) => positionsOf(msgs, 's', new Map(), true).filter((p) => !p.joined || p.breakpoint)
+  const live = new Set(ends(before).map((p) => p.prefix))
+  const stubbedAt = (j: number) => before.map((m, k) => (k === j ? { ...m, content: [{ type: 'tool_result', tool_use_id: `t${(j - 2) / 4}`, content: stub(5000) }] } : m))
+  const grown = [...before, { role: 'user', content: [{ type: 'text', text: 'next' }] } as ApiMsg]
+  const pos = (msgs: ApiMsg[]) => positionsOf(msgs, 's', new Map(), true)
+  // Growing reads up to the end of the last request.
+  assert.equal(readThrough(pos(grown), live), pos(before).length - 1)
+  // A change within reach reads up to the user run before it; one further back, nothing.
+  assert.equal(readThrough(pos(stubbedAt(110)), live), 108)
+  assert.equal(readThrough(pos(stubbedAt(2)), live), -1)
+})

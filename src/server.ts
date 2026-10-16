@@ -12,14 +12,17 @@
 // outweighs what it rewrites, priced against the cache entries the
 // conversation's requests left.
 
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, isPrompt, type ApiMsg, type Block, type Clock } from './items.ts'
+import type { Canonical, Content, Protocol } from './protocol.ts'
+import { MESSAGES } from './messages.ts'
+import { CHAT } from './chat.ts'
 import { forceDefer } from './defer.ts'
-import { pendingCommand, reply, stripCommands, withoutPending } from './command.ts'
+import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
 import { history, latest, record } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
@@ -101,17 +104,21 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; fork?: (tokens: number[]) => Fork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; proto: Protocol; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; fork?: (tokens: number[]) => Fork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
 
-// Trims a /v1/messages request. Only requests with tools are trimmed: those
-// are the main loop and subagents. Claude Code's side requests are sent as
-// they came.
-function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined {
-  const body = JSON.parse(raw.toString('utf8'))
+// Trims a request, given as the core's (protocol.ts). Only requests with tools
+// are trimmed: those are the main loop and subagents. Claude Code's side
+// requests are sent as they came.
+//
+// Where the cache writes an entry at each request's end by itself (automatic),
+// there is no breakpoint to add, so no anchor.
+function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unknown, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
-  if (policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
-  const key = keyOf(body, agent)
+  if (proto.defers && policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
+  const key = proto.conversationId(body, headers)
+  const conv = proto.conventions
+  const auto = proto.automatic
   const s = load(key)
   const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
   const clock = clockOf(msgs)
@@ -123,24 +130,24 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const chain = policy.summary_threshold_tokens ? validChain(loadSummaries(key).chain, msgs) : []
   const before = Math.min(s?.summarized ?? 0, chain.length)
   let records = before
-  let keep = summarized(apply(msgs, policy, held), msgs, chain.slice(0, records))
+  let keep = summarized(apply(msgs, policy, held, conv), msgs, chain.slice(0, records))
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live) < 0
-  if (records < chain.length && cold(positionsOf(keep.msgs, seed, thinking))) {
+  if (records < chain.length && cold(positionsOf(keep.msgs, seed, thinking, auto))) {
     records = chain.length
-    keep = summarized(apply(msgs, policy, held), msgs, chain)
+    keep = summarized(apply(msgs, policy, held, conv), msgs, chain)
   }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
-  const end = settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, policy), msgs, chain.slice(0, records)).msgs, seed, thinking)
+  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, policy, conv), msgs, chain.slice(0, records)).msgs, seed, thinking)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
-  const spare = 4 - [body.system, body.tools, msgs].reduce((n, v) => n + marks(v), 0)
+  const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
   const freed = spare > 0 ? undefined : freedSystem(body.system)
   const reads = (m: ApiMsg[]) => {
-    const ps = positionsOf(m, seed, thinking)
+    const ps = positionsOf(m, seed, thinking, auto)
     return ps.slice(0, readThrough(ps, live) + 1).reduce((n, q) => n + q.size, 0)
   }
   const anchor = (m: ApiMsg[]) => {
-    if (spare <= 0 && !freed) return m
+    if (auto || (spare <= 0 && !freed)) return m
     const x = anchored(m, end, seed, thinking)
     return reads(x) >= reads(m) ? x : m
   }
@@ -149,17 +156,17 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   let next = keep
   let d: Decision | undefined
   if (clock.steps > held.steps || clock.turns > held.turns) {
-    next = summarized(apply(msgs, policy, clock), msgs, chain.slice(0, records))
-    d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, body.model, thinking)
+    next = summarized(apply(msgs, policy, clock, conv), msgs, chain.slice(0, records))
+    d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, body.model, thinking, auto)
     if (d.advanced) [sent, applied] = [next, clock]
   }
   body.messages = anchor(sent.msgs)
   if (freed && marks(body.messages) > marks(sent.msgs)) body.system = freed
-  // The entries this request writes or reads: one at each breakpoint, and the
-  // one it reads through.
-  const pos = positionsOf(body.messages, seed, thinking)
+  // The entries this request writes or reads: one at each breakpoint, or with
+  // automatic caching at each user message's end, and the one it reads through.
+  const pos = positionsOf(body.messages, seed, thinking, auto)
   const r = readThrough(pos, live)
-  const touched = pos.filter((q, i) => q.breakpoint || i === r).map((q) => q.prefix)
+  const touched = pos.filter((q, i) => q.breakpoint || (auto && !q.joined) || i === r).map((q) => q.prefix)
   // Where trimming ends in the messages as sent, which drops shorten.
   const ends = trimmedEnd(msgs, policy, applied)
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
@@ -173,8 +180,8 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
   const suggestion = isSuggestion(msgs)
   const after = policy.summary_threshold_tokens
   // Whether to fork is known once the response's counts are in.
-  const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(body)), key, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, fork, stats: latestOf(key), sent: described, suggestion }
+  const fork = proto.forks && after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, fork, stats: latestOf(key), sent: described, suggestion }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
@@ -195,11 +202,11 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
         // To test the anchor breakpoint's efficacy: the decision without it,
         // or the entry it keeps, which lookback would otherwise still find.
         // Remove this (and the logged field) once we're confident in it.
-        unanchored: (({ advanced, extraChars }) => ({ advanced, extraChars }))(decide(keep.msgs, next.msgs, new Set([...live].filter((e) => e !== end)), seed, body.model, thinking)),
+        unanchored: (({ advanced, extraChars }) => ({ advanced, extraChars }))(decide(keep.msgs, next.msgs, new Set([...live].filter((e) => e !== end)), seed, body.model, thinking, auto)),
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, body.messages), ...writeDefs(p.logDir, body) }
+    p.logLine = { event: 'request', time, model: body.model, protocol: proto.name, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, body.messages), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -207,28 +214,8 @@ function prepare(raw: Buffer, now: number, agent?: string): Prepared | undefined
 // A conversation's key, which names its state, journal and log dir. A
 // conversation is one message history that only grows: the proxy's applied
 // clock counts steps and turns into it, and its cache entries are prefixes of
-// it, so neither means anything for another history.
-//
-// Claude Code sends the session ID with every request, and an agent ID
-// (x-claude-code-agent-id) with each subagent's; the main loop sends none. But
-// one agent can still send several histories: a WebSearch call is its own
-// one-message request, and a compaction (/compact, or the automatic one)
-// replaces the history with a summary and carries on from that. So the key
-// also takes a hash of the first message, which changes exactly when the
-// history is a new one, and each starts with fresh state.
-//
-// The session ID keeps apart sessions whose first message is the same, as
-// happens when two start with `:shaver info` in the same repo state: once
-// the command is stripped, all that is left of it is the same reminders.
-// Without a session ID (other clients), the first message is the key alone.
-function keyOf(body: { messages: ApiMsg[]; metadata?: { user_id?: string } }, agent?: string): string {
-  const first = hash(JSON.stringify(body.messages[0]))
-  let session: string | undefined
-  try {
-    session = JSON.parse(body.metadata?.user_id ?? '{}').session_id
-  } catch {}
-  return session ? `${session}-${agent ?? 'main'}-${first.slice(0, 8)}` : first
-}
+// it, so neither means anything for another history. The protocol makes the
+// key unique among the conversations it serves (Protocol.conversationId).
 
 // The answer to `:shaver policy`: the policy file as it is now, which may differ
 // from what was loaded at startup if it was edited since.
@@ -243,64 +230,15 @@ function policyText(): string {
 // The answer to `:shaver info`: the conversation's latest answered request,
 // from its journal (stats.ts), or before there is one, this request estimated
 // as it will be sent once the command is answered, tools deferred.
-function stats(body: Parameters<typeof describe>[0] & { metadata?: { user_id?: string } }, agent?: string): string {
+function stats(proto: Protocol, body: Canonical, headers: IncomingHttpHeaders): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
-  if (policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
-  const key = keyOf(sent, agent)
+  if (proto.defers && policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
+  const key = proto.conversationId(sent, headers)
   const { stats: s, cost: c } = currentOf(key)
   const { spent: forks, requests } = loadSummaries(key)
   const withForks = c && { ...c, actual: c.actual + forks }
   const text = s ? render(s, key, false, withForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString())), key, true, withForks, requests)
   return '```\n' + text + '\n```'
-}
-
-// The usage a response reports: message_start's, with message_delta's output
-// tokens, for a stream; the body's for a plain response. Also its content's
-// lengths: each thinking block's signature and the characters of everything
-// else.
-type Content = { signatures: string[]; visibleChars: number }
-
-function usageReader() {
-  let usage: Usage | undefined
-  const content: Content = { signatures: [], visibleChars: 0 }
-  let buf = ''
-  const dec = new TextDecoder()
-  const line = (l: string) => {
-    if (!l.startsWith('data: ')) return
-    try {
-      const e = JSON.parse(l.slice(6))
-      if (e.type === 'message_start') usage = { ...e.message?.usage }
-      if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
-      if (e.type === 'content_block_start' && e.content_block?.type === 'thinking') content.signatures.push('')
-      if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use') content.visibleChars += JSON.stringify(e.content_block.name).length
-      if (e.type === 'content_block_delta') {
-        const d = e.delta ?? {}
-        if (d.type === 'signature_delta' && content.signatures.length) content.signatures[content.signatures.length - 1] += d.signature
-        if (d.type === 'text_delta') content.visibleChars += d.text.length
-        if (d.type === 'input_json_delta') content.visibleChars += d.partial_json.length
-      }
-    } catch {}
-  }
-  return {
-    push(chunk: Uint8Array) {
-      buf += dec.decode(chunk, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() ?? ''
-      lines.forEach(line)
-    },
-    end(): { usage?: Usage; content: Content } {
-      if (usage) return { usage, content }
-      try {
-        const b = JSON.parse(buf)
-        for (const c of b.content ?? [])
-          if (c.type === 'thinking') content.signatures.push(c.signature ?? '')
-          else content.visibleChars += c.type === 'text' ? c.text.length : c.type === 'tool_use' ? JSON.stringify(c.name).length + JSON.stringify(c.input).length : 0
-        return { usage: b.usage, content }
-      } catch {
-        return { content }
-      }
-    },
-  }
 }
 
 // What each thinking block of a response bills when sent back: the output
@@ -315,11 +253,10 @@ function thinkingOf(u: Usage | undefined, c: Content): Record<string, number> {
 }
 
 const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive'])
-// The account's usage limits from the latest answer the API sent, which Claude
-// Code shows in the status line. Answers made here carry them too, or the
-// status line loses them for that turn.
-const LIMIT = 'anthropic-ratelimit-unified-'
-let limits: Record<string, string> = {}
+// The account's usage limits from the latest answer each protocol's API sent,
+// which Claude Code shows in the status line. Answers made here carry them
+// too, or the status line loses them for that turn.
+const limits = new Map<Protocol, Record<string, string>>()
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = []
@@ -327,18 +264,23 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks)
 }
 
-function refuse(res: ServerResponse, status: 400 | 403, message: string): void {
+function refuse(res: ServerResponse, proto: Protocol, status: 400 | 403, message: string): void {
   console.error(message)
   res.writeHead(status, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ type: 'error', error: { type: status === 403 ? 'permission_error' : 'invalid_request_error', message } }))
+  res.end(proto.error(status, message))
 }
+
+// The protocol a path is, after any /via/; Messages for any other path, which
+// is passed through.
+const protocolOf = (url: string) => [MESSAGES, CHAT].find((p) => p.serves(url.split('?')[0])) ?? MESSAGES
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const original = await readBody(req)
   let raw = original
-  if (!localHost(req.headers.host)) return refuse(res, 403, `ctx-shaver proxy: refused a request for Host ${req.headers.host}`)
   const r = route(req.url ?? '/', a.upstream)
-  if ('error' in r) return refuse(res, 400, `ctx-shaver proxy: ${r.error}`)
+  const proto = protocolOf('error' in r ? '/' : r.url)
+  if (!localHost(req.headers.host)) return refuse(res, proto, 403, `ctx-shaver proxy: refused a request for Host ${req.headers.host}`)
+  if ('error' in r) return refuse(res, proto, 400, `ctx-shaver proxy: ${r.error}`)
   const { upstream, url } = r
   // bin/run-proxy --restart and --stop stop the proxy with this. The header
   // keeps a web page from sending it: browsers send a custom header only after a
@@ -348,27 +290,35 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return void res.end('stopping\n', () => process.exit(0))
   }
   let p: Prepared | undefined
-  if (req.method === 'POST' && url.split('?')[0] === '/v1/messages' && raw.length) {
+  if (req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length) {
     // `:shaver` commands are answered here; answered ones are stripped (command.ts).
+    let c: ReturnType<Protocol['canonical']> | undefined
     try {
-      const body = JSON.parse(raw.toString('utf8'))
-      if (Array.isArray(body.messages) && body.messages.length) {
-        const agent = req.headers['x-claude-code-agent-id'] as string | undefined
+      c = proto.canonical(JSON.parse(raw.toString('utf8')))
+    } catch (err) {
+      console.error('ctx-shaver: request not read:', err)
+    }
+    const body = c?.body
+    try {
+      if (c && body && Array.isArray(body.messages) && body.messages.length) {
         const msgs = stripCommands(body.messages)
         const command = body.tools?.length && pendingCommand(msgs)
         if (command) {
-          const text = command === ':shaver policy' ? policyText() : stats({ ...body, messages: msgs }, agent)
-          res.writeHead(200, { ...limits, 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
-          const context = latestOf(keyOf({ ...body, messages: withoutPending(msgs) }, agent))?.inputTokens ?? 0
-          return void res.end(reply(text, body.model, !!body.stream, context))
+          const text = command === ':shaver policy' ? policyText() : stats(proto, { ...body, messages: msgs }, req.headers)
+          res.writeHead(200, { ...limits.get(proto), 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
+          const context = latestOf(proto.conversationId({ ...body, messages: withoutPending(msgs) }, req.headers))?.inputTokens ?? 0
+          return void res.end(proto.reply(text, body.model, !!body.stream, context))
         }
-        if (msgs.length < body.messages.length) raw = Buffer.from(JSON.stringify({ ...body, messages: msgs }))
+        if (msgs.length < body.messages.length) {
+          body.messages = msgs
+          raw = Buffer.from(JSON.stringify(c.render(body)))
+        }
       }
     } catch (err) {
       console.error('ctx-shaver: commands left in:', err)
     }
     try {
-      p = prepare(raw, Date.now(), req.headers['x-claude-code-agent-id'] as string | undefined)
+      if (c && body) p = prepare(proto, body, c.render, req.headers, Date.now())
     } catch (err) {
       console.error('ctx-shaver: request left untrimmed:', err)
     }
@@ -391,10 +341,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   up.headers.forEach((v, k) => {
     if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v
   })
-  if (up.status === 200 && Object.keys(out).some((k) => k.startsWith(LIMIT)))
-    limits = Object.fromEntries(Object.entries(out).filter(([k]) => k.startsWith(LIMIT)))
+  const prefix = proto.limitPrefix
+  if (prefix && up.status === 200 && Object.keys(out).some((k) => k.startsWith(prefix)))
+    limits.set(proto, Object.fromEntries(Object.entries(out).filter(([k]) => k.startsWith(prefix))))
   res.writeHead(up.status, out)
-  const usage = usageReader()
+  const usage = proto.usageReader()
   if (up.body)
     for await (const chunk of up.body) {
       res.write(chunk)
@@ -468,7 +419,7 @@ createServer((req, res) => {
     console.error('ctx-shaver:', err)
     if (!res.headersSent) {
       res.writeHead(502, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: `ctx-shaver proxy: ${err}` } }))
+      res.end(protocolOf((req.url ?? '/').replace(/^\/via\/[^/?#]*/, '')).error(502, `ctx-shaver proxy: ${err}`))
     } else res.end()
   })
 }).listen(Number(a.port), '127.0.0.1', () => console.error(`ctx-shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
