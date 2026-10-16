@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Starts the context-shaver proxy if nothing is listening on its port, and leaves
-# it running; its output goes to proxy-data/proxy.log. With --restart, asks the
-# proxy there to stop first, so a new one picks up code and policy changes.
+# it running; its output goes to proxy-data/proxy.log. A proxy already there that
+# runs from another repo, or is too old to say, is restarted from this one. With
+# --restart, asks the proxy there to stop first, so a new one picks up code and
+# policy changes.
 # Sessions running through it resume with their next request, once it is back
 # up. With --stop, only stops it. With --log, the proxy it starts logs every
 # request under proxy-data/logs/.
@@ -25,7 +27,25 @@ stop() {
     printf 'POST /ctx-shaver/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nx-ctx-shaver: shutdown\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' >&3 &&
     while read -r -t 5 _ <&3; do :; done) 2>/dev/null || true
 }
+# The repo the proxy on the port runs from (server.ts); nothing from one that
+# doesn't say.
+repo_of() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$port" &&
+    printf 'GET /ctx-shaver/repo HTTP/1.1\r\nHost: 127.0.0.1\r\nx-ctx-shaver: repo\r\nConnection: close\r\n\r\n' >&3 &&
+    while IFS= read -r -t 5 line <&3; do
+      line=${line%$'\r'}
+      [[ $line == "context-shaver repo: "* ]] && echo "${line#context-shaver repo: }"
+    done) 2>/dev/null || true
+}
 
+if [[ -z $action ]] && up; then
+  other=$(repo_of)
+  if [[ $other != "$repo" ]]; then
+    from=${other:-"an older checkout, or is not one"}
+    echo "run-proxy: the proxy on port $port runs from $from; restarting it from $repo" >&2
+    action=--restart
+  fi
+fi
 if [[ -n $action ]] && up; then
   stop
   for _ in $(seq 50); do up || break; sleep 0.1; done

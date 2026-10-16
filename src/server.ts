@@ -306,6 +306,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     console.error('context-shaver: shutting down, as asked')
     return void res.end('stopping\n', () => process.exit(0))
   }
+  // bin/run-proxy asks this to tell whether the proxy on its port runs from its
+  // repo; one from elsewhere, or older than this, is restarted.
+  if (req.method === 'GET' && url === '/ctx-shaver/repo' && req.headers['x-ctx-shaver'] === 'repo') {
+    return void res.end(`context-shaver repo: ${path.resolve(import.meta.dirname, '..')}\n`)
+  }
   let p: Prepared | undefined
   if (req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length) {
     // `:shaver` commands are answered here; answered ones are stripped (command.ts).
@@ -364,6 +369,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   })
   const re = proto.limits
   if (re && up.status === 200 && Object.keys(out).some((k) => re.test(k))) limits.set(proto, Object.fromEntries(Object.entries(out).filter(([k]) => re.test(k))))
+  // An error answer goes to proxy.log whether or not requests are logged, so
+  // the upstream's own text is always on record.
+  if (up.status >= 400) {
+    const text = Buffer.from(await up.arrayBuffer())
+    console.error(`${new Date().toISOString()} context-shaver: upstream answered ${up.status} to ${req.method} ${upstream}${url.split('?')[0]}: ${text.toString('utf8').slice(0, 2000)}`)
+    res.writeHead(up.status, out)
+    return void res.end(text)
+  }
   res.writeHead(up.status, out)
   // The answer's state is saved once it is complete, before the client sees
   // its end: Codex sends the next request then, before the stream closes.
