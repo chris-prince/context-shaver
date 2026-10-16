@@ -75,21 +75,22 @@ wrapper replaces the one it's given, so context-shaver would be bypassed. If the
 wrapper lets you choose the binary it runs (often an environment variable
 naming its path), give it `claude-via-shaver` itself: run by the wrapper, it
 sees the base URL the wrapper set and chains to it, as above. Tell it where the
-real Claude Code is with `CTX_SHAVER_REAL_CLAUDE_LOCATION`, a path or a glob of
-versioned installs, of which it takes the newest:
+real Claude Code is with `CTX_SHAVER_REAL_CLAUDE_LOCATIONS`: paths or globs of
+versioned installs, separated by colons, as on `PATH`. The first with a match is
+taken, and of a glob's matches the newest:
 
 ```bash
-export CTX_SHAVER_REAL_CLAUDE_LOCATION='~/path/to/claude-code-*'
+export CTX_SHAVER_REAL_CLAUDE_LOCATIONS='~/path/to/claude-code-*:~/other/claude'
 export <WRAPPER_BINARY_VAR>=~/context-shaver/bin/claude-via-shaver
 claude [claude args ...]
 ```
 
-Without `CTX_SHAVER_REAL_CLAUDE_LOCATION` it would run `claude`, the wrapper,
+Without `CTX_SHAVER_REAL_CLAUDE_LOCATIONS` it would run `claude`, the wrapper,
 which would run it again; it notices and stops with an error instead. With it
 set, start sessions through the wrapper, as above: `claude-via-shaver` run
 directly would skip the wrapper and whatever it sets up.
 
-`codex-via-shaver` chains the same way, with `CTX_SHAVER_REAL_CODEX_LOCATION`.
+`codex-via-shaver` chains the same way, with `CTX_SHAVER_REAL_CODEX_LOCATIONS`.
 A Codex wrapper sets its gateway with `-c` flags rather than the environment:
 `model_provider` and that provider's `base_url`. When the arguments name a
 provider, `codex-via-shaver` keeps it and its other settings, puts the proxy's
@@ -98,7 +99,7 @@ WebSockets; with a provider but no `base_url` to chain to, it stops with an
 error.
 
 ```bash
-export CTX_SHAVER_REAL_CODEX_LOCATION='~/path/to/codex/*/codex-<target>'
+export CTX_SHAVER_REAL_CODEX_LOCATIONS='~/path/to/codex/*/codex-<target>'
 export <WRAPPER_BINARY_VAR>=~/context-shaver/bin/codex-via-shaver
 codex [codex args ...]
 ```
@@ -116,13 +117,13 @@ codex-via-shaver -c model_provider=<name> \
 
 A wrapper may also want the files a Codex install has beside Codex, beside the
 binary it is given. `codex-via-shaver --stand-in` makes one with them: in
-`proxy-data/stand-in/`, links to all beside the newest Codex at
-`CTX_SHAVER_REAL_CODEX_LOCATION`, with Codex itself a script that runs
+`proxy-data/stand-in/`, links to all beside the Codex that
+`CTX_SHAVER_REAL_CODEX_LOCATIONS` finds, with Codex itself a script that runs
 `codex-via-shaver` with that Codex. It prints that script's path, for the
 wrapper to be given instead:
 
 ```bash
-export CTX_SHAVER_REAL_CODEX_LOCATION='~/path/to/codex/*/codex-<target>'
+export CTX_SHAVER_REAL_CODEX_LOCATIONS='~/path/to/codex/*/codex-<target>'
 export <WRAPPER_BINARY_VAR>=$(~/context-shaver/bin/codex-via-shaver --stand-in)
 codex [codex args ...]
 ```

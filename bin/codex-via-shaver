@@ -11,8 +11,9 @@
 # as the upstream for this session, named in the path (src/via.ts), and only
 # its WebSockets are turned off. One already through this proxy is left as it is.
 #
-# Codex is `codex`, or CTX_SHAVER_REAL_CODEX_LOCATION if set: a path, or a glob
-# of versioned installs, of which the newest is taken. Set it when this stands
+# Codex is `codex`, or CTX_SHAVER_REAL_CODEX_LOCATIONS if set: paths, or globs
+# of versioned installs, separated by colons; the first with a match is taken,
+# and of a glob's matches the newest. Set it when this stands
 # in for Codex under a wrapper that passes the provider itself once it starts
 # (DESIGN.md); there, running `codex` would run the wrapper, which would run
 # this again.
@@ -22,16 +23,24 @@ me=$(readlink -f "$0")
 bin=$(dirname "$me")
 die() { echo "codex-via-shaver: $*" >&2; exit 1; }
 
-if [[ -n ${CTX_SHAVER_REAL_CODEX_LOCATION:-} ]]; then
-  real=$(compgen -G "${CTX_SHAVER_REAL_CODEX_LOCATION/#\~/$HOME}" | sort -V | tail -1) || true
-  [[ -n $real && -x $real && $(readlink -f "$real") != "$me" ]] ||
-    die "CTX_SHAVER_REAL_CODEX_LOCATION ($CTX_SHAVER_REAL_CODEX_LOCATION) is not an executable Codex"
+if [[ -n ${CTX_SHAVER_REAL_CODEX_LOCATIONS:-} ]]; then
+  # The first entry with a match wins; within a glob, the newest match.
+  real=
+  IFS=: read -ra entries <<<"$CTX_SHAVER_REAL_CODEX_LOCATIONS"
+  for e in "${entries[@]}"; do
+    while read -r c; do
+      [[ -n $c && -x $c && $(readlink -f "$c") != "$me" ]] && real=$c
+    done < <(compgen -G "${e/#\~/$HOME}" | sort -V)
+    [[ -n $real ]] && break
+  done
+  [[ -n $real ]] ||
+    die "CTX_SHAVER_REAL_CODEX_LOCATIONS ($CTX_SHAVER_REAL_CODEX_LOCATIONS) has no executable Codex"
 else
   # As in claude-via-shaver: a parent with the PID this last ran `codex` as is
   # that `codex` running this again, a wrapper, which would loop.
   depth=${CTX_SHAVER_DEPTH:-0}
   [[ ${CTX_SHAVER_LAUNCHER_PID:-} != "$PPID" && $depth -lt 5 ]] ||
-    die "run again by the codex it ran, as a wrapper runs the Codex it is given; set CTX_SHAVER_REAL_CODEX_LOCATION (DESIGN.md)"
+    die "run again by the codex it ran, as a wrapper runs the Codex it is given; set CTX_SHAVER_REAL_CODEX_LOCATIONS (DESIGN.md)"
   export CTX_SHAVER_LAUNCHER_PID=$$ CTX_SHAVER_DEPTH=$((depth + 1))
   real=codex
 fi
@@ -42,12 +51,12 @@ fi
 # a script running this with that Codex. A link to this would not do, as a
 # wrapper following it would look beside this instead.
 if [[ ${1:-} == --stand-in ]]; then
-  [[ -n ${CTX_SHAVER_REAL_CODEX_LOCATION:-} ]] || die "--stand-in needs CTX_SHAVER_REAL_CODEX_LOCATION"
+  [[ -n ${CTX_SHAVER_REAL_CODEX_LOCATIONS:-} ]] || die "--stand-in needs CTX_SHAVER_REAL_CODEX_LOCATIONS"
   real=$(readlink -f "$real")
   from=$(dirname "$real")
   dir=$bin/../proxy-data/stand-in/$(printf %s "$from" | cksum | cut -d' ' -f1)
   stub=$dir/$(basename "$real")
-  script=$(printf '#!/usr/bin/env bash\nexport CTX_SHAVER_REAL_CODEX_LOCATION=%q\nexec %q "$@"' \
+  script=$(printf '#!/usr/bin/env bash\nexport CTX_SHAVER_REAL_CODEX_LOCATIONS=%q\nexec %q "$@"' \
     "$real" "$me")
   # As an install is not changed in place, one made for it already will do.
   if [[ ! -x $stub || $(<"$stub") != "$script" ]]; then
