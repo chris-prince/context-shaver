@@ -74,7 +74,7 @@ versioned installs, of which it takes the newest:
 
 ```bash
 export CTX_SHAVER_REAL_CLAUDE_LOCATION='~/path/to/claude-code-*'
-export <WRAPPER_BINARY_VAR>=~/ctx-shaver/bin/claude-via-shaver
+export <WRAPPER_BINARY_VAR>=~/context-shaver/bin/claude-via-shaver
 claude [claude args ...]
 ```
 

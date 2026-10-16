@@ -22,12 +22,12 @@ context that are no longer needed.
 
 One-time setup:
 ```bash
-git clone https://github.com/chris-prince/ctx-shaver ~/ctx-shaver
+git clone https://github.com/chris-prince/context-shaver ~/context-shaver
 ```
 
 Then each time you start your CLI:
 ```bash
-~/ctx-shaver/bin/claude-via-shaver
+~/context-shaver/bin/claude-via-shaver
 ```
 
 `claude-via-shaver` makes sure the local proxy is running (on 127.0.0.1:8787),
