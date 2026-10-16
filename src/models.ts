@@ -6,14 +6,17 @@
 
 // Dollars a million tokens. Writes cost 1.25x input at the 5-minute TTL and
 // 2x at the hour; with automatic caching (protocol.ts) they're billed as plain
-// input, which usage reports as uncached. A long prompt,
-// over `long.over` tokens, costs `long.times` as much in all.
-export type Price = { input: number; output: number; read: number; long?: { over: number; times: number } }
+// input, which usage reports as uncached. A model whose writes cost something
+// else gives `write`. A long prompt, over `long.over` tokens, costs `long.times`
+// as much in all.
+export type Price = { input: number; output: number; read: number; write?: number; long?: { over: number; times: number } }
 
 export type Model = {
   price?: Price
   // How far back from a breakpoint a request finds an entry (trim.ts, readThrough).
   lookback: number
+  // Seconds an entry lasts unread, where it isn't --cache-ttl-seconds.
+  ttl?: number
   // Tokens of earlier turns that start a summary fork, in place of the policy's
   // summary_threshold_tokens; the policy still decides whether there are any.
   summaryThreshold?: number
@@ -26,6 +29,11 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   'claude-mythos-5-1': { price: { input: 10, output: 50, read: 0.25 } },
   'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.2 } },
   'claude-haiku-5-5': { price: { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } } },
+  // OpenAI's pricing page and prompt-caching guide (local/notes.md, "Check
+  // Codex in use"): writes at 1.25x input, the latest 50 breakpoints looked
+  // through, and entries kept at least 30 minutes after their last use. Past
+  // 272K input tokens, input doubles and output is 1.5x, which `long` can't say.
+  'gpt-6-luna': { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 1800 },
   // Priced apart by each provider, so only per provider.
   'deepseek/deepseek-v4.1-flash': {
     providers: {

@@ -47,10 +47,10 @@ export function without(prev: Stats | undefined, s: Stats, u: Usage, ttlMs: numb
 }
 
 // A request's tokens in dollars; writes at the hour's price but for the share
-// written for 5 minutes.
+// written for 5 minutes, or at the model's own write price.
 function dollars(p: Price, t: Tokens, short: number): number {
   const times = p.long && t.uncached + t.reads + t.writes > p.long.over ? p.long.times : 1
-  const writes = (short * 1.25 + (t.writes - short) * 2) * p.input
+  const writes = p.write ? t.writes * p.write : (short * 1.25 + (t.writes - short) * 2) * p.input
   return ((t.uncached * p.input + t.reads * p.read + writes + t.output * p.output) * times) / 1e6
 }
 

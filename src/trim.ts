@@ -251,8 +251,8 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock
 // the warm requests expected to read what a trim saved before the cache next
 // goes cold: 40 at an hour's TTL (ctx-shaver's local/notes.md, "Light compaction").
 // Automatic caching writes at the input price, so a written character costs
-// half the reads.
-export const writeCost = (m: Model, automatic = false) => (automatic ? 1 : 2) / (m.price ? m.price.read / m.price.input : 0.1) - 1 // M
+// half the reads, unless the model prices its writes (models.ts).
+export const writeCost = (m: Model, automatic = false) => (m.price?.write ? m.price.write / m.price.input : automatic ? 1 : 2) / (m.price ? m.price.read / m.price.input : 0.1) - 1 // M
 export const K = 40
 
 // What a thinking block bills, which its length does not show: Claude Code

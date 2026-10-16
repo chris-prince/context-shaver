@@ -133,10 +133,10 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
   const s = load(key)
   const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
   const clock = clockOf(msgs)
-  const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= ttlMs))
+  const model = modelOf(body.model, body.provider)
+  const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= (model.ttl ? model.ttl * 1000 : ttlMs)))
   const live = new Set(Object.keys(entries))
   const seed = seedOf(body.model, body.tools, body.system)
-  const model = modelOf(body.model, body.provider)
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
   // The records it sends: those sent before, and on a cold cache, all there are.
   const chain = policy.summary_threshold_tokens ? validChain(loadSummaries(key).chain, msgs) : []

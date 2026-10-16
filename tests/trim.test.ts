@@ -353,6 +353,7 @@ test('a model with cheaper reads makes a rewrite cost more of them', () => {
   const drop = [...head, { role: 'user', content: '' } as ApiMsg, keep[2]]
   assert.equal(writeCost(modelOf('claude-haiku-5-5')), 19)
   assert.equal(writeCost(modelOf('claude-opus-5-5')), 39)
+  assert.ok(Math.abs(writeCost(modelOf('gpt-6-luna'), true) - 11.5) < 1e-9)
   assert.equal(gate(keep, drop, keep).advanced, true)
   assert.equal(gate(keep, drop, keep, 'claude-opus-5-5').advanced, false)
 })
