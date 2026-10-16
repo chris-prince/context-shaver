@@ -83,15 +83,21 @@ function markersOutOfPlace(cs: Conversation[]): string[] {
   return found
 }
 
+// Tags that open real prompts, which the model replies to as a turn: Claude
+// Code's ! commands.
+const PROMPT_TAGS = [/^\s*<bash-input>/]
+
 // Prompts whose every counted block opens with a tag, as the text harnesses
 // add usually does: each is either a prompt that quotes markup or harness text
 // that wants a marker, as Codex's <environment_context> did before it had one.
+// Prompts opening with a tag in PROMPT_TAGS are left out.
 function taggedPrompts(cs: Conversation[]): string[] {
   const found: string[] = []
   for (const c of cs)
     for (const { msg, time } of c.messages) {
       if (!isPrompt(msg) || blocks(msg).some((b) => b.type === 'image' || b.type === 'document')) continue
       const counted = texts(msg).filter((t) => !MARKERS.some(([re]) => re.test(t)))
+      if (counted.some((t) => PROMPT_TAGS.some((re) => re.test(t)))) continue
       if (counted.length && counted.every((t) => /^\s*(<[a-z_-]+[ >]|\[[A-Z][A-Z ]+[:\]])/.test(t))) found.push(where(c, time, counted[0]))
     }
   return found
@@ -116,8 +122,9 @@ For "skipped with no marker listed here": find the marker in NOT_A_PROMPT
     todo: `Look at each message in that conversation's logs, and at the request after it.
 - Text the harness adds, not typed by a person and not replied to as a turn:
   add its tag to NOT_A_PROMPT (src/items.ts) and to MARKERS here.
-- A real prompt, such as Claude Code's ! commands (<bash-input>), which the
-  model replies to: nothing to change. Rerun with --since a date after it.`,
+- A real prompt, which the model replies to as a turn: add its tag to
+  PROMPT_TAGS here. If it's a prompt that merely quotes markup, nothing to
+  change; rerun with --since a date after it.`,
   },
 ]
 
