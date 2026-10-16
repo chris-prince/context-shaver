@@ -64,9 +64,9 @@ export function eventReader(read: { event(e: any): void; body(b: any): void; res
 // together; the core counts them apart.
 export const openaiUsage = (input: number, read: number, written: number, output: number): Usage => ({ input_tokens: input - read - written, cache_read_input_tokens: read, cache_creation_input_tokens: written, output_tokens: output })
 
-// An OpenAI client's conversation: its session, the first of the values that
-// may name it, and its first message, which changes when the client compacts
-// the history into a new one (messages.ts).
+// A conversation's ID: the protocol's client, its session (the first of the
+// values that may name it), and its first message, which changes when the
+// client compacts the history into a new one (messages.ts).
 export function sessionConversation(prefix: string, c: Canonical, names: unknown[]): string {
   const session = names.find((v) => typeof v === 'string' && v)
   return `${prefix}-${session ? `${session}-` : ''}${hash(JSON.stringify(c.messages[0])).slice(0, 8)}`

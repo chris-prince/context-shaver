@@ -217,7 +217,9 @@ Code's side requests pass through unchanged.
 A conversation is one message history that only grows, and each has its own
 state: the applied clock below counts steps and turns into it, and its cache
 entries are prefixes of it, so neither carries over to another history. Its
-key is the session ID, the agent ID and a hash of its first message:
+key is `claude-`, the session ID, the agent ID and a hash of its first message
+(`claude-<session>-<agent or main>-<hash>`); OpenCode's and Codex's start
+`chat-` and `codex-` (Protocols):
 
 - Claude Code sends the session ID with every request. It keeps apart sessions
   whose first message is the same, as when two start with `:shaver info` in
@@ -233,7 +235,8 @@ key is the session ID, the agent ID and a hash of its first message:
   cached, a new journal. Keeping the old state would point its clock at turns
   the new history doesn't have, and count on cache entries it can't read.
 
-Without a session ID (other clients), the first message alone is the key.
+Without a session ID (other clients), the key is `claude-` and the first
+message's hash.
 
 A step is an assistant message with the tool results that answer it. The
 latest step, the one the model is answering, is never touched. A turn starts

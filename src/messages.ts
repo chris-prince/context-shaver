@@ -5,8 +5,7 @@ import type { IncomingHttpHeaders } from 'node:http'
 import { reply } from './command.ts'
 import type { Usage } from './cost.ts'
 import { CLAUDE_CODE, type ApiMsg, type Block } from './items.ts'
-import { hash } from './log.ts'
-import { eventReader, type Canonical, type Content, type Protocol } from './protocol.ts'
+import { eventReader, sessionConversation, type Canonical, type Content, type Protocol } from './protocol.ts'
 import { summaryForkMessages } from './summary.ts'
 
 // A conversation's ID. Claude Code sends the session ID with every request,
@@ -22,13 +21,12 @@ import { summaryForkMessages } from './summary.ts'
 // command is stripped, all that is left of it is the same reminders. Without a
 // session ID (other clients), the first message is the ID alone.
 function conversationId(c: Canonical, headers: IncomingHttpHeaders): string {
-  const first = hash(JSON.stringify(c.messages[0]))
   const agent = headers['x-claude-code-agent-id'] as string | undefined
   let session: string | undefined
   try {
     session = JSON.parse((c.metadata as { user_id?: string } | undefined)?.user_id ?? '{}').session_id
   } catch {}
-  return session ? `${session}-${agent ?? 'main'}-${first.slice(0, 8)}` : first
+  return sessionConversation('claude', c, [session && `${session}-${agent ?? 'main'}`])
 }
 
 // The usage a response reports: message_start's, with message_delta's output

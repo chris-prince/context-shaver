@@ -14,7 +14,7 @@ transcript doesn't record. Prices are per million input tokens: Opus 5.5 $4
 have only a total, writtenTokens, priced as all 1-hour.
 
 Transcripts are read from ~/.claude/projects/<this directory, slugged>/, and
-logs from proxy-data/logs/<session>-*/ under the current directory.
+logs from proxy-data/logs/claude-<session>-*/ under the current directory.
 
 Usage:
     scripts/prompt-cost.py "<prompt start>" <session id> ...
@@ -75,7 +75,7 @@ def row(projects: str, start: str, sid: str) -> dict | None:
             steps.add(e["message"]["id"])
             calls += sum(b["type"] == "tool_use" for b in e["message"]["content"])
             end = max(end, ts(e["timestamp"]))
-    lines = [json.loads(l) for f in glob.glob(f"{LOGS}/{sid}-*/step_events.jsonl") for l in open(f)]
+    lines = [json.loads(l) for f in glob.glob(f"{LOGS}/claude-{sid}-*/step_events.jsonl") for l in open(f)]
     lines = [l for l in lines if t0 <= ts(l["time"]) < t1]
     reqs = [l for l in lines if l["event"] == "request" and "inputTokens" in l]
     trims = [l for l in lines if l["event"] == "compaction"]
