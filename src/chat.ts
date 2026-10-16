@@ -174,12 +174,13 @@ function reply(text: string, model: string, stream: boolean, context: number): s
   return chunk([{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }]) + chunk([{ index: 0, delta: {}, finish_reason: 'stop' }]) + chunk([], { usage }) + 'data: [DONE]\n\n'
 }
 
-// OpenCode's tools: edit's and write's text, and bash for shell commands. Its
-// skill and tool-loading tools aren't known yet (local/openai-design.md, O5).
+// OpenCode's tools, as its 2.x requests name them: edit's and write's text, and
+// shell for shell commands. Its skill tool is left a plain tool until we see
+// what its result holds; it has no tool-loading tool.
 export const OPENCODE: Conventions = {
   kinds: {},
   stubbedInputs: { edit: ['oldString', 'newString'], write: ['content'] },
-  shell: 'bash',
+  shell: 'shell',
 }
 
 export const CHAT: Protocol = {
