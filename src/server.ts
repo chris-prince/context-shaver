@@ -73,7 +73,16 @@ function load(key: string): State | undefined {
   }
 }
 
-const save = (key: string, s: State) => writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify(s))
+// Two requests of a conversation can be in flight at once (a side request
+// beside the main loop), each with the state it loaded, so the entries and
+// thinking another saved meanwhile are kept: what one knows of the cache, the
+// other doesn't undo. The clock and the rest are the later request's.
+function save(key: string, s: State): void {
+  const was = load(key)
+  const entries: Record<string, number> = {}
+  for (const [h, t] of [...Object.entries(was?.entries ?? {}), ...Object.entries(s.entries ?? {})]) if (Date.now() - t <= ttlMs) entries[h] = Math.max(t, entries[h] ?? 0)
+  writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify({ ...s, entries, thinking: { ...was?.thinking, ...s.thinking } }))
+}
 
 // A conversation's records (summary.ts), and the dollars its forks have cost.
 // They are kept apart from its state, which a request answered after a fork
