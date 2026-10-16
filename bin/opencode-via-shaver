@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Runs OpenCode through the ctx-shaver proxy, starting the proxy first if
+# nothing is listening on its port (bin/run-proxy). Arguments are passed to
+# OpenCode.
+#
+# OPENCODE_CONFIG_CONTENT points the OpenRouter provider at the proxy and is
+# merged over OpenCode's config, which is left alone. OpenCode's background
+# service doesn't read it, so the TUI, `run` and `mini` get --standalone, a
+# private server that does; other subcommands are passed as they are.
+set -euo pipefail
+
+bin=$(dirname "$(readlink -f "$0")")
+"$bin/run-proxy"
+port=${CTX_SHAVER_PORT:-8787}
+export OPENCODE_CONFIG_CONTENT="{\"providers\":{\"openrouter\":{\"settings\":{\"baseURL\":\"http://127.0.0.1:$port/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1\"}}}}"
+case ${1:-} in
+  run | mini) exec opencode "$1" --standalone "${@:2}" ;;
+  "" | -* ) exec opencode --standalone "$@" ;;
+  *) [[ -d $1 ]] && exec opencode --standalone "$@"; exec opencode "$@" ;;
+esac

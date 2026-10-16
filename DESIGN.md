@@ -132,11 +132,17 @@ with entries at each user message's end. Summary forks work on both: each
 protocol builds its own summary fork request and reads its answer. The anchor
 breakpoint and tool deferral are Messages-only for now.
 
-OpenCode reaches the proxy through `/via/` with OpenRouter's or OpenAI's base
-URL (`/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`). Codex does too, with
-ChatGPT's backend, through a provider of its own in `~/.codex/config.toml`.
-Pointing the built-in provider elsewhere (`openai_base_url`) isn't enough: it
-tries a WebSocket first on every request, which the proxy doesn't take.
+`bin/opencode-via-shaver` and `bin/codex-via-shaver` run OpenCode and Codex
+through the proxy as `claude-via-shaver` runs Claude Code, leaving their
+configs alone. OpenCode reaches it through `/via/` with OpenRouter's base URL
+(`/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`), set in
+`OPENCODE_CONFIG_CONTENT`, which OpenCode merges over its config. Its
+background service doesn't read that, so the TUI, `run` and `mini` get
+`--standalone`. Codex reaches it with ChatGPT's backend, through a provider of
+its own set with `-c` flags. Pointing the built-in provider elsewhere
+(`openai_base_url`) isn't enough: it tries a WebSocket first on every request,
+which the proxy doesn't take. To send every Codex session through the proxy,
+put the provider in `~/.codex/config.toml` instead:
 
 ```toml
 model_provider = "shaver"

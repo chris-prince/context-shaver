@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Runs Codex through the ctx-shaver proxy, starting the proxy first if nothing
+# is listening on its port (bin/run-proxy). Arguments are passed to Codex.
+#
+# The proxy is a provider set with -c flags, so Codex's config is left alone.
+# It speaks Responses to ChatGPT's Codex backend with the ChatGPT login, with
+# WebSockets off: Codex tries one first otherwise, which the proxy refuses.
+set -euo pipefail
+
+bin=$(dirname "$(readlink -f "$0")")
+"$bin/run-proxy"
+port=${CTX_SHAVER_PORT:-8787}
+exec codex \
+  -c model_provider=shaver \
+  -c model_providers.shaver.name=ctx-shaver \
+  -c "model_providers.shaver.base_url=\"http://127.0.0.1:$port/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex\"" \
+  -c model_providers.shaver.wire_api=responses \
+  -c model_providers.shaver.requires_openai_auth=true \
+  -c model_providers.shaver.supports_websockets=false \
+  "$@"
