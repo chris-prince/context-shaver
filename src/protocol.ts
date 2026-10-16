@@ -83,7 +83,8 @@ export type Protocol = {
   // Whether the provider caches each request's prefix by itself, rather than
   // where breakpoints are marked (trim.ts, positionsOf).
   automatic: boolean
-  // Whether tools can be deferred (defer.ts).
+  // Whether tools can be deferred (defer.ts), for a harness that loads them
+  // (harness.ts).
   defers: boolean
   // A heavy-compaction summary fork (summary.ts): the request as sent, with
   // `text` asked after its messages, so it reads the request's cache entry, and

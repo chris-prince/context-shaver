@@ -39,3 +39,7 @@ test("an unknown harness's conversations are named by protocol, and by a session
   assert.notEqual(conversationId(undefined, 'chat', { model: 'm', messages: msgs, user: 'u2' }, {}), conversationId(undefined, 'chat', { model: 'm', messages: msgs, user: 'u3' }, {}))
   assert.match(conversationId(undefined, 'messages', { model: 'm', messages: msgs }, {}), /^messages-[0-9a-f]{8}$/)
 })
+
+test("only a harness with a tool that loads tools has others deferred", () => {
+  assert.deepEqual([of('claude'), of('codex'), of('opencode')].map((h) => h?.defers), [true, false, false])
+})

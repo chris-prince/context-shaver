@@ -16,6 +16,9 @@ export type Harness = {
   // The prefix of the header names it sends.
   headers: string
   conventions: Conventions
+  // Whether it has a tool that loads deferred tools, so the proxy can defer
+  // others where the protocol can (defer.ts).
+  defers: boolean
   // Its session's ID, part of each conversation's (conversationId).
   session(c: Canonical, headers: IncomingHttpHeaders): unknown
 }
@@ -26,6 +29,7 @@ const CLAUDE: Harness = {
   name: 'claude',
   headers: 'x-claude-code-',
   conventions: CLAUDE_CODE,
+  defers: true,
   session(c, headers) {
     try {
       const session = JSON.parse((c.metadata as { user_id?: string } | undefined)?.user_id ?? '{}').session_id
@@ -56,6 +60,7 @@ const CODEX: Harness = {
       ['<environment_context>', 'other'],
     ],
   },
+  defers: false,
   session: (c, headers) => c.prompt_cache_key ?? headers['session-id'],
 }
 
@@ -81,6 +86,7 @@ const OPENCODE: Harness = {
       ['Here is some useful information about the environment', 'other'],
     ],
   },
+  defers: false,
   session: (_, headers) => headers['x-opencode-session-id'],
 }
 

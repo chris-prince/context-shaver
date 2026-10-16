@@ -11,9 +11,11 @@ export type ApiMsg = { role: 'user' | 'assistant' | 'system'; content: string | 
 
 export const blocks = (m: ApiMsg): Block[] => (typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content)
 
-// User text that is not a prompt: command rows, the interrupt marker, and
-// context Claude Code adds in <system-reminder> tags.
-const NOT_A_PROMPT = /^\s*(<command-name>|<local-command-|\[Request interrupted|<system-reminder>)/
+// User text that is not a prompt: Claude Code's command rows, its interrupt
+// marker and the context it adds in <system-reminder> tags, and the
+// environment Codex sends again when it changes, as when the date does. Each
+// tag is its harness's own, so one list serves every harness.
+const NOT_A_PROMPT = /^\s*(<command-name>|<local-command-|\[Request interrupted|<system-reminder>|<environment_context>)/
 
 export function isPrompt(m: ApiMsg): boolean {
   if (m.role !== 'user') return false

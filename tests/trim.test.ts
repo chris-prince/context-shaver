@@ -50,6 +50,7 @@ test('prompts: user text, not tool results or reminders', () => {
   assert.equal(isPrompt(msgs[2]), false)
   assert.equal(isPrompt({ role: 'user', content: '<system-reminder>x</system-reminder>' }), false)
   assert.equal(isPrompt({ role: 'user', content: '[Request interrupted by user]' }), false)
+  assert.equal(isPrompt({ role: 'user', content: '<environment_context>\n  <current_date>2026-10-16</current_date>\n</environment_context>' }), false)
   assert.deepEqual(turnsOf(msgs).completed, 2)
   // Two assistant messages a turn; the sixth is the latest step.
   assert.deepEqual(stepsOf(msgs).completed, 5)

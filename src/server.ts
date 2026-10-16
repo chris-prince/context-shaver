@@ -127,7 +127,7 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, render: (c: Canonical) => unknown, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
-  if (proto.defers && policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
+  if (proto.defers && h?.defers && policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
   const key = conversationId(h, proto.name, body, headers)
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
@@ -245,7 +245,7 @@ function policyText(): string {
 // as it will be sent once the command is answered, tools deferred.
 function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers: IncomingHttpHeaders): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
-  if (proto.defers && policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
+  if (proto.defers && h?.defers && policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
   const key = conversationId(h, proto.name, sent, headers)
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests } = loadSummaries(key)
