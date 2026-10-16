@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canonical, CHAT } from '../src/chat.ts'
-import type { Block } from '../src/items.ts'
+import type { ApiMsg, Block } from '../src/items.ts'
 
 const wire = {
   model: 'openai/gpt-5.6',
@@ -81,4 +81,30 @@ test('usage counts the prompt as uncached, read and written together', () => {
   const { usage, content } = r.end()
   assert.deepEqual(usage, { input_tokens: 50, cache_read_input_tokens: 800, cache_creation_input_tokens: 150, output_tokens: 20 })
   assert.equal(content.visibleChars, 5)
+})
+
+test('a record the core adds is sent as a plain assistant message', () => {
+  const c = canonical(wire)
+  const record: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'my record' }] }
+  const msgs = [c.body.messages[0], record, ...c.body.messages.slice(3)]
+  const out = (c.render({ ...c.body, messages: msgs }) as typeof wire).messages
+  assert.deepEqual(out[2], { role: 'assistant', content: 'my record' })
+  assert.strictEqual(out[1], wire.messages[1])
+  assert.strictEqual(out[3], wire.messages[5])
+})
+
+test('a fork asks after the messages as sent, without streaming', () => {
+  const sent = canonical(wire).render(canonical(wire).body) as Record<string, unknown>
+  const f = CHAT.fork(sent, 'summarize')
+  assert.equal(f.stream, false)
+  assert.equal(f.stream_options, undefined)
+  const m = f.messages as unknown[]
+  assert.deepEqual(m.slice(0, -1), sent.messages)
+  assert.deepEqual(m.at(-1), { role: 'user', content: 'summarize' })
+})
+
+test("a fork's answer becomes blocks and usage", () => {
+  const out = CHAT.forkAnswer({ choices: [{ message: { role: 'assistant', content: 'the record', reasoning: 'hmm' } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 900 } } })
+  assert.deepEqual(out.content, [{ type: 'text', text: 'the record' }])
+  assert.deepEqual(out.usage, { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, output_tokens: 20 })
 })

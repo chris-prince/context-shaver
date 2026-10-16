@@ -6,7 +6,7 @@
 
 import type { IncomingHttpHeaders } from 'node:http'
 import type { Usage } from './cost.ts'
-import type { ApiMsg, Conventions } from './items.ts'
+import type { ApiMsg, Block, Conventions } from './items.ts'
 import type { Tool } from './stats.ts'
 
 // A request in the core's shape. Fields the core doesn't read ride along.
@@ -41,7 +41,11 @@ export type Protocol = {
   // where breakpoints are marked (trim.ts, positionsOf).
   automatic: boolean
   conventions: Conventions
-  // Whether tools can be deferred (defer.ts) and records forked (summary.ts).
+  // Whether tools can be deferred (defer.ts).
   defers: boolean
-  forks: boolean
+  // A heavy-compaction fork (summary.ts): the request as sent, not streamed,
+  // with `text` asked after its messages, so it reads the request's cache
+  // entry; and the fork's answer as blocks, with its usage.
+  fork(sent: Record<string, unknown>, text: string): Record<string, unknown>
+  forkAnswer(out: unknown): { content: Block[]; usage?: Usage }
 }

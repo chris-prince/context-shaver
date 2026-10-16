@@ -17,7 +17,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
-import { clockOf, heldTo, isPrompt, type ApiMsg, type Block, type Clock } from './items.ts'
+import { clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Protocol } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
@@ -30,7 +30,7 @@ import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
-import { forkMessages, forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
+import { forkOf, instructions, recordOf, startsOf, summarized, validChain, type Fork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -114,7 +114,7 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; proto: Protocol; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; fork?: (tokens: number[]) => Fork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; fork?: (tokens: number[]) => Fork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
 // are trimmed: those are the main loop and subagents. Claude Code's side
@@ -191,8 +191,8 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
   const suggestion = isSuggestion(msgs)
   const after = policy.summary_threshold_tokens
   // Whether to fork is known once the response's counts are in.
-  const fork = proto.forks && after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, fork, stats: latestOf(key), sent: described, suggestion }
+  const fork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => forkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, fork, stats: latestOf(key), sent: described, suggestion }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
@@ -376,7 +376,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   const forked = p.fork && next && !p.suggestion && !forking.has(p.key) ? p.fork(settled(p.sent, next.tokens)) : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, summarized: p.summarized, offered: forked?.current ?? p.offered })
-  if (forked) void summarize(p.key, forked, upstream + url, headers, p.body, p.logDir)
+  if (forked) void summarize(p, forked, upstream + url, headers)
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
       ...p.logLine,
@@ -395,26 +395,27 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 const forking = new Set<string>()
 
 // Forks an answered request for a record of its turns (summary.ts): the
-// request as sent, with the instructions appended, not streamed. Its cost goes
+// request as sent, with the instructions asked after it, in its protocol's
+// form, not streamed. Its cost goes
 // to the conversation's records whatever it answers. Its record follows the
 // ones the fork started after; any later ones no longer fit the messages.
-async function summarize(key: string, f: Fork, target: string, headers: Record<string, string>, sent: Buffer, logDir?: string): Promise<void> {
+async function summarize(p: Prepared, f: Fork, target: string, headers: Record<string, string>): Promise<void> {
+  const { key, logDir } = p
   forking.add(key)
   const began = Date.now()
-  const body = JSON.parse(sent.toString('utf8'))
+  const body = p.proto.fork(JSON.parse(p.body.toString('utf8')), instructions(f))
   const asked = { start: f.start, current: f.current, maxTokens: body.max_tokens, thinking: body.thinking }
   const before = loadSummaries(key)
   writeFileSync(summariesOf(key), JSON.stringify({ ...before, requests: before.requests + 1 }))
   try {
-    body.messages = forkMessages(body.messages, instructions(f))
-    body.stream = false
     const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
-    const out: { content?: Block[]; usage?: Usage } = await r.json()
-    if (!r.ok) throw new Error(`${r.status} ${JSON.stringify(out).slice(0, 500)}`)
+    const json = await r.json()
+    if (!r.ok) throw new Error(`${r.status} ${JSON.stringify(json).slice(0, 500)}`)
+    const out = p.proto.forkAnswer(json)
     const time = new Date().toISOString()
-    const record = recordOf(out.content ?? [], f, time)
+    const record = recordOf(out.content, f, time)
     const s = loadSummaries(key)
-    writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(body.model, body.provider, out.usage) : 0) }))
+    writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(p.model, p.provider, out.usage) : 0) }))
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
     console.error('ctx-shaver: summary fork failed:', err)

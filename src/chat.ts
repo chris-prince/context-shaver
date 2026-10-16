@@ -69,7 +69,8 @@ export function canonical(wire: Record<string, unknown>): { body: Canonical; ren
   const body: Canonical = { model: String(wire.model ?? ''), messages, system, tools, stream: !!wire.stream, provider: (wire.provider as { order?: string[] } | undefined)?.order?.[0], prompt_cache_key: wire.prompt_cache_key, user: wire.user }
 
   // A message the core left is sent as it came. One it changed is rebuilt
-  // from the wire message it was made from, each block it left sent as it came.
+  // from the wire message it was made from, each block it left sent as it came;
+  // one it made (a record, summary.ts) is sent as plain text.
   function renderMsg(m: ApiMsg): WireMsg[] {
     const was = from.get(m)
     if (was) return was
@@ -88,7 +89,7 @@ export function canonical(wire: Record<string, unknown>): { body: Canonical; ren
       return { ...(was ?? { id: String(b.id), type: 'function' }), function: { name: String(b.name), arguments: typeof b.input === 'string' ? b.input : JSON.stringify(b.input) } }
     })
     const text = parts.every((p) => p.type === 'text')
-    out.content = typeof base?.content === 'string' && text ? parts.map((p) => p.text).join('') : parts.length ? parts : m.role === 'assistant' ? null : ''
+    out.content = (!base || typeof base.content === 'string') && text ? parts.map((p) => p.text).join('') : parts.length ? parts : m.role === 'assistant' ? null : ''
     if (calls.length) out.tool_calls = calls
     else delete out.tool_calls
     return [out]
@@ -194,5 +195,17 @@ export const CHAT: Protocol = {
   automatic: true,
   conventions: OPENCODE,
   defers: false,
-  forks: false,
+  // The fork's question is a user message of its own after the request's, so
+  // every message before it is sent as it came. A stream's options go with
+  // the stream.
+  fork: (sent, text) => {
+    const { stream_options: _, ...rest } = sent
+    return { ...rest, stream: false, messages: [...(sent.messages as WireMsg[]), { role: 'user', content: text }] }
+  },
+  forkAnswer: (out) => {
+    const o = out as { choices?: { message?: WireMsg }[]; usage?: Parameters<typeof usageOf>[0] }
+    const m = o.choices?.[0]?.message
+    const content: Block[] = [...partsOf(m?.content).map((p): Block => ({ type: 'text', text: p.text ?? '' })), ...(m?.tool_calls ?? []).map((c): Block => ({ type: 'tool_use', id: c.id, name: c.function.name, input: c.function.arguments }))]
+    return { content, usage: usageOf(o.usage) }
+  },
 }

@@ -117,8 +117,9 @@ The cache differs too. Messages marks breakpoints; Chat Completions providers
 cache each request's prefix themselves and read the longest part of it within
 20 user or tool-result runs of the new request's end (measured on GPT-5.6), with
 writes priced as input. `positionsOf` models that as one breakpoint at the end,
-with entries at each user message's end. The anchor breakpoint, record forks and
-tool deferral are Messages-only for now.
+with entries at each user message's end. Record forks work on both: each
+protocol builds its own fork request and reads its answer. The anchor breakpoint
+and tool deferral are Messages-only for now.
 
 OpenCode reaches the proxy through `/via/` with OpenRouter's or OpenAI's base
 URL (`/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`).

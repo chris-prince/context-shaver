@@ -4,9 +4,10 @@
 import type { IncomingHttpHeaders } from 'node:http'
 import { reply } from './command.ts'
 import type { Usage } from './cost.ts'
-import { CLAUDE_CODE } from './items.ts'
+import { CLAUDE_CODE, type ApiMsg, type Block } from './items.ts'
 import { hash } from './log.ts'
 import type { Canonical, Content, Protocol } from './protocol.ts'
+import { forkMessages } from './summary.ts'
 
 // A conversation's ID. Claude Code sends the session ID with every request,
 // and an agent ID (x-claude-code-agent-id) with each subagent's; the main loop
@@ -91,5 +92,9 @@ export const MESSAGES: Protocol = {
   automatic: false,
   conventions: CLAUDE_CODE,
   defers: true,
-  forks: true,
+  fork: (sent, text) => ({ ...sent, messages: forkMessages(sent.messages as ApiMsg[], text), stream: false }),
+  forkAnswer: (out) => {
+    const o = out as { content?: Block[]; usage?: Usage }
+    return { content: o.content ?? [], usage: o.usage }
+  },
 }
