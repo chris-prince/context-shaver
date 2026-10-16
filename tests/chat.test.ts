@@ -65,13 +65,6 @@ test('a stream is asked for its usage', () => {
   assert.deepEqual(out.stream_options, { include_usage: true })
 })
 
-test('two sessions started the same way get different ids when they name themselves', () => {
-  const a = CHAT.conversationId({ ...canonical(wire).body, prompt_cache_key: 'ses_a' }, {})
-  const b = CHAT.conversationId({ ...canonical(wire).body, prompt_cache_key: 'ses_b' }, {})
-  assert.notEqual(a, b)
-  assert.match(a, /^chat-ses_a-/)
-})
-
 test('usage counts the prompt as uncached, read and written together', () => {
   const r = CHAT.usageReader()
   const ev = (o: unknown) => new TextEncoder().encode(`data: ${JSON.stringify(o)}\n\n`)

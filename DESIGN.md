@@ -53,7 +53,7 @@ headers as they come.
 
 If `ANTHROPIC_BASE_URL` is already set when `claude-via-shaver` runs, say to a
 company gateway, ctx-shaver goes in front of it rather than replacing it.
-Claude Code's base URL becomes `http://127.0.0.1:8787/via/<upstream>`, the
+Claude Code's base URL becomes `http://127.0.0.1:8787/harness/claude/via/<upstream>`, the
 upstream's base URL percent-encoded as one path segment, and
 the proxy sends that session's requests there with the prefix stripped
 (`src/via.ts`). The upstream may be `http` or `https`, and may have a path of
@@ -96,20 +96,31 @@ Responses (`…/responses`, Codex); the request's path picks which
 (`src/protocol.ts`). The trim, the policy, the cache model and the journal work
 on one message model, the Messages shape (`src/items.ts`). A protocol turns its
 requests into that and back (`src/messages.ts`, `src/chat.ts`,
-`src/responses.ts`), and supplies what only it knows: how a conversation is
-named, what a response's usage is and when its answer is complete, how an
-answer made here looks, and the client's conventions (`Conventions`: which tools are skills and tool loads, which inputs
-can be stubbed, which tool runs shell commands).
+`src/responses.ts`), and supplies what only it knows: what a response's usage
+is and when its answer is complete, and how an answer made here looks.
 
-Each convention is the client's half of something the core needs. The
-clearest is the conversation ID: the core needs one per conversation, the same
-on all its requests and on no other's, and keys state, journals and logs on it.
-Claude Code's comes from its session and agent IDs. A Chat Completions
-request's first message is the system prompt, the same for every session in a
-repository, so its ID is the session OpenCode names (`prompt_cache_key`,
-`user` or a session header) with the first message after the system's.
-Codex's is its session's (`prompt_cache_key` or the `session-id` header), named
-the same way.
+What a request holds depends on three things apart. The protocol decides how
+it is read and written. The model and its provider decide what the cache does
+and what it costs (`src/models.ts`). The harness, the client sending it,
+decides what the conversation is made of (`src/harness.ts`): its tools'
+names and the inputs that can be stubbed, which tool runs shell commands, its
+system prompt's sections, and its session's ID. OpenCode speaks all three
+protocols, to any of their models, and its tools are its own on each.
+
+A wrapper names its harness in the base URL, `/harness/<name>` before any
+`/via/` (`claude`, `codex` or `opencode`). Without one, the harness is the one
+whose own headers the request sends (`x-claude-code-…`, `x-codex-…`,
+`x-opencode-…`): each sends them on purpose, to name itself and its session,
+so they are not a guess from what its requests happen to look like. With
+neither, the harness is unknown, and the core trims with no conventions: no
+inputs stubbed, the system prompt one section. A `/harness/` that names none
+is refused.
+
+The conversation ID is the clearest thing a harness supplies: the core needs
+one per conversation, the same on all its requests and on no other's, and
+keys state, journals and logs on it. Claude Code's comes from its session and
+agent IDs, OpenCode's from `x-opencode-session-id`, Codex's from
+`prompt_cache_key` or the `session-id` header (What it trims).
 
 A Chat Completions or Responses request is rebuilt only where the core changed
 it: every message, item and block it left is sent as it came, since the cache
@@ -140,8 +151,7 @@ and Anthropic's are set the same way), in `OPENCODE_CONFIG_CONTENT`, which
 OpenCode merges over its config. Its background service doesn't read that, so
 the TUI, `run` and `mini` get `--standalone`. Through OpenAI it uses Responses
 and tries a WebSocket first, which the proxy refuses by not passing the
-upgrade on; through Anthropic it uses Messages with no `metadata.user_id`, so
-its session ID comes from `x-session-id`. Codex reaches it with ChatGPT's backend, through a provider of
+upgrade on; through Anthropic it uses Messages. Codex reaches it with ChatGPT's backend, through a provider of
 its own set with `-c` flags. Pointing the built-in provider elsewhere
 (`openai_base_url`) isn't enough: it tries a WebSocket first on every request,
 which the proxy doesn't take. To send every Codex session through the proxy,
@@ -152,7 +162,7 @@ model_provider = "shaver"
 
 [model_providers.shaver]
 name = "ctx-shaver"
-base_url = "http://127.0.0.1:8787/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
+base_url = "http://127.0.0.1:8787/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
 wire_api = "responses"
 requires_openai_auth = true
 supports_websockets = false
@@ -228,7 +238,7 @@ state: the applied clock below counts steps and turns into it, and its cache
 entries are prefixes of it, so neither carries over to another history. Its
 key is `claude-`, the session ID, the agent ID and a hash of its first message
 (`claude-<session>-<agent or main>-<hash>`); OpenCode's and Codex's start
-`chat-` and `codex-` (Protocols):
+`opencode-` and `codex-` with their session's ID (Protocols):
 
 - Claude Code sends the session ID with every request. It keeps apart sessions
   whose first message is the same, as when two start with `:shaver info` in
@@ -244,8 +254,10 @@ key is `claude-`, the session ID, the agent ID and a hash of its first message
   cached, a new journal. Keeping the old state would point its clock at turns
   the new history doesn't have, and count on cache entries it can't read.
 
-Without a session ID (other clients), the key is `claude-` and the first
-message's hash.
+Without a session ID, the key is the harness's name and the first message's
+hash. An unknown harness's starts with its protocol's name (`messages-`,
+`chat-` or `responses-`), and has the body's `prompt_cache_key` or `user` as
+its session if it sends one.
 
 A step is an assistant message with the tool results that answer it. The
 latest step, the one the model is answering, is never touched. A turn starts

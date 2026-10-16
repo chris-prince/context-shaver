@@ -9,10 +9,9 @@
 // it was is sent as it came: the cache is a prefix match on the bytes, so one
 // sent differently costs a write.
 
-import type { IncomingHttpHeaders } from 'node:http'
 import type { Usage } from './cost.ts'
-import type { ApiMsg, Block, Conventions } from './items.ts'
-import { eventReader, openaiError, openaiUsage, sessionConversation, type Canonical, type Content, type Protocol } from './protocol.ts'
+import type { ApiMsg, Block } from './items.ts'
+import { eventReader, openaiError, openaiUsage, type Canonical, type Content, type Protocol } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Call = { id: string; type: 'function'; function: { name: string; arguments: string } }
@@ -107,12 +106,6 @@ export function canonical(wire: Record<string, unknown>): { body: Canonical; ren
 
 const partsOf = (c: WireMsg['content']): Part[] => (typeof c === 'string' ? [{ type: 'text', text: c }] : c ?? [])
 
-// The core's requirement of a conversation ID, made true here: OpenCode sends
-// its session's ID as prompt_cache_key (to OpenAI) or user, or as a header; with
-// none, the first message after the system's names the conversation, which two
-// sessions started the same way share.
-const conversationId = (c: Canonical, headers: IncomingHttpHeaders) => sessionConversation('chat', c, [c.prompt_cache_key, c.user, headers['x-session-id'], headers['session_id']])
-
 // A response's usage, from its last chunk for a stream (render asks for it).
 function usageOf(u: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } } | undefined): Usage | undefined {
   if (!u?.prompt_tokens) return undefined
@@ -145,35 +138,14 @@ function reply(text: string, model: string, stream: boolean, context: number): s
   return chunk([{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }]) + chunk([{ index: 0, delta: {}, finish_reason: 'stop' }]) + chunk([], { usage }) + 'data: [DONE]\n\n'
 }
 
-// OpenCode's tools, as its 2.x requests name them: edit's and write's text, and
-// shell for shell commands. Its skill tool is left a plain tool until we see
-// what its result holds; it has no tool-loading tool.
-export const OPENCODE: Conventions = {
-  kinds: {},
-  stubbedInputs: { edit: ['oldString', 'newString'], write: ['content'] },
-  shell: 'shell',
-  // OpenCode puts the skills, the rules files and the environment in its
-  // system prompt. '' matches at the start, so the text before the first
-  // heading is a section of its own.
-  promptHeadings: [
-    ['', 'system-prompt'],
-    ['# Code Mode', 'tools-execute'],
-    ['Skills provide specialized', 'skills'],
-    ['Instructions from: ', 'agents-md'],
-    ['Here is some useful information about the environment', 'other'],
-  ],
-}
-
 export const CHAT: Protocol = {
   name: 'chat',
   serves: (p) => p === '/v1/chat/completions' || p === '/chat/completions',
   canonical,
-  conversationId,
   usageReader,
   reply,
   error: openaiError,
   automatic: true,
-  conventions: OPENCODE,
   defers: false,
   // The summary fork's question is a user message of its own after the
   // request's, so every message before it is sent as it came. A stream's

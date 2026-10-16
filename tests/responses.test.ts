@@ -65,13 +65,6 @@ test('a record the core adds is sent as an assistant message', () => {
   assert.strictEqual(out[5], wire.input[8])
 })
 
-test('two sessions started the same way get different ids', () => {
-  const a = RESPONSES.conversationId(canonical(wire).body, {})
-  const b = RESPONSES.conversationId({ ...canonical(wire).body, prompt_cache_key: 'sess-b' }, {})
-  assert.notEqual(a, b)
-  assert.match(a, /^codex-sess-a-/)
-})
-
 const completed = { type: 'response.completed', response: { output: [{ type: 'reasoning', encrypted_content: 'e' }, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] }], usage: { input_tokens: 1000, output_tokens: 20, input_tokens_details: { cached_tokens: 900 } } } }
 const stream = `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: {} })}\n\nevent: response.completed\ndata: ${JSON.stringify(completed)}\n\n`
 

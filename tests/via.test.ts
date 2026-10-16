@@ -29,3 +29,8 @@ test("only this machine's Host is served", () => {
   for (const h of ['127.0.0.1:8787', 'localhost:8787', 'LOCALHOST', '127.0.0.1']) assert.ok(localHost(h), h)
   for (const h of [undefined, '', 'evil.com:8787', 'localhost.evil.com:8787', '127.0.0.1.evil.com', '10.0.0.1:8787', 'localhost:8787@evil.com']) assert.ok(!localHost(h), String(h))
 })
+
+test('a /harness/ path names its harness and is stripped, before any /via/', () => {
+  assert.deepEqual(route('/harness/codex/v1/responses', API), { upstream: API, url: '/v1/responses', harness: 'codex' })
+  assert.deepEqual(route(`/harness/opencode${via('https://openrouter.ai/api/v1', '/chat/completions')}`, API), { upstream: 'https://openrouter.ai/api/v1', url: '/chat/completions', harness: 'opencode' })
+})

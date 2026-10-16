@@ -1,13 +1,12 @@
 // What the proxy needs from each wire protocol it speaks (DESIGN.md,
 // "Protocols"). The core trims, prices and journals one message model, the
 // Messages shape (items.ts); a protocol turns its requests into that and back,
-// and supplies what only it knows: how a conversation is named, what a
-// response's usage is, and how an answer made here looks.
+// and supplies what only it knows: what a response's usage is, and how an
+// answer made here looks. What the client sending it knows is its harness's
+// (harness.ts).
 
-import type { IncomingHttpHeaders } from 'node:http'
 import type { Usage } from './cost.ts'
-import type { ApiMsg, Block, Conventions } from './items.ts'
-import { hash } from './log.ts'
+import type { ApiMsg, Block } from './items.ts'
 import type { Tool } from './stats.ts'
 
 // A request in the core's shape. Fields the core doesn't read ride along.
@@ -64,14 +63,6 @@ export function eventReader(read: { event(e: any): void; body(b: any): void; res
 // together; the core counts them apart.
 export const openaiUsage = (input: number, read: number, written: number, output: number): Usage => ({ input_tokens: input - read - written, cache_read_input_tokens: read, cache_creation_input_tokens: written, output_tokens: output })
 
-// A conversation's ID: the protocol's client, its session (the first of the
-// values that may name it), and its first message, which changes when the
-// client compacts the history into a new one (messages.ts).
-export function sessionConversation(prefix: string, c: Canonical, names: unknown[]): string {
-  const session = names.find((v) => typeof v === 'string' && v)
-  return `${prefix}-${session ? `${session}-` : ''}${hash(JSON.stringify(c.messages[0])).slice(0, 8)}`
-}
-
 export const openaiError = (status: number, message: string) => JSON.stringify({ error: { message, type: status === 403 ? 'permission_error' : status === 400 ? 'invalid_request_error' : 'api_error', code: status } })
 
 export type Protocol = {
@@ -82,9 +73,6 @@ export type Protocol = {
   // every message the core left as it was is sent as it came, byte for byte,
   // or the cache misses.
   canonical(wire: Record<string, unknown>): { body: Canonical; render(c: Canonical): unknown }
-  // The core's requirement: one ID per conversation, the same on each of its
-  // requests and on no other conversation's (server.ts, keyOf).
-  conversationId(c: Canonical, headers: IncomingHttpHeaders): string
   usageReader(): UsageReader
   // A response holding just `text`, as Claude Code's `:shaver` answers are made
   // (command.ts), with `context` reported as the input read.
@@ -95,7 +83,6 @@ export type Protocol = {
   // Whether the provider caches each request's prefix by itself, rather than
   // where breakpoints are marked (trim.ts, positionsOf).
   automatic: boolean
-  conventions: Conventions
   // Whether tools can be deferred (defer.ts).
   defers: boolean
   // A heavy-compaction summary fork (summary.ts): the request as sent, with

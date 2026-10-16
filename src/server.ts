@@ -24,6 +24,7 @@ import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { forceDefer } from './defer.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
+import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
 import { history, latest, record } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
@@ -123,12 +124,12 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
-function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unknown, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
+function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, render: (c: Canonical) => unknown, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   if (proto.defers && policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
-  const key = proto.conversationId(body, headers)
-  const conv = proto.conventions
+  const key = conversationId(h, proto.name, body, headers)
+  const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
   const s = load(key)
   const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
@@ -227,7 +228,7 @@ function prepare(proto: Protocol, body: Canonical, render: (c: Canonical) => unk
 // conversation is one message history that only grows: the proxy's applied
 // clock counts steps and turns into it, and its cache entries are prefixes of
 // it, so neither means anything for another history. The protocol makes the
-// key unique among the conversations it serves (Protocol.conversationId).
+// key unique among the conversations it serves (harness.ts, conversationId).
 
 // The answer to `:shaver policy`: the policy file as it is now, which may differ
 // from what was loaded at startup if it was edited since.
@@ -242,14 +243,14 @@ function policyText(): string {
 // The answer to `:shaver info`: the conversation's latest answered request,
 // from its journal (stats.ts), or before there is one, this request estimated
 // as it will be sent once the command is answered, tools deferred.
-function stats(proto: Protocol, body: Canonical, headers: IncomingHttpHeaders): string {
+function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers: IncomingHttpHeaders): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   if (proto.defers && policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
-  const key = proto.conversationId(sent, headers)
+  const key = conversationId(h, proto.name, sent, headers)
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests } = loadSummaries(key)
   const withSummaryForks = c && { ...c, actual: c.actual + summaryForks }
-  const text = s ? render(s, key, false, withSummaryForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, proto.conventions)), key, true, withSummaryForks, requests)
+  const text = s ? render(s, key, false, withSummaryForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)), key, true, withSummaryForks, requests)
   return '```\n' + text + '\n```'
 }
 
@@ -296,6 +297,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (!localHost(req.headers.host)) return refuse(res, proto, 403, `ctx-shaver proxy: refused a request for Host ${req.headers.host}`)
   if ('error' in r) return refuse(res, proto, 400, `ctx-shaver proxy: ${r.error}`)
   const { upstream, url } = r
+  const h = harnessOf(r.harness, req.headers)
+  if (h && 'error' in h) return refuse(res, proto, 400, `ctx-shaver proxy: ${h.error}`)
   // bin/run-proxy --restart and --stop stop the proxy with this. The header
   // keeps a web page from sending it: browsers send a custom header only after a
   // CORS check this proxy doesn't answer.
@@ -318,9 +321,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const msgs = stripCommands(body.messages)
         const command = body.tools?.length && pendingCommand(msgs)
         if (command) {
-          const text = command === ':shaver policy' ? policyText() : stats(proto, { ...body, messages: msgs }, req.headers)
+          const text = command === ':shaver policy' ? policyText() : stats(proto, h, { ...body, messages: msgs }, req.headers)
           res.writeHead(200, { ...limits.get(proto), 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
-          const context = latestOf(proto.conversationId({ ...body, messages: withoutPending(msgs) }, req.headers))?.inputTokens ?? 0
+          const context = latestOf(conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers))?.inputTokens ?? 0
           return void res.end(proto.reply(text, body.model, !!body.stream, context))
         }
         if (msgs.length < body.messages.length) {
@@ -332,7 +335,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('ctx-shaver: commands left in:', err)
     }
     try {
-      if (c && body) p = prepare(proto, body, c.render, req.headers, Date.now())
+      if (c && body) p = prepare(proto, h, body, c.render, req.headers, Date.now())
     } catch (err) {
       console.error('ctx-shaver: request left untrimmed:', err)
     }

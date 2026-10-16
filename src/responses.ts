@@ -11,10 +11,9 @@
 // Rendered back, every item the core left as it was is sent as it came: the
 // cache is a prefix match on the bytes, so one sent differently costs a write.
 
-import type { IncomingHttpHeaders } from 'node:http'
 import type { Usage } from './cost.ts'
-import { blocks, type ApiMsg, type Block, type Conventions } from './items.ts'
-import { eventReader, openaiError, openaiUsage, sessionConversation, type Canonical, type Content, type Protocol } from './protocol.ts'
+import { blocks, type ApiMsg, type Block } from './items.ts'
+import { eventReader, openaiError, openaiUsage, type Canonical, type Content, type Protocol } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Item = { type: string; role?: string; content?: Part[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: unknown; encrypted_content?: string; summary?: Part[]; [k: string]: unknown }
@@ -124,10 +123,6 @@ export function canonical(wire: Record<string, unknown>): { body: Canonical; ren
   return { body, render: (c) => ({ ...wire, input: [...head, ...c.messages.flatMap(renderMsg)] }) }
 }
 
-// The core's requirement of a conversation ID, made true here: Codex sends its
-// session's ID as prompt_cache_key and as the session-id header.
-const conversationId = (c: Canonical, headers: IncomingHttpHeaders) => sessionConversation('codex', c, [c.prompt_cache_key, headers['session-id']])
-
 type Response = { output?: Item[]; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } } }
 
 function usageOf(u: Response['usage']): Usage | undefined {
@@ -167,37 +162,16 @@ function reply(text: string, model: string, stream: boolean, context: number): s
   )
 }
 
-// Codex's tools are run from JavaScript, by one custom exec tool, so no call's
-// input has fields of its own to stub, nor a shell command apart.
-export const CODEX: Conventions = {
-  kinds: {},
-  stubbedInputs: {},
-  shell: '',
-  promptHeadings: [
-    ['', 'system-prompt'],
-    ['<skills_instructions>', 'skills'],
-    ['<permissions instructions>', 'permissions'],
-    ['<collaboration_mode>', 'collaboration-mode'],
-    ['<recommended_plugins>', 'plugins'],
-    ['<multi_agent_role>', 'multi-agent'],
-    ['<multi_agent_mode>', 'multi-agent'],
-    ['# AGENTS.md instructions', 'agents-md'],
-    ['<environment_context>', 'other'],
-  ],
-}
-
 export const RESPONSES: Protocol = {
   name: 'responses',
   serves: (p) => p === '/v1/responses' || p === '/responses',
   canonical,
-  conversationId,
   usageReader,
   reply,
   error: openaiError,
   // Codex's limits and credits; its turn state is the turn's, not the account's.
   limits: /^x-codex-(?!turn-state)/,
   automatic: true,
-  conventions: CODEX,
   defers: false,
   // The summary fork's question is a user message of its own after the
   // request's items. ChatGPT's backend only streams, so it stays as it was.

@@ -12,7 +12,7 @@ set -euo pipefail
 bin=$(dirname "$(readlink -f "$0")")
 "$bin/run-proxy"
 port=${CTX_SHAVER_PORT:-8787}
-via() { printf '"%s":{"options":{"baseURL":"http://127.0.0.1:%s/via/%s"}}' "$1" "$port" "$2"; }
+via() { printf '"%s":{"options":{"baseURL":"http://127.0.0.1:%s/harness/opencode/via/%s"}}' "$1" "$port" "$2"; }
 export OPENCODE_CONFIG_CONTENT="{\"provider\":{$(via openrouter https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1),$(via openai https%3A%2F%2Fapi.openai.com%2Fv1),$(via anthropic https%3A%2F%2Fapi.anthropic.com%2Fv1)}}"
 case ${1:-} in
   run | mini) exec opencode "$1" --standalone "${@:2}" ;;
