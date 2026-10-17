@@ -111,9 +111,11 @@ export function harnessOf(declared: string | undefined, headers: IncomingHttpHea
 // happens when two Claude Code sessions start with `:shaver info` in the same
 // repo state: once the command is stripped, all that is left of it is the same
 // reminders. An unknown harness's is the body's prompt_cache_key or user, if
-// it sends one; with neither, the first message is the ID alone.
+// it sends one; with neither, the first message is the ID alone. A request
+// that is only a command, as Codex's first one can be, has no messages once it
+// is stripped.
 export function conversationId(h: Harness | undefined, protocol: string, c: Canonical, headers: IncomingHttpHeaders): string {
   const names = h ? [h.session(c, headers)] : [c.prompt_cache_key, c.user]
   const session = names.find((v) => typeof v === 'string' && v)
-  return `${h?.name ?? protocol}-${session ? `${session}-` : ''}${hash(JSON.stringify(c.messages[0])).slice(0, 8)}`
+  return `${h?.name ?? protocol}-${session ? `${session}-` : ''}${hash(JSON.stringify(c.messages[0] ?? null)).slice(0, 8)}`
 }

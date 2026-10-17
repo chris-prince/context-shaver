@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { conversationId, harnessOf, type Harness } from '../src/harness.ts'
+import { canonical as chat } from '../src/chat.ts'
+import { canonical as responses } from '../src/responses.ts'
+import { withoutPending } from '../src/command.ts'
 
 const msgs = [{ role: 'user' as const, content: 'hi' }]
 const of = (declared: string | undefined, headers = {}) => harnessOf(declared, headers) as Harness | undefined
@@ -32,6 +35,20 @@ test("each harness's session names its conversations, on any protocol", () => {
   assert.match(conversationId(of('opencode'), 'responses', { model: 'm', messages: msgs, prompt_cache_key: 'k' }, { 'x-opencode-session-id': 'ses_a' }), /^opencode-ses_a-/)
   assert.match(conversationId(of('codex'), 'responses', { model: 'm', messages: msgs, prompt_cache_key: 'sess-a' }, {}), /^codex-sess-a-/)
   assert.match(conversationId(of('codex'), 'responses', { model: 'm', messages: msgs }, { 'session-id': 'sess-b' }), /^codex-sess-b-/)
+})
+
+// As `:shaver info` names the conversation, from the request with the command
+// taken out: on a first request that leaves no messages at all.
+test('a first request that is only a command still names its conversation', () => {
+  const named = (body: { messages: never[] } & object, h: string, protocol: string, headers = {}) =>
+    conversationId(of(h), protocol, { ...body, messages: withoutPending(body.messages) } as never, headers)
+  const codex = responses({ model: 'gpt-6-luna', prompt_cache_key: 'sess-a', instructions: 'You are Codex.', input: [
+    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'rules' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: ':shaver info' }] },
+  ] }).body
+  assert.match(named(codex as never, 'codex', 'responses'), /^codex-sess-a-[0-9a-f]{8}$/)
+  const opencode = chat({ model: 'm', messages: [{ role: 'system', content: 'You are OpenCode.' }, { role: 'user', content: ':shaver info' }] }).body
+  assert.match(named(opencode as never, 'opencode', 'chat', { 'x-opencode-session-id': 'ses_a' }), /^opencode-ses_a-[0-9a-f]{8}$/)
 })
 
 test("an unknown harness's conversations are named by protocol, and by a session the body names", () => {
