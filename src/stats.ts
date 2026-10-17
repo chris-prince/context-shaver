@@ -30,8 +30,10 @@ export type Sent = {
   turns: number
   parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number; born?: string }>
   // `sections` is the system prompt's bytes by section, when the protocol's
-  // conventions cut it (Conventions.promptHeadings).
-  defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number> }
+  // conventions cut it (Conventions.promptHeadings); `deferred` is the bytes of
+  // the tool definitions the proxy deferred (defer.ts), which the base would
+  // hold without it.
+  defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number>; deferred?: number }
   ends: { tools: number; reasoning: number }
   // Whether the proxy advanced its trim on this request.
   advanced: boolean
@@ -223,6 +225,16 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   }
 }
 
+// The base's tokens: the system blocks and tools, and the system messages.
+export function baseOf(s: Stats): number {
+  let n = s.tokens[s.defs.key] ?? 0
+  for (const p of s.parts) {
+    const bytes = Object.values(p.kinds).reduce((a, b) => a + b, 0)
+    for (const [kind, b] of Object.entries(p.kinds)) if (kind === 'system' || kind.startsWith('system:')) n += ((s.tokens[p.key] ?? 0) * b) / bytes
+  }
+  return n
+}
+
 // The kinds the frontier holds back, each with the frontier that trims it.
 const FRONTIER: Record<string, 'tools' | 'reasoning'> = { reasoning: 'reasoning', toolCalls: 'tools', toolResults: 'tools' }
 const inFrontier = (kind: string, i: number, ends: Sent['ends']) => kind in FRONTIER && i >= ends[FRONTIER[kind]]
@@ -294,8 +306,12 @@ export function estimate(r: Sent): Stats {
   return { ...observe(undefined, r, Math.round(bytes * BYTE_TOKENS), 0), requests: 0, turns: 0 }
 }
 
-// The session's cost without the shaver and as it was (cost.ts).
-const costLines = (c: Cost) => difference('Costs (session)', c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated)', 'actual', 'saved'])
+// The session's cost without the shaver and as it was (cost.ts), with the
+// client's own compactions the shaver kept it from needing.
+const costLines = (c: Cost) => [
+  ...difference('Costs (session)', c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated)', 'actual', 'saved']),
+  ...(c.compactions ? [`  Auto-compactions avoided: ${c.compactions} (about ${Math.round(c.waitMs / 60_000)} min of waiting)`] : []),
+]
 
 const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 

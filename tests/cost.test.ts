@@ -9,19 +9,19 @@ const at = (minute: number, inputTokens: number, removedTokens: number, model = 
 const usage = (uncached: number, reads: number, writes: number, output = 0): Usage => ({ input_tokens: uncached, cache_read_input_tokens: reads, cache_creation_input_tokens: writes, cache_creation: { ephemeral_1h_input_tokens: writes }, output_tokens: output })
 
 test('cold, both read only the shared prefix and write the rest', () => {
-  assert.deepEqual(without(undefined, at(0, 10_000, 4000), usage(10, 5000, 4990, 7), HOUR), { uncached: 10, reads: 5000, writes: 8990, output: 7 })
-  assert.deepEqual(without(at(0, 10_000, 4000), at(61, 10_000, 4000), usage(10, 5000, 4990), HOUR).writes, 8990)
+  assert.deepEqual(without(undefined, at(0, 10_000, 4000), usage(10, 5000, 4990, 7), HOUR).tokens, { uncached: 10, reads: 5000, writes: 8990, output: 7 })
+  assert.deepEqual(without(at(0, 10_000, 4000), at(61, 10_000, 4000), usage(10, 5000, 4990), HOUR).tokens.writes, 8990)
 })
 
 test('a warm advance would have read the whole previous prompt', () => {
   // Was 20k, of which nothing trimmed; now 12k with 9k trimmed: 21k w/o.
-  assert.deepEqual(without(at(0, 20_000, 0), at(1, 12_000, 9000), usage(10, 5000, 6990), HOUR), { uncached: 10, reads: 20_000, writes: 990, output: 0 })
+  assert.deepEqual(without(at(0, 20_000, 0), at(1, 12_000, 9000), usage(10, 5000, 6990), HOUR).tokens, { uncached: 10, reads: 20_000, writes: 990, output: 0 })
 })
 
 test('otherwise the trimmed-out tokens are read on a hit and written on a miss', () => {
   const prev = at(0, 12_000, 9000)
-  assert.deepEqual(without(prev, at(1, 13_000, 9000), usage(10, 12_000, 990), HOUR), { uncached: 10, reads: 21_000, writes: 990, output: 0 })
-  assert.deepEqual(without(prev, at(1, 13_000, 9000), usage(10, 5000, 7990), HOUR), { uncached: 10, reads: 5000, writes: 16_990, output: 0 })
+  assert.deepEqual(without(prev, at(1, 13_000, 9000), usage(10, 12_000, 990), HOUR).tokens, { uncached: 10, reads: 21_000, writes: 990, output: 0 })
+  assert.deepEqual(without(prev, at(1, 13_000, 9000), usage(10, 5000, 7990), HOUR).tokens, { uncached: 10, reads: 5000, writes: 16_990, output: 0 })
 })
 
 test('cost totals both sides in dollars', () => {
@@ -56,10 +56,30 @@ test('adding a request at a time gives the same cost as the whole journal', () =
     { stats: at(1, 12_000, 9000), usage: usage(0, 5000, 7000) },
     { stats: at(2, 13_000, 9000), usage: usage(0, 12_000, 1000) },
   ]
-  let c = add({ without: 0, actual: 0 }, undefined, lines[0].stats, lines[0].usage, HOUR)
+  let c = add({ without: 0, actual: 0, compactions: 0, waitMs: 0 }, undefined, lines[0].stats, lines[0].usage, HOUR)
   for (let i = 1; i < lines.length; i++) c = add(c, lines[i - 1].stats, lines[i].stats, lines[i].usage, HOUR)
   assert.deepEqual(c, cost(lines, HOUR))
   assert.equal(add(c, lines[2].stats, at(3, 13_000, 9000, 'm'), usage(0, 13_000, 0), HOUR), undefined)
+})
+
+test('past compactAt the client compacts, keeping the base and some of the rest', () => {
+  // A 10k base, 6k of it tools of which the proxy deferred a third more.
+  const big = (minute: number, inputTokens: number, removedTokens: number) =>
+    ({ ...at(minute, inputTokens, removedTokens), tokens: { d: 10_000 }, parts: [], defs: { key: 'd', systemPrompt: 400, tools: 600, deferred: 200 } }) as unknown as Stats
+  const lines = [
+    { stats: big(0, 100_000, 0), usage: usage(0, 0, 100_000) },
+    // 172k w/o the proxy: a 12k base and a 160k rest. It compacts after.
+    { stats: big(1, 70_000, 100_000), usage: usage(0, 10_000, 60_000) },
+    // The client's rest grew 20k: w/o, the rest is 160k kept, plus 20k.
+    { stats: big(2, 90_000, 100_000), usage: usage(0, 70_000, 20_000) },
+  ]
+  const c = cost(lines, HOUR)!
+  assert.equal(c.compactions, 1)
+  assert.equal(c.waitMs, 65_000)
+  assert.ok(Math.abs(c.context!.rest - (160_000 * 0.2 + 20_000)) < 1e-6)
+  // The request after it reads the base and writes the rest.
+  const w = without(lines[1].stats, lines[2].stats, lines[2].usage, HOUR, { rest: 160_000 * 0.2, client: 160_000, cached: 12_000 }, 165_000)
+  assert.ok(Math.abs(w.tokens.reads - 12_000) < 1e-6 && Math.abs(w.tokens.writes - (160_000 * 0.2 + 20_000)) < 1e-6)
 })
 
 test('render shows the cost after the tokens', () => {

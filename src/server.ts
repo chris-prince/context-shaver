@@ -127,7 +127,7 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { render, ids }: Wire, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
-  if (proto.defers && h?.defers && policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
+  const deferred = proto.defers && h?.defers && policy.tools_not_deferred ? forceDefer(body, policy.tools_not_deferred) : 0
   const key = conversationId(h, proto.name, body, headers)
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
@@ -187,6 +187,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const time = new Date(now).toISOString()
   // A record takes its turns' prompts out of the messages; the stats count them still.
   const described = { ...describe(body, trimmed, time, d?.advanced || records > before, conv), turns: msgs.filter(isPrompt).length }
+  if (deferred) described.defs.deferred = deferred
   // Each record is dated by the first message it covers.
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))

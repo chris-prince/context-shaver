@@ -20,15 +20,22 @@ export type Model = {
   // Tokens of earlier turns that start a summary fork, in place of the policy's
   // summary_threshold_tokens; the policy still decides whether there are any.
   summaryThreshold?: number
+  // The prompt's tokens past which the client compacts the conversation by
+  // itself, which the cost without the shaver counts (cost.ts).
+  compactAt?: number
 }
 type Settings = Partial<Model>
 
+// Claude Code compacts on a 200K window at about 165K: five compactions
+// logged here fired at 144-167K.
+const CLAUDE_CODE = { compactAt: 165_000 }
+
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
-  'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 } },
-  'claude-fable-5-1': { price: { input: 10, output: 50, read: 0.25 } },
-  'claude-mythos-5-1': { price: { input: 10, output: 50, read: 0.25 } },
-  'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.2 } },
-  'claude-haiku-5-5': { price: { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } } },
+  'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },
+  'claude-fable-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
+  'claude-mythos-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
+  'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.2 }, ...CLAUDE_CODE },
+  'claude-haiku-5-5': { price: { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } }, ...CLAUDE_CODE },
   // OpenAI's pricing page and prompt-caching guide (local/notes.md, "Check
   // Codex in use"): writes at 1.25x input, the latest 50 breakpoints looked
   // through, and entries kept at least 30 minutes after their last use. A

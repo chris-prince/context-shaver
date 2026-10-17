@@ -1,21 +1,30 @@
 // What a conversation's requests cost, and what they would have cost without
-// the proxy's trims, from its journal (journal.ts) and nothing more: each line
-// holds the request's usage as the API reported it, and the stats it leaves
-// give the prompt's size now (inputTokens) and without the trims
-// (inputTokens + removedTokens).
+// the proxy, from its journal (journal.ts) and nothing more: each line holds
+// the request's usage as the API reported it, and the stats it leaves give the
+// prompt's size now (inputTokens) and without the trims (inputTokens +
+// removedTokens).
 //
-// The counterfactual is per request, against the journal's previous one:
-// - Cold (none, or the cache's TTL has passed since): both read only what
-//   this one read, the system prompt and tools; the trimmed-out tokens would
-//   have been written too.
-// - Advanced while warm: the trim's rewrite. Without it the request would have
-//   read the whole previous prompt and written only what is new.
-// - Otherwise as it was, the trimmed-out tokens read on a hit and written on a
-//   miss.
+// Without the proxy the prompt would also hold the tool definitions it
+// deferred, in the base, and where the client compacts by itself (Model's
+// compactAt), the conversation would not have grown past that: the
+// counterfactual keeps its own size, growing as the client's conversation
+// grows, and once the prompt passes compactAt the client compacts it, as a
+// request reading the whole prompt and answering with a summary, and the
+// conversation after the base keeps KEPT of its size. That request, and the
+// wait for it, are what the proxy saved.
+//
+// Each request, against the journal's previous one:
+// - Cold (none, or the cache's TTL has passed since): it reads what this one
+//   read, with the deferred tools if that was the base, and writes the rest.
+// - Warm and advanced: it reads all the previous prompt was, or the base after
+//   a compaction, and writes the rest.
+// - Warm and read from the cache: it reads as far as this one, plus all the
+//   proxy took out, up to what the previous prompt was.
+// - Otherwise, a miss without a trim, as cold.
 // Output is the same either way.
 
 import { modelOf, type Price } from './models.ts'
-import type { Stats } from './stats.ts'
+import { baseOf, type Stats } from './stats.ts'
 
 export type Usage = {
   input_tokens: number
@@ -26,24 +35,47 @@ export type Usage = {
 }
 
 
-export type Tokens = { uncached: number; reads: number; writes: number; output: number }
-// Dollars, without the trims and as it was.
-export type Cost = { without: number; actual: number }
+// Five Claude Code compactions logged on 2026-10-08 to 10-10: what came after
+// the base kept 11-29% of its tokens (a median of 18%, rounded to 20%), the
+// summary ran 6.6-8.9K tokens, and the next request came about a minute later.
+const KEPT = 0.2
+const SUMMARY_TOKENS = 7600
+const COMPACTION_MS = 65_000
 
-// What the request would have sent without the trims.
-export function without(prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number): Tokens {
+export type Tokens = { uncached: number; reads: number; writes: number; output: number }
+// The prompt without the proxy, after a request: its tokens past the base,
+// those of the client's own (untrimmed) prompt, and how much of it the cache
+// holds for the next request.
+export type Context = { rest: number; client: number; cached: number }
+// Dollars, without the proxy and as it was; the compactions the proxy saved,
+// and the time they'd have taken.
+export type Cost = { without: number; actual: number; compactions: number; waitMs: number; context?: Context }
+
+// A request's base without the proxy: with the tool definitions it deferred,
+// at the base's tokens a byte.
+const baseWithout = (s: Stats) => (s.defs ? baseOf(s) + (s.defs.deferred ? ((s.tokens[s.defs.key] ?? 0) * s.defs.deferred) / (s.defs.systemPrompt + s.defs.tools) : 0) : 0)
+// The client's own (untrimmed) prompt past the base.
+const clientRest = (s: Stats) => s.inputTokens + (s.removedTokens ?? 0) - (s.defs ? baseOf(s) : 0)
+// The prompt without the proxy after a request, before any compaction.
+const contextOf = (s: Stats): Context => ({ rest: clientRest(s), client: clientRest(s), cached: baseWithout(s) + clientRest(s) })
+
+// What the request would have sent without the proxy, and the prompt then,
+// whether the client compacts after it. Without the prompt before it, that
+// is the previous request's as the client sent it.
+export function without(prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number, ctx = prev && contextOf(prev), compactAt?: number): { tokens: Tokens; context: Context; compacted: boolean } {
   const reads = u.cache_read_input_tokens ?? 0
-  const writes = u.cache_creation_input_tokens ?? 0
-  const removed = s.removedTokens ?? 0
-  const all = s.inputTokens + removed
-  const output = u.output_tokens ?? 0
+  const base = baseWithout(s)
+  const client = clientRest(s)
+  const rest = ctx ? Math.min(ctx.rest + client - ctx.client, client) : client
+  const all = base + rest
   const uncached = u.input_tokens
-  if (!prev || Date.parse(s.time) - Date.parse(prev.time) > ttlMs) return { uncached, reads, writes: writes + removed, output }
-  if (removed !== (prev.removedTokens ?? 0)) {
-    const r = Math.min(prev.inputTokens + (prev.removedTokens ?? 0), all - uncached)
-    return { uncached, reads: r, writes: all - uncached - r, output }
-  }
-  return reads >= s.inputTokens / 2 ? { uncached, reads: reads + removed, writes, output } : { uncached, reads, writes: writes + removed, output }
+  const warm = prev && ctx && Date.parse(s.time) - Date.parse(prev.time) <= ttlMs
+  const advanced = warm && (s.removedTokens ?? 0) !== (prev.removedTokens ?? 0)
+  const read = warm && !advanced && reads >= s.inputTokens / 2
+  const r = Math.min(all - uncached, advanced ? ctx.cached : read ? Math.min(ctx.cached, reads + all - s.inputTokens) : reads && reads + base - (s.defs ? baseOf(s) : 0))
+  const tokens = { uncached, reads: r, writes: all - uncached - r, output: u.output_tokens ?? 0 }
+  if (compactAt && all > compactAt) return { tokens, context: { rest: rest * KEPT, client, cached: base }, compacted: true }
+  return { tokens, context: { rest, client, cached: all }, compacted: false }
 }
 
 // A request's tokens in dollars; writes at the hour's price but for the share
@@ -65,13 +97,20 @@ export function spent(model: string, provider: string | undefined, u: Usage): nu
 // The cost so far with a request's added, given the stats it leaves, the stats
 // before it, and its usage; none once a request's model has no price.
 export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number): Cost | undefined {
-  const p = modelOf(s.model, s.provider).price
+  const m = modelOf(s.model, s.provider)
+  const p = m.price
   if (!c || !p) return undefined
   const actual: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
-  const wo = without(prev, s, u, ttlMs)
+  const short = (t: Tokens) => (ttlMs > 300_000 ? 0 : t.writes)
+  const wo = without(prev, s, u, ttlMs, c.context, m.compactAt)
+  const all = wo.tokens.uncached + wo.tokens.reads + wo.tokens.writes
+  const compaction: Tokens = { uncached: 0, reads: all, writes: 0, output: SUMMARY_TOKENS }
   return {
-    without: c.without + dollars(p, wo, ttlMs > 300_000 ? 0 : wo.writes),
+    without: c.without + dollars(p, wo.tokens, short(wo.tokens)) + (wo.compacted ? dollars(p, compaction, 0) : 0),
     actual: c.actual + dollars(p, actual, u.cache_creation?.ephemeral_5m_input_tokens ?? 0),
+    compactions: c.compactions + (wo.compacted ? 1 : 0),
+    waitMs: c.waitMs + (wo.compacted ? COMPACTION_MS : 0),
+    context: wo.context,
   }
 }
 
@@ -79,7 +118,7 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
 // and the usage it holds. Lines from before the journal held usage count for
 // nothing.
 export function cost(lines: Iterable<{ stats: Stats; usage?: Usage }>, ttlMs: number): Cost | undefined {
-  let c: Cost | undefined = { without: 0, actual: 0 }
+  let c: Cost | undefined = { without: 0, actual: 0, compactions: 0, waitMs: 0 }
   let prev: Stats | undefined
   for (const { stats: s, usage: u } of lines) {
     if (u) c = add(c, prev, s, u, ttlMs)

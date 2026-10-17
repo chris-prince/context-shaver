@@ -506,13 +506,21 @@ Scripts:
   alone, so it adds nothing to it: replayed once with the stats, then kept as
   a running total. Each request's actual uncached, cache-read, cache-write and
   output tokens come from its usage. Without the shaver the prompt would have
-  been `inputTokens + removedTokens`; its split is estimated from the gap
-  since the previous request and whether the trim advanced. After a gap longer
-  than the cache TTL, both read only the shared prefix and write the rest. On
-  a warm advance, which rewrites the cache, the shaverless prompt would have
-  read everything the previous one sent. Otherwise it mirrors the actual
-  request, with the trimmed-out tokens read on a hit and written on a miss.
-  Output is the same in both. Dollars use a per-model price table; for an
+  been `inputTokens + removedTokens`, plus the tool definitions the proxy
+  deferred (`defs.deferred`, in bytes, at the base's tokens a byte), until
+  the client compacts it itself: past the model's `compactAt` (165K for
+  Claude Code), the shaverless prompt keeps its base and 20% of the rest,
+  then grows as the client's prompt grows. Each compaction adds a request
+  reading the whole prompt and writing a 7.6K-token summary, and about 65
+  seconds of waiting, which the stats show as avoided; the figures come
+  from five logged compactions. The split is estimated from the gap
+  since the previous request and whether the trim advanced. After a gap
+  longer than the cache TTL, both read only the shared prefix and write the
+  rest. On a warm advance, which rewrites the cache, the shaverless prompt
+  would have read everything the previous one sent, or the base after a
+  compaction. Otherwise it mirrors the actual request, with the trimmed-out
+  tokens read on a hit and written on a miss. Output is the same in both.
+  Dollars use a per-model price table; for an
   unknown model the costs are left out. Prompt suggestions and command replies
   are left out, as the journal leaves them out.
 - `bin/node-wrapper scripts/stats-from-logs.ts <conversation dir> [--request N]
