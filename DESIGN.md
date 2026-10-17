@@ -534,6 +534,13 @@ Scripts:
   user prompt across sessions, such as runs of the same prompt under different
   policies: from the prompt to the next one, its steps, duration, cost, tool
   calls, trims applied and peak context.
+- `bin/node-wrapper scripts/read-codex-stops.ts [conversation dir ...]` shows, for
+  each Codex request logged with its items' IDs, where the cache read stopped
+  (by the API's usage per item), how much of what the request shared with the
+  one before it read, and why the rest was not read: the first request, the
+  tools or instructions changing, a trim, a message changing, a gap past the
+  TTL, or the API reading less than it had. It ends with the tokens each cause
+  cost. With no directory, it reads every Codex conversation.
 - `bin/node-wrapper scripts/audit.ts [--since <date>] [--all]` runs the checks listed in
   the script over every logged conversation and reports which need action,
   with what to do about each. It exits 1 when any check has findings.
