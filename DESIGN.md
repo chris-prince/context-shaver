@@ -457,7 +457,10 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     blocks carry `cache_control` (with none, the messages are read from no
     entry, so the proxy holds trimming). On the Responses API it also has
     `attribution`, the usage per input item and block as the API gives it,
-    keyed by IDs the API makes up;
+    keyed by the items' IDs. The IDs Codex sends with its items are logged
+    too: the head's (tools and instructions) as `headIds`, and each part's
+    with it as `ids`, as sent. One attribution entry is logged nowhere; it
+    looks like the model's answer to the request itself;
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind

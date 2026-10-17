@@ -13,7 +13,7 @@
 
 import type { Usage } from './cost.ts'
 import { blocks, type ApiMsg, type Block } from './items.ts'
-import { eventReader, openaiError, openaiUsage, type Canonical, type Content, type Protocol } from './protocol.ts'
+import { eventReader, openaiError, openaiUsage, type Canonical, type Content, type Protocol, type Wire } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Item = { type: string; role?: string; content?: Part[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: unknown; encrypted_content?: string; summary?: Part[]; [k: string]: unknown }
@@ -34,7 +34,7 @@ const sideOf = (it: Item): ApiMsg['role'] | 'output' =>
 // A tools item's tools and the request's own, each namespace's under its name.
 const toolsOf = (ts: Tool[]): Tool[] => ts.flatMap((t) => (t.type === 'namespace' && t.tools ? toolsOf(t.tools).map((x) => ({ ...x, name: `${t.name}.${x.name}` })) : [{ name: t.name ?? t.type, ...t }]))
 
-export function canonical(wire: Record<string, unknown>): { body: Canonical; render(c: Canonical): unknown } {
+export function canonical(wire: Record<string, unknown>): Wire {
   const all = (typeof wire.input === 'string' ? [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: wire.input }] }] : wire.input ?? []) as Item[]
   const lead = all.findIndex((it) => !isHead(it))
   const head = lead < 0 ? all : all.slice(0, lead)
@@ -120,7 +120,8 @@ export function canonical(wire: Record<string, unknown>): { body: Canonical; ren
     return out
   }
 
-  return { body, render: (c) => ({ ...wire, input: [...head, ...c.messages.flatMap(renderMsg)] }) }
+  const idsOf = (items: Item[]) => items.flatMap((it) => (typeof it.id === 'string' ? [it.id] : []))
+  return { body, render: (c) => ({ ...wire, input: [...head, ...c.messages.flatMap(renderMsg)] }), ids: { head: idsOf(head), of: (m) => idsOf(renderMsg(m)) } }
 }
 
 type Response = { output?: Item[]; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; attribution?: unknown } }

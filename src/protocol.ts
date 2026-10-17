@@ -67,14 +67,18 @@ export const openaiUsage = (input: number, read: number, written: number, output
 
 export const openaiError = (status: number, message: string) => JSON.stringify({ error: { message, type: status === 403 ? 'permission_error' : status === 400 ? 'invalid_request_error' : 'api_error', code: status } })
 
+export type Wire = { body: Canonical; render(c: Canonical): unknown; ids?: { head: string[]; of(m: ApiMsg): string[] } }
+
 export type Protocol = {
   name: 'messages' | 'chat' | 'responses'
   // Whether a request path is this protocol's, after any /via/ (via.ts).
   serves(path: string): boolean
   // The request as the core's, and how to put the core's back on the wire:
   // every message the core left as it was is sent as it came, byte for byte,
-  // or the cache misses.
-  canonical(wire: Record<string, unknown>): { body: Canonical; render(c: Canonical): unknown }
+  // or the cache misses. Where the wire names its items, as Responses does,
+  // ids gives the names: the head's (system and tools) and a message's, as
+  // sent, for the log to match the API's usage per item (log.ts).
+  canonical(wire: Record<string, unknown>): Wire
   usageReader(): UsageReader
   // A response holding just `text`, as Claude Code's `:shaver` answers are made
   // (command.ts), with `context` reported as the input read.

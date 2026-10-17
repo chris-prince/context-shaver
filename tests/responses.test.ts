@@ -41,6 +41,13 @@ test('a request becomes the core shape', () => {
   assert.equal((body.messages[2].content as Block[])[0].tool_use_id, 'c1')
 })
 
+test("items' IDs are given for the head and per message, as sent", () => {
+  const named = { ...wire, input: wire.input.map((it, i) => (i === 4 ? it : { ...it, id: `i${i}` })) }
+  const c = canonical(named)
+  assert.deepEqual(c.ids?.head, ['i0', 'i1', 'i2'])
+  assert.deepEqual(c.body.messages.map((m) => c.ids?.of(m)), [['i3'], ['i5', 'i6'], ['i7'], ['i8'], ['i9']])
+})
+
 test('a changed message keeps the items the core left', () => {
   const c = canonical(wire)
   const msgs = c.body.messages.map((m, i) => {

@@ -132,8 +132,8 @@ export function writeLine(dir: string, line: Record<string, unknown>): void {
 }
 
 // Saves each message not saved before, with its kinds; returns the request's
-// part list.
-export function writeParts(dir: string, msgs: readonly ApiMsg[]): Array<{ part: string; hash: string; bytes: number }> {
+// part list, each with the wire's names for its items when idsOf gives them.
+export function writeParts(dir: string, msgs: readonly ApiMsg[], idsOf?: (m: ApiMsg) => string[]): Array<{ part: string; hash: string; bytes: number; ids?: string[] }> {
   const parts = path.join(dir, 'parts')
   mkdirSync(parts, { recursive: true })
   const responded = msgs.findIndex((m) => m.role === 'assistant')
@@ -145,7 +145,8 @@ export function writeParts(dir: string, msgs: readonly ApiMsg[]): Array<{ part: 
       writeFileSync(file, json)
       writeFileSync(path.join(parts, `${h}.kinds.json`), JSON.stringify(kinds(json, m, responded < 0 || i < responded)))
     }
-    return { part: m.role, hash: h, bytes: json.length }
+    const ids = idsOf?.(m)
+    return { part: m.role, hash: h, bytes: json.length, ...(ids?.length && { ids }) }
   })
 }
 

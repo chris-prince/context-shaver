@@ -18,7 +18,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
-import type { Canonical, Content, Protocol, UsageReader } from './protocol.ts'
+import type { Canonical, Content, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
@@ -124,7 +124,7 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
-function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, render: (c: Canonical) => unknown, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
+function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { render, ids }: Wire, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   if (proto.defers && h?.defers && policy.tools_not_deferred) forceDefer(body, policy.tools_not_deferred)
@@ -219,7 +219,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, rende
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, parts: writeParts(p.logDir, body.messages), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -340,7 +340,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('context-shaver: commands left in:', err)
     }
     try {
-      if (c && body) p = prepare(proto, h, body, c.render, req.headers, Date.now())
+      if (c && body) p = prepare(proto, h, body, c, req.headers, Date.now())
     } catch (err) {
       console.error('context-shaver: request left untrimmed:', err)
     }
