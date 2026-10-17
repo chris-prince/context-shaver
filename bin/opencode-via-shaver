@@ -7,15 +7,26 @@
 # at the proxy and is merged over OpenCode's config, which is left alone. OpenCode's background
 # service doesn't read it, so the TUI, `run` and `mini` get --standalone, a
 # private server that does; other subcommands are passed as they are.
+#
+# OpenCode is `opencode` as typed at your prompt, run by your login shell so an
+# alias or function for it there applies (one that keeps the machine awake, say).
 set -euo pipefail
 
 bin=$(dirname "$(readlink -f "$0")")
+die() { echo "opencode-via-shaver: $*" >&2; exit 1; }
+# As in claude-via-shaver: a parent with the PID this last ran `opencode` as is
+# that `opencode` running this again, an alias or wrapper, which would loop.
+depth=${CTX_SHAVER_DEPTH:-0}
+[[ ${CTX_SHAVER_LAUNCHER_PID:-} != "$PPID" && $depth -lt 5 ]] ||
+  die "run again by the opencode it ran; \`opencode\` at your prompt must not run this"
+export CTX_SHAVER_LAUNCHER_PID=$$ CTX_SHAVER_DEPTH=$((depth + 1))
+real=("${SHELL:-bash}" -lic 'opencode "$@"' opencode)
 "$bin/run-proxy"
 port=${CTX_SHAVER_PORT:-8787}
 via() { printf '"%s":{"options":{"baseURL":"http://127.0.0.1:%s/harness/opencode/via/%s"}}' "$1" "$port" "$2"; }
 export OPENCODE_CONFIG_CONTENT="{\"provider\":{$(via openrouter https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1),$(via openai https%3A%2F%2Fapi.openai.com%2Fv1),$(via anthropic https%3A%2F%2Fapi.anthropic.com%2Fv1)}}"
 case ${1:-} in
-  run | mini) exec opencode "$1" --standalone "${@:2}" ;;
-  "" | -* ) exec opencode --standalone "$@" ;;
-  *) [[ -d $1 ]] && exec opencode --standalone "$@"; exec opencode "$@" ;;
+  run | mini) exec "${real[@]}" "$1" --standalone "${@:2}" ;;
+  "" | -* ) exec "${real[@]}" --standalone "$@" ;;
+  *) [[ -d $1 ]] && exec "${real[@]}" --standalone "$@"; exec "${real[@]}" "$@" ;;
 esac

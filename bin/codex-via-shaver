@@ -11,9 +11,11 @@
 # as the upstream for this session, named in the path (src/via.ts), and only
 # its WebSockets are turned off. One already through this proxy is left as it is.
 #
-# Codex is `codex`, or CTX_SHAVER_REAL_CODEX_LOCATIONS if set: paths, or globs
-# of versioned installs, separated by colons; the first with a match is taken,
-# and of a glob's matches the newest. Set it when this stands
+# Codex is `codex` as typed at your prompt, run by your login shell so an alias
+# or function for it there applies (one that keeps the machine awake, say), or
+# CTX_SHAVER_REAL_CODEX_LOCATIONS if set: paths, or globs of versioned installs,
+# separated by colons; the first with a match is taken, and of a glob's matches
+# the newest. Set it when this stands
 # in for Codex under a wrapper that passes the provider itself once it starts
 # (DESIGN.md); there, running `codex` would run the wrapper, which would run
 # this again.
@@ -42,7 +44,7 @@ else
   [[ ${CTX_SHAVER_LAUNCHER_PID:-} != "$PPID" && $depth -lt 5 ]] ||
     die "run again by the codex it ran, as a wrapper runs the Codex it is given; set CTX_SHAVER_REAL_CODEX_LOCATIONS (DESIGN.md)"
   export CTX_SHAVER_LAUNCHER_PID=$$ CTX_SHAVER_DEPTH=$((depth + 1))
-  real=codex
+  real=("${SHELL:-bash}" -lic 'codex "$@"' codex)
 fi
 
 # --stand-in prints a Codex for a wrapper to be given in place of the real one,
@@ -116,7 +118,7 @@ value() {
 
 j=$(last model_provider)
 if [[ -z $j ]]; then
-  exec "$real" \
+  exec "${real[@]}" \
     -c model_provider=shaver \
     -c model_providers.shaver.name=context-shaver \
     -c "model_providers.shaver.base_url=\"http://127.0.0.1:$port/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex\"" \
@@ -139,4 +141,4 @@ if [[ ! $up =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
 fi
 # Right after the base URL, so among the same flags, before any subcommand.
 args=("${args[@]:0:j+1}" -c "model_providers.$provider.supports_websockets=false" "${args[@]:j+1}")
-exec "$real" "${args[@]}"
+exec "${real[@]}" "${args[@]}"
