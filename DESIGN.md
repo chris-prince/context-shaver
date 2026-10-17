@@ -455,7 +455,9 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     message characters the proxy expected the cache to serve, to check the
     model against `cachedTokens`; `breakpoints` is how many of the messages'
     blocks carry `cache_control` (with none, the messages are read from no
-    entry, so the proxy holds trimming);
+    entry, so the proxy holds trimming). On the Responses API it also has
+    `attribution`, the usage per input item and block as the API gives it,
+    keyed by IDs the API makes up;
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind

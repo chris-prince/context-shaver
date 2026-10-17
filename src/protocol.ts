@@ -18,13 +18,15 @@ export type Canonical = { model: string; provider?: string; messages: ApiMsg[]; 
 export type Content = { signatures: string[]; visibleChars: number }
 
 // done is whether the answer has fully arrived, whatever the stream still sends
-// after it.
-export type UsageReader = { push(chunk: Uint8Array): void; end(): { usage?: Usage; content: Content }; readonly done: boolean }
+// after it. attribution is the usage per input item, as the Responses API
+// gives it, kept for the log.
+export type Read = { usage?: Usage; content: Content; attribution?: unknown }
+export type UsageReader = { push(chunk: Uint8Array): void; end(): Read; readonly done: boolean }
 
 // A response read as it arrives: each event of a stream, or the body when it
 // isn't streamed, then what was read. The answer is done at the event final
 // picks out, or at a stream's closing data: [DONE].
-export function eventReader(read: { event(e: any): void; body(b: any): void; result(): { usage?: Usage; content: Content }; final?(e: any): boolean }): UsageReader {
+export function eventReader(read: { event(e: any): void; body(b: any): void; result(): Read; final?(e: any): boolean }): UsageReader {
   let buf = ''
   let streamed = false
   let done = false

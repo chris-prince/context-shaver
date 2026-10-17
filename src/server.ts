@@ -399,7 +399,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 // Records an answered request: its stats, cost and cache entries, the
 // conversation's state, any summary fork due and its log line.
 function answered(p: Prepared, usage: UsageReader, target: string, headers: Record<string, string>): void {
-  const { usage: u, content } = usage.end()
+  const { usage: u, content, attribution } = usage.end()
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
@@ -422,6 +422,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
         writtenTokens5m: (u.cache_creation_input_tokens ?? 0) - (u.cache_creation?.ephemeral_1h_input_tokens ?? 0),
         outputTokens: u.output_tokens ?? 0,
       }),
+      ...(attribution !== undefined && { attribution }),
     })
   }
 }

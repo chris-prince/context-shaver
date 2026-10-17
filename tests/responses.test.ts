@@ -65,7 +65,7 @@ test('a record the core adds is sent as an assistant message', () => {
   assert.strictEqual(out[5], wire.input[8])
 })
 
-const completed = { type: 'response.completed', response: { output: [{ type: 'reasoning', encrypted_content: 'e' }, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] }], usage: { input_tokens: 1000, output_tokens: 20, input_tokens_details: { cached_tokens: 900 } } } }
+const completed = { type: 'response.completed', response: { output: [{ type: 'reasoning', encrypted_content: 'e' }, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] }], usage: { input_tokens: 1000, output_tokens: 20, input_tokens_details: { cached_tokens: 900 }, attribution: { items: { msg_1: { input_tokens: 1000, cached_tokens: 900 } } } } } }
 const stream = `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: {} })}\n\nevent: response.completed\ndata: ${JSON.stringify(completed)}\n\n`
 
 test("usage and content come from the stream's last event", () => {
@@ -76,9 +76,10 @@ test("usage and content come from the stream's last event", () => {
   assert.equal(r.done, false)
   r.push(b.slice(last))
   assert.equal(r.done, true)
-  const { usage, content } = r.end()
+  const { usage, content, attribution } = r.end()
   assert.deepEqual(usage, { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, output_tokens: 20 })
   assert.deepEqual(content, { signatures: ['e'], visibleChars: 5 })
+  assert.deepEqual(attribution, { items: { msg_1: { input_tokens: 1000, cached_tokens: 900 } } })
 })
 
 test('a summary fork asks after the items as sent, still streamed', () => {

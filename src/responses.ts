@@ -123,7 +123,7 @@ export function canonical(wire: Record<string, unknown>): { body: Canonical; ren
   return { body, render: (c) => ({ ...wire, input: [...head, ...c.messages.flatMap(renderMsg)] }) }
 }
 
-type Response = { output?: Item[]; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } } }
+type Response = { output?: Item[]; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; attribution?: unknown } }
 
 function usageOf(u: Response['usage']): Usage | undefined {
   if (!u?.input_tokens) return undefined
@@ -135,15 +135,17 @@ const finished = (e: { type?: string; response?: Response }) => (e.type === 'res
 
 function usageReader() {
   let usage: Usage | undefined
+  let attribution: unknown
   const content: Content = { signatures: [], visibleChars: 0 }
   const read = (r: Response | undefined) => {
     if (!r) return
     usage = usageOf(r.usage) ?? usage
+    attribution = r.usage?.attribution ?? attribution
     for (const it of r.output ?? [])
       if (it.type === 'reasoning') content.signatures.push(it.encrypted_content ?? '')
       else content.visibleChars += it.type === 'message' ? textOf(it).length : (it.name?.length ?? 0) + (it.input ?? it.arguments ?? '').length
   }
-  return eventReader({ event: (e) => read(finished(e)), body: read, result: () => ({ usage, content }), final: (e) => !!finished(e) })
+  return eventReader({ event: (e) => read(finished(e)), body: read, result: () => ({ usage, content, attribution }), final: (e) => !!finished(e) })
 }
 
 function reply(text: string, model: string, stream: boolean, context: number): string {
