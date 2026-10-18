@@ -16,7 +16,7 @@ import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Serv
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
-import { hash, kinds, LOG_DIR, writeDefs, writeLine, writeParts } from './log.ts'
+import { hash, kinds, LOG_DIR, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
 import { clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
@@ -221,7 +221,10 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
-    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    // The messages as the client sent them, when they went up changed, so
+    // what was taken (a newest answer's thinking, say) can be rebuilt.
+    const changed = msgs.length !== body.messages.length || msgs.some((m, i) => JSON.stringify(m) !== JSON.stringify(body.messages[i]))
+    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...(changed && { received: writeParts(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -416,7 +419,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   if (due) void summarize(p, due, target, headers)
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {
-      ...p.logLine,
+      ...withReceivedDelta(p.logDir, p.logLine),
       ...(u && {
         inputTokens,
         cachedTokens: u.cache_read_input_tokens ?? 0,

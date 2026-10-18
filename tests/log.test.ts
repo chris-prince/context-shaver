@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { kinds, writeDefs } from '../src/log.ts'
+import { kinds, receivedOf, withReceivedDelta, writeDefs } from '../src/log.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 test('injected content is system in the preamble and harness after it; the prompt is user', () => {
@@ -71,4 +71,18 @@ test('system blocks and tool definitions are listed with their bytes, deferred t
     { name: 'Artifact', bytes: JSON.stringify(later).length, deferred: true },
   ])
   assert.equal(readFileSync(path.join(dir, 'parts', `${d.tools[1].hash}.json`), 'utf8'), JSON.stringify(later))
+})
+
+test('received is logged as a change from the line before and read back whole', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'log-'))
+  const parts = (...hs: string[]) => hs.map((hash) => ({ part: 'user', hash, bytes: 1 }))
+  const lines = [
+    withReceivedDelta(dir, { event: 'request', parts: parts('a', 'b') }),
+    { event: 'compaction' },
+    withReceivedDelta(dir, { event: 'request', parts: parts('a', 'x'), received: ['a', 'b', 'c'] }),
+    withReceivedDelta(dir, { event: 'request', parts: parts('a', 'y'), received: ['a', 'b', 'd', 'e'] }),
+  ]
+  assert.deepEqual(lines[2].received, { keep: 2, add: ['c'] })
+  assert.deepEqual(lines[3].received, { keep: 2, add: ['d', 'e'] })
+  assert.deepEqual(receivedOf(lines), [['a', 'b'], ['a', 'b', 'c'], ['a', 'b', 'd', 'e']])
 })

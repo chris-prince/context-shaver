@@ -463,7 +463,12 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     keyed by the items' IDs. The IDs Codex sends with its items are logged
     too: the head's (tools and instructions) as `headIds`, and each part's
     with it as `ids`, as sent. One attribution entry is logged nowhere; it
-    looks like the model's answer to the request itself;
+    looks like the model's answer to the request itself. When the proxy
+    changed the messages, `received` is them as the client sent them, by
+    hash, so what a trim took (the newest answer's thinking, say) can be
+    rebuilt. It is logged as `{ keep, add }`: how many hashes it shares at
+    the start with the previous request line's, and the ones after those.
+    The first line after a restart has no previous one and lists them all;
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind

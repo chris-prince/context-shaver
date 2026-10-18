@@ -131,6 +131,31 @@ export function writeLine(dir: string, line: Record<string, unknown>): void {
   appendFileSync(path.join(dir, 'step_events.jsonl'), JSON.stringify(line) + '\n')
 }
 
+// The client's message hashes in each folder's last request line: received
+// is logged as a change from them, since a long conversation's runs to
+// thousands of hashes on every line.
+const lastReceived = new Map<string, string[]>()
+
+// A request line with received (the client's message hashes, server.ts) as
+// { keep, add }: the first keep of the client's messages in the request line
+// before (its received, else its parts), then add. keep is 0 after a restart.
+export function withReceivedDelta(dir: string, line: Record<string, unknown>): Record<string, unknown> {
+  const full = (line.received as string[] | undefined) ?? (line.parts as Array<{ hash: string }>).map((q) => q.hash)
+  const before = lastReceived.get(dir) ?? []
+  lastReceived.set(dir, full)
+  if (!line.received) return line
+  let keep = 0
+  while (keep < full.length && full[keep] === before[keep]) keep++
+  return { ...line, received: { keep, add: full.slice(keep) } }
+}
+
+// The client's message hashes for each request line, in order, read back
+// from withReceivedDelta's form.
+export function receivedOf(lines: ReadonlyArray<Record<string, any>>): string[][] {
+  let before: string[] = []
+  return lines.filter((e) => e.event === 'request').map((e) => (before = e.received ? [...before.slice(0, e.received.keep), ...e.received.add] : e.parts.map((q: { hash: string }) => q.hash)))
+}
+
 // Saves each message not saved before, with its kinds; returns the request's
 // part list, each with the wire's names for its items when idsOf gives them.
 export function writeParts(dir: string, msgs: readonly ApiMsg[], idsOf?: (m: ApiMsg) => string[]): Array<{ part: string; hash: string; bytes: number; ids?: string[] }> {
