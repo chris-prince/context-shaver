@@ -247,11 +247,13 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock
 
 // Claude Code writes 1-hour cache entries at 2x input. A read costs 0.1x on
 // most models, so a written character costs M + 1 = 20 reads; the models
-// priced to read for less (models.ts) pay more reads for a write. K is
+// priced to read for less (models.ts) pay more reads for a write. K was
 // the warm requests expected to read what a trim saved before the cache next
-// goes cold: 40 at an hour's TTL (context-shaver's local/notes.md, "Light compaction").
-// Automatic caching writes at the input price, so a written character costs
-// half the reads, unless the model prices its writes (models.ts).
+// goes cold: 40 at an hour's TTL (context-shaver's local/notes.md, "Light
+// compaction"). The proxy now asks the model (models.ts, horizon); K stays
+// the horizon tests and replays of old logs assume. Automatic caching writes
+// at the input price, so a written character costs half the reads, unless the
+// model prices its writes (models.ts).
 export const writeCost = (m: Model, automatic = false) => (m.price?.write ? m.price.write / m.price.input : automatic ? 1 : 2) / (m.price ? m.price.read / m.price.input : 0.1) - 1 // M
 export const K = 40
 
@@ -394,14 +396,15 @@ export type Decision = {
 
 // Prices advancing against keeping, on this request: each reads the longest
 // live entry it finds and writes the rest (readThrough, costOf). Advancing
-// pays when its extra cost is at most K S, with S the characters it saves
-// every later request. Advancing reads no further than the first change, and
-// less when no entry ends there or none is in reach of its breakpoints. With
+// pays when its extra cost is at most H S, with S the characters it saves
+// every later request and H the later requests expected (K unless given).
+// Advancing reads no further than the first change, and less when no entry
+// ends there or none is in reach of its breakpoints. With
 // nothing cached both write everything, so advancing always pays. A request
 // with no breakpoints in its messages (a side request branched off the
 // conversation) reads nothing of them whatever is cached, so says nothing of
 // the cache: it never advances.
-export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: Model, thinking: Thinking = new Map(), automatic = false): Decision {
+export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: Model, thinking: Thinking = new Map(), automatic = false, horizon = K): Decision {
   const M = writeCost(model, automatic)
   const a = positionsOf(before, seed, thinking, automatic)
   const b = positionsOf(after, seed, thinking, automatic)
@@ -412,5 +415,5 @@ export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live
   if (a.at(-1)?.prefix === b.at(-1)?.prefix || savedChars <= 0 || !a.some((p) => p.breakpoint)) return { advanced: false, cold, savedChars: 0, rewriteChars: 0, extraChars: 0 }
   const rewriteChars = sum(a.slice(0, ra + 1)) - sum(b.slice(0, rb + 1))
   const extraChars = costOf(b, rb, M) - costOf(a, ra, M)
-  return { advanced: extraChars <= K * savedChars, cold, savedChars, rewriteChars, extraChars }
+  return { advanced: extraChars <= horizon * savedChars, cold, savedChars, rewriteChars, extraChars }
 }

@@ -374,8 +374,11 @@ from there to its last breakpoint. A written character costs M + 1 reads, where
 M + 1 = 2 / read cost, because a 1-hour write is 2× input. So M = 19 at the
 usual 0.1× read, 39 on Opus 5.5, and 79 on Fable and Mythos 5.1.
 
-Advancing pays when its extra cost on this request is at most K·S read
-characters, where S is the characters it saves every later request and K = 40.
+Advancing pays when its extra cost on this request is at most H·S read
+characters, where S is the characters it saves every later request and H, the
+horizon, is the model's (`models.ts`) given the n requests before this one:
+min(20, 0.6n) by default, and 5 for luna and DeepSeek V4.1 Flash, which did best
+in backtests of logged sessions (`scripts/backtest-horizon.ts`).
 Advancing reads no further than its first change. It reads less when no
 entry ends there, and nothing when every entry is out of the breakpoints'
 reach. When nothing is cached (the TTL lapsed, or the model, tools or system

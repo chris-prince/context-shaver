@@ -168,9 +168,10 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   let applied = held
   let next = keep
   let d: Decision | undefined
+  const horizon = model.horizon(latestOf(key)?.requests ?? 0)
   if (clock.steps > held.steps || clock.turns > held.turns) {
     next = summarized(apply(msgs, policy, clock, conv), msgs, chain.slice(0, records))
-    d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto)
+    d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
   }
   body.messages = anchor(sent.msgs)
@@ -216,7 +217,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
         // To test the anchor breakpoint's efficacy: the decision without it,
         // or the entry it keeps, which lookback would otherwise still find.
         // Remove this (and the logged field) once we're confident in it.
-        unanchored: (({ advanced, extraChars }) => ({ advanced, extraChars }))(decide(keep.msgs, next.msgs, new Set([...live].filter((e) => e !== end)), seed, model, thinking, auto)),
+        unanchored: (({ advanced, extraChars }) => ({ advanced, extraChars }))(decide(keep.msgs, next.msgs, new Set([...live].filter((e) => e !== end)), seed, model, thinking, auto, horizon)),
       })
     }
     const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
