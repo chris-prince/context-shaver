@@ -18,7 +18,7 @@ import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/ite
 import { harnessOf, NO_CONVENTIONS, type Harness } from '../src/harness.ts'
 import { modelOf, type Model } from '../src/models.ts'
 import { loadPolicy } from '../src/policy.ts'
-import { summarized, validChain, type Summary } from '../src/summary.ts'
+import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { kinds, receivedOf } from '../src/log.ts'
 import { anchored, apply, transitions, decide, fullyTrimmed, K, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
 
@@ -122,6 +122,22 @@ function isSearch({ reqs }: Conv): boolean {
   return String(text ?? '').startsWith('Perform a web search for the query:')
 }
 
+// The records renumbered to the rebuilt messages' prompts, each matched by its
+// prompt's hash after the previous one's: the client counts turns the proxy
+// answered itself (:shaver commands), which no logged request holds.
+function renumbered(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary[] {
+  const prompts = promptsOf(msgs)
+  const out: Summary[] = []
+  let from = 0
+  for (const s of chain) {
+    const k = prompts.findIndex((i, k) => k >= from && promptHash(msgs[i]) === s.prompt)
+    if (k < 0) break
+    out.push({ ...s, endsBefore: k + 1 })
+    from = k + 1
+  }
+  return out
+}
+
 // Read and write prices relative to input (replay.ts and trim.ts, writeCost).
 const rates = (m: Model, auto: boolean) => ({ read: m.price ? m.price.read / m.price.input : 0.1, write: m.price?.write ? m.price.write / m.price.input : auto ? 1 : 2 })
 
@@ -138,7 +154,7 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => nu
     const live = new Set(entries.keys())
     const held = heldTo(applied, q.msgs)
     const clock = clockOf(q.msgs)
-    const chain = validChain(all.filter((r) => r.time <= q.time), q.msgs)
+    const chain = validChain(renumbered(all.filter((r) => r.time <= q.time), q.msgs), q.msgs)
     let records = Math.min(sentRecords, chain.length)
     let keep = summarized(apply(q.msgs, policy, held, conv), q.msgs, chain.slice(0, records))
     const reads = (m: ApiMsg[]) => {

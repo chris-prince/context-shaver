@@ -20,10 +20,10 @@ export type Summary = { endsBefore: number; prompt: string; text: string; time: 
 // The cache_control a prompt carries moves from request to request, and the
 // latest prompt comes as a block where later ones are a string, so a prompt is
 // known by its blocks without it.
-const promptHash = (m: ApiMsg) => hash(JSON.stringify(typeof m.content === 'string' ? { ...m, content: [{ type: 'text', text: m.content }] } : m, (k, v) => (k === 'cache_control' ? undefined : v)))
+export const promptHash = (m: ApiMsg) => hash(JSON.stringify(typeof m.content === 'string' ? { ...m, content: [{ type: 'text', text: m.content }] } : m, (k, v) => (k === 'cache_control' ? undefined : v)))
 
 // Each turn's prompt index, by turn: prompts[t - 1] starts turn t.
-const promptsOf = (msgs: readonly ApiMsg[]) => msgs.flatMap((m, i) => (isPrompt(m) ? [i] : []))
+export const promptsOf = (msgs: readonly ApiMsg[]) => msgs.flatMap((m, i) => (isPrompt(m) ? [i] : []))
 
 // The records that still fit the messages: each one's prompt is still there.
 // One that doesn't (the conversation was rewound) goes with the ones after it.
