@@ -98,7 +98,7 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
 export function instructions(f: SummaryFork): string {
   const list = f.prompts.map((p, k) => `[${f.start + k}] "${p.quote}"`)
   const current = list.pop()
-  return `[ctx-shaver] This message is not from the user, and your answer will not be shown to them. Pause the task: don't call any tools, and answer with text only.
+  return `[shaver] This message is not from the user, and your answer will not be shown to them. Pause the task: don't call any tools, and answer with text only.
 
 Compact the early part of this session into a record of its memorable events. Your record will replace the turns it covers in your context, so you can keep working from it and the messages that follow. ${f.start > 1 ? `Turns before [${f.start}] are already compacted; leave them out. ` : ''}Cover the turns that start with these prompts:
 

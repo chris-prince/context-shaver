@@ -51,7 +51,7 @@ const { values: a } = parseArgs({
 // --policy file given is taken as it is.
 if (a.policy === repoPolicy) seedPolicy(repoPolicy, path.resolve(import.meta.dirname, '..', 'policy.default.json'))
 const loaded = loadPolicy(a.policy)
-if (!loaded) console.error(`context-shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
+if (!loaded) console.error(`shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
 const policy = loaded ?? {}
 const ttlMs = Number(a['cache-ttl-seconds']) * 1000
 const stateDir = path.join(a.dir, 'state')
@@ -241,7 +241,7 @@ function policyText(): string {
   try {
     return '`' + a.policy + '`:\n```json\n' + readFileSync(a.policy, 'utf8').trimEnd() + '\n```'
   } catch {
-    return `context-shaver: no policy at ${a.policy}, so requests pass through untrimmed.`
+    return `shaver: no policy at ${a.policy}, so requests pass through untrimmed.`
   }
 }
 
@@ -299,22 +299,22 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   let raw = original
   const r = route(req.url ?? '/', a.upstream)
   const proto = protocolOf('error' in r ? '/' : r.url)
-  if (!localHost(req.headers.host)) return refuse(res, proto, 403, `context-shaver proxy: refused a request for Host ${req.headers.host}`)
-  if ('error' in r) return refuse(res, proto, 400, `context-shaver proxy: ${r.error}`)
+  if (!localHost(req.headers.host)) return refuse(res, proto, 403, `shaver proxy: refused a request for Host ${req.headers.host}`)
+  if ('error' in r) return refuse(res, proto, 400, `shaver proxy: ${r.error}`)
   const { upstream, url } = r
   const h = harnessOf(r.harness, req.headers)
-  if (h && 'error' in h) return refuse(res, proto, 400, `context-shaver proxy: ${h.error}`)
+  if (h && 'error' in h) return refuse(res, proto, 400, `shaver proxy: ${h.error}`)
   // bin/run-proxy --restart and --stop stop the proxy with this. The header
   // keeps a web page from sending it: browsers send a custom header only after a
   // CORS check this proxy doesn't answer.
-  if (req.method === 'POST' && url === '/ctx-shaver/shutdown' && req.headers['x-ctx-shaver'] === 'shutdown') {
-    console.error('context-shaver: shutting down, as asked')
+  if (req.method === 'POST' && url === '/shaver/shutdown' && req.headers['x-shaver'] === 'shutdown') {
+    console.error('shaver: shutting down, as asked')
     return void res.end('stopping\n', () => process.exit(0))
   }
   // bin/run-proxy asks this to tell whether the proxy on its port runs from its
   // repo; one from elsewhere, or older than this, is restarted, keeping logging.
-  if (req.method === 'GET' && url === '/ctx-shaver/procinfo' && req.headers['x-ctx-shaver'] === 'procinfo') {
-    return void res.end(`context-shaver repo: ${path.resolve(import.meta.dirname, '..')}\ncontext-shaver logging: ${a['log-step-events'] ? 'on' : 'off'}\n`)
+  if (req.method === 'GET' && url === '/shaver/procinfo' && req.headers['x-shaver'] === 'procinfo') {
+    return void res.end(`shaver repo: ${path.resolve(import.meta.dirname, '..')}\nshaver logging: ${a['log-step-events'] ? 'on' : 'off'}\n`)
   }
   let p: Prepared | undefined
   if (req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length) {
@@ -323,7 +323,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       c = proto.canonical(JSON.parse(raw.toString('utf8')))
     } catch (err) {
-      console.error('context-shaver: request not read:', err)
+      console.error('shaver: request not read:', err)
     }
     const body = c?.body
     try {
@@ -342,12 +342,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         }
       }
     } catch (err) {
-      console.error('context-shaver: commands left in:', err)
+      console.error('shaver: commands left in:', err)
     }
     try {
       if (c && body) p = prepare(proto, h, body, c, req.headers, Date.now())
     } catch (err) {
-      console.error('context-shaver: request left untrimmed:', err)
+      console.error('shaver: request left untrimmed:', err)
     }
   }
   const headers: Record<string, string> = {}
@@ -364,7 +364,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // A changed request the API refuses is sent again as it came, so the proxy
   // never costs the user a turn.
   if ((p || raw !== original) && up.status === 400) {
-    console.error(`context-shaver: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
+    console.error(`shaver: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
     p = undefined
     up = await send(original)
   }
@@ -378,7 +378,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // the upstream's own text is always on record.
   if (up.status >= 400) {
     const text = Buffer.from(await up.arrayBuffer())
-    console.error(`${new Date().toISOString()} context-shaver: upstream answered ${up.status} to ${req.method} ${upstream}${url.split('?')[0]}: ${text.toString('utf8').slice(0, 2000)}`)
+    console.error(`${new Date().toISOString()} shaver: upstream answered ${up.status} to ${req.method} ${upstream}${url.split('?')[0]}: ${text.toString('utf8').slice(0, 2000)}`)
     res.writeHead(up.status, out)
     return void res.end(text)
   }
@@ -459,7 +459,7 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(p.model, p.provider, out.usage) : 0) }))
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
-    console.error('context-shaver: summary fork failed:', err)
+    console.error('shaver: summary fork failed:', err)
     if (logDir) writeLine(logDir, { event: 'summary', time: new Date().toISOString(), ...asked, ms: Date.now() - began, error: String(err).slice(0, 500) })
   } finally {
     summaryForking.delete(key)
@@ -469,16 +469,16 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
 createServer((req, res) => {
   handle(req, res).catch((err) => {
     if (abortedBy(err)) return res.end()
-    console.error('context-shaver:', err)
+    console.error('shaver:', err)
     if (!res.headersSent) {
       res.writeHead(502, { 'content-type': 'application/json' })
-      res.end(protocolOf((req.url ?? '/').replace(/^\/via\/[^/?#]*/, '')).error(502, `context-shaver proxy: ${err}`))
+      res.end(protocolOf((req.url ?? '/').replace(/^\/via\/[^/?#]*/, '')).error(502, `shaver proxy: ${err}`))
     } else res.end()
   })
-}).listen(Number(a.port), '127.0.0.1', () => console.error(`context-shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
+}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
 
 const abortedBy = (err: unknown) => err instanceof Error && err.name === 'AbortError'
 
 // Node restores SIGHUP's default, undoing nohup, so the terminal that started
-// the proxy closing would stop it. It stops on /ctx-shaver/shutdown instead.
+// the proxy closing would stop it. It stops on /shaver/shutdown instead.
 process.on('SIGHUP', () => {})

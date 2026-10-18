@@ -10,7 +10,7 @@
 #
 # Claude Code is `claude` as typed at your prompt, run by your login shell so an
 # alias or function for it there applies (one that keeps the machine awake, say),
-# or CTX_SHAVER_REAL_CLAUDE_LOCATIONS if set: paths,
+# or SHAVER_REAL_CLAUDE_LOCATIONS if set: paths,
 # or globs of versioned installs, separated by colons; the first with a match
 # is taken, and of a glob's matches the newest. Set it when
 # this stands in for Claude Code under a wrapper that sets the base URL itself
@@ -22,10 +22,10 @@ me=$(readlink -f "$0")
 bin=$(dirname "$me")
 die() { echo "claude-via-shaver: $*" >&2; exit 1; }
 
-if [[ -n ${CTX_SHAVER_REAL_CLAUDE_LOCATIONS:-} ]]; then
+if [[ -n ${SHAVER_REAL_CLAUDE_LOCATIONS:-} ]]; then
   # The first entry with a match wins; within a glob, the newest match.
   real=
-  IFS=: read -ra entries <<<"$CTX_SHAVER_REAL_CLAUDE_LOCATIONS"
+  IFS=: read -ra entries <<<"$SHAVER_REAL_CLAUDE_LOCATIONS"
   for e in "${entries[@]}"; do
     while read -r c; do
       [[ -n $c && -x $c && $(readlink -f "$c") != "$me" ]] && real=$c
@@ -33,15 +33,15 @@ if [[ -n ${CTX_SHAVER_REAL_CLAUDE_LOCATIONS:-} ]]; then
     [[ -n $real ]] && break
   done
   [[ -n $real ]] ||
-    die "CTX_SHAVER_REAL_CLAUDE_LOCATIONS ($CTX_SHAVER_REAL_CLAUDE_LOCATIONS) has no executable Claude Code"
+    die "SHAVER_REAL_CLAUDE_LOCATIONS ($SHAVER_REAL_CLAUDE_LOCATIONS) has no executable Claude Code"
 else
   # exec keeps the PID, so a parent with the one this last ran `claude` as is
   # that `claude` running this again: a wrapper, which would loop. The depth
   # catches a wrapper that runs this through other processes.
-  depth=${CTX_SHAVER_DEPTH:-0}
-  [[ ${CTX_SHAVER_LAUNCHER_PID:-} != "$PPID" && $depth -lt 5 ]] ||
-    die "run again by the claude it ran, as a wrapper runs the Claude Code it is given; set CTX_SHAVER_REAL_CLAUDE_LOCATIONS (DESIGN.md)"
-  export CTX_SHAVER_LAUNCHER_PID=$$ CTX_SHAVER_DEPTH=$((depth + 1))
+  depth=${SHAVER_DEPTH:-0}
+  [[ ${SHAVER_LAUNCHER_PID:-} != "$PPID" && $depth -lt 5 ]] ||
+    die "run again by the claude it ran, as a wrapper runs the Claude Code it is given; set SHAVER_REAL_CLAUDE_LOCATIONS (DESIGN.md)"
+  export SHAVER_LAUNCHER_PID=$$ SHAVER_DEPTH=$((depth + 1))
   real=("${SHELL:-bash}" -lic 'claude "$@"' claude)
 fi
 
@@ -59,7 +59,7 @@ encode() {
 }
 
 "$bin/run-proxy"
-port=${CTX_SHAVER_PORT:-8787} up=${ANTHROPIC_BASE_URL:-}
+port=${SHAVER_PORT:-8787} up=${ANTHROPIC_BASE_URL:-}
 up=${up%/}
 if [[ -z $up ]]; then
   ANTHROPIC_BASE_URL=http://127.0.0.1:$port/harness/claude

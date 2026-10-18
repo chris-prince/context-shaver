@@ -12,7 +12,7 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-port=${CTX_SHAVER_PORT:-8787}
+port=${SHAVER_PORT:-8787}
 action= log=() logset=
 for arg; do
   case $arg in
@@ -27,17 +27,17 @@ up() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
 # Asks the proxy to exit (server.ts), so no lsof is needed to find its PID.
 stop() {
   (exec 3<>"/dev/tcp/127.0.0.1/$port" &&
-    printf 'POST /ctx-shaver/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nx-ctx-shaver: shutdown\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' >&3 &&
+    printf 'POST /shaver/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nx-shaver: shutdown\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' >&3 &&
     while read -r -t 5 _ <&3; do :; done) 2>/dev/null || true
 }
 # What the proxy on the port says about itself (server.ts), as lines of
-# "context-shaver <field>: <value>"; nothing from one that doesn't say.
+# "shaver <field>: <value>"; nothing from one that doesn't say.
 procinfo() {
   (exec 3<>"/dev/tcp/127.0.0.1/$port" &&
-    printf 'GET /ctx-shaver/procinfo HTTP/1.1\r\nHost: 127.0.0.1\r\nx-ctx-shaver: procinfo\r\nConnection: close\r\n\r\n' >&3 &&
+    printf 'GET /shaver/procinfo HTTP/1.1\r\nHost: 127.0.0.1\r\nx-shaver: procinfo\r\nConnection: close\r\n\r\n' >&3 &&
     while IFS= read -r -t 5 line <&3; do
       line=${line%$'\r'}
-      [[ $line == "context-shaver "*": "* ]] && echo "${line#context-shaver }"
+      [[ $line == "shaver "*": "* ]] && echo "${line#shaver }"
     done) 2>/dev/null || true
 }
 

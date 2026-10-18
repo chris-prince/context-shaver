@@ -68,7 +68,7 @@ export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'red
 export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
 
 // The heading of the message heavy compaction's records go in (summary.ts).
-export const SUMMARY_HEAD = "[ctx-shaver] My record of this session's earlier turns, compacted in my context:"
+export const SUMMARY_HEAD = "[shaver] My record of this session's earlier turns, compacted in my context:"
 export const isSummary = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith(SUMMARY_HEAD)
 
 // The client's half of what the core needs to know about its tools (DESIGN.md,

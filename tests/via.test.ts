@@ -17,7 +17,7 @@ test("an upstream's own path is kept, less a trailing slash", () => {
 
 test('any other path goes to the fallback as it came', () => {
   assert.deepEqual(route('/v1/messages', API), { upstream: API, url: '/v1/messages' })
-  assert.deepEqual(route('/ctx-shaver/shutdown', API), { upstream: API, url: '/ctx-shaver/shutdown' })
+  assert.deepEqual(route('/shaver/shutdown', API), { upstream: API, url: '/shaver/shutdown' })
 })
 
 test('a bad /via/ upstream is an error, never the fallback', () => {

@@ -9,7 +9,7 @@ bin/claude-via-shaver [claude args ...]
 ```
 
 `bin/claude-via-shaver` starts the proxy if nothing is listening on its port (8787,
-or `CTX_SHAVER_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
+or `SHAVER_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json` (see
 [Policy](#policy)), and with logging off; to log (see [Logs](#logs)), start the
@@ -88,22 +88,22 @@ wrapper replaces the one it's given, so context-shaver would be bypassed. If the
 wrapper lets you choose the binary it runs (often an environment variable
 naming its path), give it `claude-via-shaver` itself: run by the wrapper, it
 sees the base URL the wrapper set and chains to it, as above. Tell it where the
-real Claude Code is with `CTX_SHAVER_REAL_CLAUDE_LOCATIONS`: paths or globs of
+real Claude Code is with `SHAVER_REAL_CLAUDE_LOCATIONS`: paths or globs of
 versioned installs, separated by colons, as on `PATH`. The first with a match is
 taken, and of a glob's matches the newest:
 
 ```bash
-export CTX_SHAVER_REAL_CLAUDE_LOCATIONS='~/path/to/claude-code-*:~/other/claude'
+export SHAVER_REAL_CLAUDE_LOCATIONS='~/path/to/claude-code-*:~/other/claude'
 export <WRAPPER_BINARY_VAR>=~/context-shaver/bin/claude-via-shaver
 claude [claude args ...]
 ```
 
-Without `CTX_SHAVER_REAL_CLAUDE_LOCATIONS` it would run `claude`, the wrapper,
+Without `SHAVER_REAL_CLAUDE_LOCATIONS` it would run `claude`, the wrapper,
 which would run it again; it notices and stops with an error instead. With it
 set, start sessions through the wrapper, as above: `claude-via-shaver` run
 directly would skip the wrapper and whatever it sets up.
 
-`codex-via-shaver` chains the same way, with `CTX_SHAVER_REAL_CODEX_LOCATIONS`.
+`codex-via-shaver` chains the same way, with `SHAVER_REAL_CODEX_LOCATIONS`.
 A Codex wrapper sets its gateway with `-c` flags rather than the environment:
 `model_provider` and that provider's `base_url`. When the arguments name a
 provider, `codex-via-shaver` keeps it and its other settings, puts the proxy's
@@ -112,7 +112,7 @@ WebSockets; with a provider but no `base_url` to chain to, it stops with an
 error.
 
 ```bash
-export CTX_SHAVER_REAL_CODEX_LOCATIONS='~/path/to/codex/*/codex-<target>'
+export SHAVER_REAL_CODEX_LOCATIONS='~/path/to/codex/*/codex-<target>'
 export <WRAPPER_BINARY_VAR>=~/context-shaver/bin/codex-via-shaver
 codex [codex args ...]
 ```
@@ -131,12 +131,12 @@ codex-via-shaver -c model_provider=<name> \
 A wrapper may also want the files a Codex install has beside Codex, beside the
 binary it is given. `codex-via-shaver --stand-in` makes one with them: in
 `proxy-data/stand-in/`, links to all beside the Codex that
-`CTX_SHAVER_REAL_CODEX_LOCATIONS` finds, with Codex itself a script that runs
+`SHAVER_REAL_CODEX_LOCATIONS` finds, with Codex itself a script that runs
 `codex-via-shaver` with that Codex. It prints that script's path, for the
 wrapper to be given instead:
 
 ```bash
-export CTX_SHAVER_REAL_CODEX_LOCATIONS='~/path/to/codex/*/codex-<target>'
+export SHAVER_REAL_CODEX_LOCATIONS='~/path/to/codex/*/codex-<target>'
 export <WRAPPER_BINARY_VAR>=$(~/context-shaver/bin/codex-via-shaver --stand-in)
 codex [codex args ...]
 ```
@@ -223,7 +223,7 @@ put the provider in `~/.codex/config.toml` instead:
 model_provider = "shaver"
 
 [model_providers.shaver]
-name = "context-shaver"
+name = "shaver"
 base_url = "http://127.0.0.1:8787/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
 wire_api = "responses"
 requires_openai_auth = true

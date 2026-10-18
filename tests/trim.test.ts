@@ -75,7 +75,7 @@ test('a policy file is checked', () => {
 })
 
 test('a missing policy file is made from the default, and an edited one is kept', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'context-shaver-'))
+  const dir = mkdtempSync(path.join(tmpdir(), 'shaver-'))
   const [file, from] = [path.join(dir, 'policy.json'), path.join(dir, 'policy.default.json')]
   seedPolicy(file, from)
   assert.throws(() => readFileSync(file))
