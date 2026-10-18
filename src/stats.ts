@@ -309,7 +309,7 @@ export function estimate(r: Sent): Stats {
 // The session's cost without the shaver and as it was (cost.ts), with the
 // client's own compactions the shaver kept it from needing.
 const costLines = (c: Cost) => [
-  ...difference('Costs (session)', c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated)', 'actual', 'saved']),
+  ...difference('Costs (session)', c.without, c.actual, (v) => '$' + v.toFixed(2), [c.compactions ? 'if no shaver (estimated, if auto-compacted)' : 'if no shaver (estimated)', 'actual', 'saved']),
   ...(c.compactions ? [`  Auto-compactions avoided: ${c.compactions} (about ${Math.round(c.waitMs / 60_000)} min of waiting)`] : []),
 ]
 
