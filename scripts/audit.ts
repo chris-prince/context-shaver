@@ -18,9 +18,10 @@ const { values } = parseArgs({ options: { since: { type: 'string' }, all: { type
 const since = values.since ? Date.parse(values.since) : 0
 const logs = path.join(import.meta.dirname, '..', 'proxy-data', 'logs')
 
-// A logged conversation: its harness, from the key's prefix, and each message
-// once, with when it was first sent.
-type Conversation = { key: string; harness: string; messages: Array<{ msg: ApiMsg; time: string }> }
+// A logged conversation: its harness, from the key's prefix, each message
+// once, with when it was first sent, and each request as the proxy sent it.
+type Request = { time: string; protocol: string; breakpoints: number; last?: ApiMsg; count: number }
+type Conversation = { key: string; harness: string; messages: Array<{ msg: ApiMsg; time: string }>; requests: Request[] }
 
 function load(): Conversation[] {
   const out: Conversation[] = []
@@ -29,10 +30,15 @@ function load(): Conversation[] {
     if (!existsSync(path.join(dir, 'step_events.jsonl'))) continue
     const seen = new Set<string>()
     const messages: Conversation['messages'] = []
+    const requests: Request[] = []
     for (const line of readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8').split('\n')) {
       if (!line) continue
       const e = JSON.parse(line)
       if (e.event !== 'request' || Date.parse(e.time) < since) continue
+      const parts: Array<{ hash: string }> = e.parts ?? []
+      const lastFile = parts.length ? path.join(dir, 'parts', parts[parts.length - 1].hash + '.json') : ''
+      // Lines from before the proxy logged protocols are all Messages.
+      requests.push({ time: e.time, protocol: e.protocol ?? 'messages', breakpoints: e.breakpoints, count: parts.length, last: lastFile && existsSync(lastFile) ? JSON.parse(readFileSync(lastFile, 'utf8')) : undefined })
       for (const { hash } of e.parts ?? []) {
         if (seen.has(hash)) continue
         seen.add(hash)
@@ -41,7 +47,7 @@ function load(): Conversation[] {
       }
     }
     const harness = ['claude', 'codex', 'opencode'].find((h) => key.startsWith(h + '-')) ?? 'unknown'
-    out.push({ key, harness, messages })
+    out.push({ key, harness, messages, requests })
   }
   return out
 }
@@ -103,6 +109,21 @@ function taggedPrompts(cs: Conversation[]): string[] {
   return found
 }
 
+// Messages requests of more than one message that the proxy sent with no
+// cache breakpoint: nothing they send is cached, so each pays full input price
+// for the whole prompt. Claude Code sent 33 up to 2026-10-15 02:24Z, nearly
+// all [SUGGESTION MODE…] or "The user stepped away" side requests, then
+// stopped. Its web searches send one message with none, and are left out.
+// Chat and Responses cache automatically, with no breakpoints to count.
+function missingBreakpoints(cs: Conversation[]): string[] {
+  const found: string[] = []
+  for (const c of cs)
+    for (const r of c.requests)
+      if (r.protocol === 'messages' && r.breakpoints === 0 && r.count > 1)
+        found.push(`${r.count} messages, none marked: ${where(c, r.time, (r.last && texts(r.last)[0]) ?? '')}`)
+  return found
+}
+
 const AUDITS: Array<{ name: string; run: (cs: Conversation[]) => string[]; todo: string }> = [
   {
     name: 'Shared markers stay in their own harness',
@@ -125,6 +146,18 @@ For "skipped with no marker listed here": find the marker in NOT_A_PROMPT
 - A real prompt, which the model replies to as a turn: add its tag to
   PROMPT_TAGS here. If it's a prompt that merely quotes markup, nothing to
   change; rerun with --since a date after it.`,
+  },
+  {
+    name: 'Messages requests send a cache breakpoint',
+    run: missingBreakpoints,
+    todo: `Look at the request in that conversation's logs, and at the requests around it.
+- Its prefix was already cached by an earlier request (a side request like
+  [SUGGESTION MODE…] sent after one that had a breakpoint): the proxy could
+  add a breakpoint on its last message, which would read that prefix for 0.1x
+  instead of paying 1x. Check first that the harness meant to cache nothing.
+- The proxy dropped the breakpoint itself: a bug in src/messages.ts or
+  src/trim.ts; compare the request with its received messages.
+If it's neither, or only old ones: rerun with --since a date after them.`,
   },
 ]
 
