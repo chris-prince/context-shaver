@@ -90,8 +90,8 @@ function markersOutOfPlace(cs: Conversation[]): string[] {
 }
 
 // Tags that open real prompts, which the model replies to as a turn: Claude
-// Code's ! commands.
-const PROMPT_TAGS = [/^\s*<bash-input>/]
+// Code's ! commands and pasted text.
+const PROMPT_TAGS = [/^\s*<bash-input>/, /^\s*<pasted_content\b/]
 
 // Prompts whose every counted block opens with a tag, as the text harnesses
 // add usually does: each is either a prompt that quotes markup or harness text
