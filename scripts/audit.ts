@@ -3,7 +3,9 @@
 // holding; a finding is a line for a person to look at. To add one, write a
 // function from the conversations to findings and add it to AUDITS, with what
 // to do about its findings: the report prints that under any audit that has
-// some, so a reader needs nothing but the report and this file.
+// some, so a reader needs nothing but the report and this file. Findings
+// already dealt with go in the audit's resolved list, with why; findings in a
+// resolved window are counted but don't fail the run.
 //
 // Usage: bin/node-wrapper scripts/audit.ts [--since <date>] [--all]
 // --since skips messages first logged before the date, so findings already
@@ -52,6 +54,8 @@ function load(): Conversation[] {
   return out
 }
 
+type Finding = { time: string; text: string }
+
 const texts = (m: ApiMsg) => blocks(m).flatMap((b) => (b.type === 'text' && typeof b.text === 'string' ? [b.text] : []))
 const where = (c: Conversation, time: string, text: string) =>
   `${c.key.slice(0, 48)} ${time.slice(0, 19)}  ${JSON.stringify(text.trimStart().split('\n')[0].slice(0, 80))}`
@@ -74,17 +78,17 @@ const MARKERS: Array<[RegExp, string[]]> = [
 // is being skipped as not a prompt, or read as a Claude Code Read result. Also
 // user text the proxy skips that no marker here accounts for, which means a
 // marker was added to src/ without being added above.
-function markersOutOfPlace(cs: Conversation[]): string[] {
-  const found: string[] = []
+function markersOutOfPlace(cs: Conversation[]): Finding[] {
+  const found: Finding[] = []
   for (const c of cs)
     for (const { msg, time } of c.messages) {
       if (msg.role !== 'user') continue
       for (const text of texts(msg)) {
         const owners = MARKERS.find(([re]) => re.test(text))?.[1]
-        if (owners && !owners.includes(c.harness)) found.push(`${owners.join('/')} marker in ${c.harness}: ${where(c, time, text)}`)
+        if (owners && !owners.includes(c.harness)) found.push({ time, text: `${owners.join('/')} marker in ${c.harness}: ${where(c, time, text)}` })
       }
       if (!isPrompt(msg) && !blocks(msg).some((b) => b.type === 'tool_result' || isSkillBody(b)) && texts(msg).some((t) => !MARKERS.some(([re]) => re.test(t))))
-        found.push(`skipped with no marker listed here: ${where(c, time, texts(msg)[0] ?? '')}`)
+        found.push({ time, text: `skipped with no marker listed here: ${where(c, time, texts(msg)[0] ?? '')}` })
     }
   return found
 }
@@ -97,34 +101,37 @@ const PROMPT_TAGS = [/^\s*<bash-input>/, /^\s*<pasted_content\b/]
 // add usually does: each is either a prompt that quotes markup or harness text
 // that wants a marker, as Codex's <environment_context> did before it had one.
 // Prompts opening with a tag in PROMPT_TAGS are left out.
-function taggedPrompts(cs: Conversation[]): string[] {
-  const found: string[] = []
+function taggedPrompts(cs: Conversation[]): Finding[] {
+  const found: Finding[] = []
   for (const c of cs)
     for (const { msg, time } of c.messages) {
       if (!isPrompt(msg) || blocks(msg).some((b) => b.type === 'image' || b.type === 'document')) continue
       const counted = texts(msg).filter((t) => !MARKERS.some(([re]) => re.test(t)))
       if (counted.some((t) => PROMPT_TAGS.some((re) => re.test(t)))) continue
-      if (counted.length && counted.every((t) => /^\s*(<[a-z_-]+[ >]|\[[A-Z][A-Z ]+[:\]])/.test(t))) found.push(where(c, time, counted[0]))
+      if (counted.length && counted.every((t) => /^\s*(<[a-z_-]+[ >]|\[[A-Z][A-Z ]+[:\]])/.test(t))) found.push({ time, text: where(c, time, counted[0]) })
     }
   return found
 }
 
 // Messages requests of more than one message that the proxy sent with no
 // cache breakpoint: nothing they send is cached, so each pays full input price
-// for the whole prompt. Claude Code sent 33 up to 2026-10-15 02:24Z, nearly
-// all [SUGGESTION MODE…] or "The user stepped away" side requests, then
-// stopped. Its web searches send one message with none, and are left out.
+// for the whole prompt. Its web searches send one message with none, and are left out.
 // Chat and Responses cache automatically, with no breakpoints to count.
-function missingBreakpoints(cs: Conversation[]): string[] {
-  const found: string[] = []
+function missingBreakpoints(cs: Conversation[]): Finding[] {
+  const found: Finding[] = []
   for (const c of cs)
     for (const r of c.requests)
       if (r.protocol === 'messages' && r.breakpoints === 0 && r.count > 1)
-        found.push(`${r.count} messages, none marked: ${where(c, r.time, (r.last && texts(r.last)[0]) ?? '')}`)
+        found.push({ time: r.time, text: `${r.count} messages, none marked: ${where(c, r.time, (r.last && texts(r.last)[0]) ?? '')}` })
   return found
 }
 
-const AUDITS: Array<{ name: string; run: (cs: Conversation[]) => string[]; todo: string }> = [
+// A window of findings already dealt with: those logged from `from` (or the
+// start) up to `until`, and why they need nothing more, usually a fix in the
+// proxy or the harness.
+type Resolved = { from?: string; until: string; why: string }
+
+const AUDITS: Array<{ name: string; run: (cs: Conversation[]) => Finding[]; todo: string; resolved?: Resolved[] }> = [
   {
     name: 'Shared markers stay in their own harness',
     run: markersOutOfPlace,
@@ -145,7 +152,7 @@ For "skipped with no marker listed here": find the marker in NOT_A_PROMPT
   add its tag to NOT_A_PROMPT (src/items.ts) and to MARKERS here.
 - A real prompt, which the model replies to as a turn: add its tag to
   PROMPT_TAGS here. If it's a prompt that merely quotes markup, nothing to
-  change; rerun with --since a date after it.`,
+  change; add it to resolved, with why.`,
   },
   {
     name: 'Messages requests send a cache breakpoint',
@@ -157,7 +164,15 @@ For "skipped with no marker listed here": find the marker in NOT_A_PROMPT
   instead of paying 1x. Check first that the harness meant to cache nothing.
 - The proxy dropped the breakpoint itself: a bug in src/messages.ts or
   src/trim.ts; compare the request with its received messages.
-If it's neither, or only old ones: rerun with --since a date after them.`,
+If it's neither: add the window to resolved, with why.`,
+    resolved: [
+      {
+        until: '2026-10-15T03:00Z',
+        why: `Claude Code sent 33, nearly all [SUGGESTION MODE…] or "The user stepped
+away" side requests right after one that had a breakpoint, then stopped:
+309 suggestion requests since, all with one. Taken as fixed in Claude Code.`,
+      },
+    ],
   },
 ]
 
@@ -165,8 +180,12 @@ const cs = load()
 console.log(`${cs.length} conversations, ${cs.reduce((n, c) => n + c.messages.length, 0)} messages${since ? ` since ${values.since}` : ''}\n`)
 let failed = 0
 for (const a of AUDITS) {
-  const found = a.run(cs)
-  console.log(`${found.length ? 'ACTION' : 'ok    '}  ${a.name}${found.length ? ` (${found.length})` : ''}`)
+  const all = a.run(cs)
+  const windows = a.resolved ?? []
+  const inWindow = (f: Finding, w: Resolved) => Date.parse(f.time) >= (w.from ? Date.parse(w.from) : 0) && Date.parse(f.time) < Date.parse(w.until)
+  const found = all.filter((f) => !windows.some((w) => inWindow(f, w))).map((f) => f.text)
+  const resolved = all.length - found.length
+  console.log(`${found.length ? 'ACTION' : 'ok    '}  ${a.name}${found.length ? ` (${found.length})` : ''}${resolved ? `  [${resolved} resolved]` : ''}`)
   for (const f of values.all ? found : found.slice(0, 20)) console.log(`        ${f}`)
   if (!values.all && found.length > 20) console.log(`        … ${found.length - 20} more; --all lists them`)
   if (found.length) console.log(`\n        What to do:\n${a.todo.replace(/^/gm, '        ')}\n`)
