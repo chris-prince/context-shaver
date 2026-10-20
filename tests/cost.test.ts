@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { add, cost, without, type Usage } from '../src/cost.ts'
+import { modelOf } from '../src/models.ts'
 import { render, type Stats } from '../src/stats.ts'
 
 const HOUR = 3600e3
@@ -56,7 +57,7 @@ test('adding a request at a time gives the same cost as the whole journal', () =
     { stats: at(1, 12_000, 9000), usage: usage(0, 5000, 7000) },
     { stats: at(2, 13_000, 9000), usage: usage(0, 12_000, 1000) },
   ]
-  let c = add({ without: 0, actual: 0, compactions: 0, waitMs: 0 }, undefined, lines[0].stats, lines[0].usage, HOUR)
+  let c = add({ without: 0, actual: 0, deferral: 0, compactions: 0, waitMs: 0 }, undefined, lines[0].stats, lines[0].usage, HOUR)
   for (let i = 1; i < lines.length; i++) c = add(c, lines[i - 1].stats, lines[i].stats, lines[i].usage, HOUR)
   assert.deepEqual(c, cost(lines, HOUR))
   assert.equal(add(c, lines[2].stats, at(3, 13_000, 9000, 'm'), usage(0, 13_000, 0), HOUR), undefined)
@@ -76,6 +77,10 @@ test('past compactAt the client compacts, keeping the base and some of the rest'
   const c = cost(lines, HOUR)!
   assert.equal(c.compactions, 1)
   assert.equal(c.waitMs, 65_000)
+  // The 2k deferred: written cold, then read with the base, after the
+  // compaction too.
+  const price = modelOf('claude-opus-5-5').price!
+  assert.ok(Math.abs(c.deferral - (2000 * 2 * price.input + 2 * 2000 * price.read) / 1e6) < 1e-12)
   assert.ok(Math.abs(c.context!.rest - (160_000 * 0.2 + 20_000)) < 1e-6)
   // The request after it reads the base and writes the rest.
   const w = without(lines[1].stats, lines[2].stats, lines[2].usage, HOUR, { rest: 160_000 * 0.2, client: 160_000, cached: 12_000 }, 165_000)
@@ -87,4 +92,10 @@ test('render shows the cost after the tokens', () => {
   const c = cost([{ stats: at(0, 12_000, 9000), usage: usage(0, 0, 12_000) }, { stats: at(2, 13_000, 9000), usage: usage(0, 12_000, 1000) }], HOUR)
   const out = render(s, 'session', false, c)
   assert.match(out, /saved \(41%\)\n  Costs \(session\)\n    \$0\.18 if no shaver \(estimated, if auto-compacted\)\n    \$0\.11 actual\n    \$0\.07 saved \(41%\)\n  Auto-compactions avoided: 0 \(about 0 min of waiting\)\n  Summaries: 0 creation requests\n\nContext Details\n\n  Base/)
+})
+
+test('render splits the saving when tools were deferred', () => {
+  const s = { ...at(2, 13_000, 9000), first: at(0, 0, 0).time, requests: 3, turns: 2, tokens: {}, bound: {}, answers: {}, seen: {}, parts: [], defs: { key: 'd', systemPrompt: 1, tools: 1 }, ends: { tools: 0, reasoning: 0 } } as Stats
+  const out = render(s, 'session', false, { without: 1, actual: 0.4, deferral: 0.15, compactions: 0, waitMs: 0 })
+  assert.match(out, /\$0\.60 saved \(60%\)\n      \$0\.15 \(15%\) from trimming base\n      \$0\.45 \(45%\) from trimming conversation\n  Auto/)
 })

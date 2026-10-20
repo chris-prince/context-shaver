@@ -47,12 +47,18 @@ export type Tokens = { uncached: number; reads: number; writes: number; output: 
 // those of the client's own (untrimmed) prompt, and how much of it the cache
 // holds for the next request.
 export type Context = { rest: number; client: number; cached: number }
-// Dollars, without the proxy and as it was; the compactions the proxy saved,
+// Dollars, without the proxy and as it was, and the share of the difference
+// that is the tool definitions it deferred; the compactions the proxy saved,
 // and the time they'd have taken.
-export type Cost = { without: number; actual: number; compactions: number; waitMs: number; context?: Context }
+export type Cost = { without: number; actual: number; deferral: number; compactions: number; waitMs: number; context?: Context }
 
 // A request's base without the proxy: with the tool definitions it deferred,
 // at the base's tokens a byte.
+// Blind spot: a deferred tool the model loads with ToolSearch is expanded into
+// the conversation from then on, so it's paid for there, while it's still
+// counted here as deferred. The estimate then pays for it twice, overstating
+// the saving (and the deferral share) by about its size a request; the
+// ToolSearch request itself, a cost of deferring, isn't charged to it either.
 const baseWithout = (s: Stats) => (s.defs ? baseOf(s) + (s.defs.deferred ? ((s.tokens[s.defs.key] ?? 0) * s.defs.deferred) / (s.defs.systemPrompt + s.defs.tools) : 0) : 0)
 // The client's own (untrimmed) prompt past the base.
 const clientRest = (s: Stats) => s.inputTokens + (s.removedTokens ?? 0) - (s.defs ? baseOf(s) : 0)
@@ -105,9 +111,17 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   const wo = without(prev, s, u, ttlMs, c.context, m.compactAt)
   const all = wo.tokens.uncached + wo.tokens.reads + wo.tokens.writes
   const compaction: Tokens = { uncached: 0, reads: all, writes: 0, output: SUMMARY_TOKENS }
+  // The deferred tools sit at the front, so they were read with the base or
+  // written with it. A compaction's reading them counts with the conversation,
+  // whose growth it comes from.
+  const deferred = baseWithout(s) - (s.defs ? baseOf(s) : 0)
+  const read = wo.tokens.reads >= baseWithout(s)
+  const less: Tokens = { ...wo.tokens, reads: wo.tokens.reads - (read ? deferred : 0), writes: wo.tokens.writes - (read ? 0 : deferred) }
+  const withoutRequest = dollars(p, wo.tokens, short(wo.tokens))
   return {
-    without: c.without + dollars(p, wo.tokens, short(wo.tokens)) + (wo.compacted ? dollars(p, compaction, 0) : 0),
+    without: c.without + withoutRequest + (wo.compacted ? dollars(p, compaction, 0) : 0),
     actual: c.actual + dollars(p, actual, u.cache_creation?.ephemeral_5m_input_tokens ?? 0),
+    deferral: c.deferral + withoutRequest - dollars(p, less, short(less)),
     compactions: c.compactions + (wo.compacted ? 1 : 0),
     waitMs: c.waitMs + (wo.compacted ? COMPACTION_MS : 0),
     context: wo.context,
@@ -118,7 +132,7 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
 // and the usage it holds. Lines from before the journal held usage count for
 // nothing.
 export function cost(lines: Iterable<{ stats: Stats; usage?: Usage }>, ttlMs: number): Cost | undefined {
-  let c: Cost | undefined = { without: 0, actual: 0, compactions: 0, waitMs: 0 }
+  let c: Cost | undefined = { without: 0, actual: 0, deferral: 0, compactions: 0, waitMs: 0 }
   let prev: Stats | undefined
   for (const { stats: s, usage: u } of lines) {
     if (u) c = add(c, prev, s, u, ttlMs)
