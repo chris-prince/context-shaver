@@ -491,7 +491,10 @@ Scripts:
   its count estimated from its bytes and marked so. It answers without calling
   the model, and strips the command and its answer from every later request
   (`src/command.ts`), keeping the system messages between them: after a first
-  prompt those are Claude Code's whole preamble. A breakpoint on the command
+  prompt those are Claude Code's whole preamble. Blocks that open with a tag,
+  of any name (reminders, a local command and its output, a `!` command), don't
+  stop a prompt being a command, and are kept when it is stripped, so the model
+  reads them with the next prompt. A breakpoint on the command
   or its answer moves to the message before them. Claude Code's prompt
   suggestion puts its breakpoint on the last reply, and when that reply is the
   proxy's, stripping it would leave the suggestion reading only the system

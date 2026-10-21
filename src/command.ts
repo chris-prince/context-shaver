@@ -5,9 +5,11 @@
 // from every request it forwards. Dropping them leaves what came before next to
 // what came after, a prompt or the end, so no system message is left after an
 // assistant one. A command the model answered instead, with a tool call, stays,
-// since dropping the call would orphan its result. The first prompt of a session
-// comes with `<system-reminder>` blocks holding the instructions and context;
-// they don't stop it being a command, and stripping it keeps them. A
+// since dropping the call would orphan its result. A prompt can come with blocks
+// that open with a tag: `<system-reminder>` with the instructions and context on
+// a first prompt, a local command's `<command-name>` and its output, a `!`
+// command's `<bash-input>` and output. They don't stop it being a command, and
+// stripping it keeps them, so the model still reads them with the next prompt. A
 // breakpoint on a stripped message moves to the message before it: Claude
 // Code's prompt suggestion puts one on the last reply, and when that is the
 // proxy's, the suggestion would otherwise read only the system prompt.
@@ -28,13 +30,14 @@ function withControl<M extends Msg>(m: M, control: unknown): M {
   return { ...m, content: content.map((b, i) => (i === at ? { ...b, cache_control: control } : b)) }
 }
 
-const isReminder = (b: Block) => b.type === 'text' && (b.text ?? '').trimStart().startsWith('<system-reminder>')
+// Any tag, so ones Claude Code adds later need no change here.
+const isTagged = (b: Block) => b.type === 'text' && /^<[A-Za-z][\w-]*>/.test((b.text ?? '').trimStart())
 
 // The command a message is, if any: a user message whose only text, besides
-// reminders, is one. `: shaver` counts as `:shaver`.
+// tagged blocks, is one. `: shaver` counts as `:shaver`.
 export function commandOf(m: Msg): string | undefined {
   if (m.role !== 'user') return undefined
-  const texts = typeof m.content === 'string' ? [m.content] : m.content.filter((b) => b.type === 'text' && !isReminder(b)).map((b) => b.text ?? '')
+  const texts = typeof m.content === 'string' ? [m.content] : m.content.filter((b) => b.type === 'text' && !isTagged(b)).map((b) => b.text ?? '')
   return texts.length === 1 ? COMMANDS.find((c) => c === texts[0].trim().replace(/^: shaver/, ':shaver')) : undefined
 }
 
@@ -45,16 +48,16 @@ export function pendingCommand(msgs: Msg[]): string | undefined {
   return last && commandOf(last)
 }
 
-// The messages with the pending command left out but for its reminders, as
+// The messages with the pending command left out but for its tagged blocks, as
 // they will be sent once it is answered.
 export function withoutPending<M extends Msg>(msgs: M[]): M[] {
   const i = msgs.findLastIndex((m) => m.role !== 'system')
-  const reminders = Array.isArray(msgs[i].content) ? (msgs[i].content as Block[]).filter(isReminder) : []
-  return [...msgs.slice(0, i), ...(reminders.length ? [{ ...msgs[i], content: reminders }] : []), ...msgs.slice(i + 1)]
+  const tagged = Array.isArray(msgs[i].content) ? (msgs[i].content as Block[]).filter(isTagged) : []
+  return [...msgs.slice(0, i), ...(tagged.length ? [{ ...msgs[i], content: tagged }] : []), ...msgs.slice(i + 1)]
 }
 
 // The messages with each answered command and its reply removed, but for any
-// reminders the command came with. The system messages between them are kept,
+// tagged blocks the command came with. The system messages between them are kept,
 // moved to just before the next reply (or to the end): on a first prompt they
 // are Claude Code's whole preamble, and the API refuses a system message right
 // before a user one. A command not yet answered, the last one, stays.
@@ -74,8 +77,8 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
     while (j < msgs.length && msgs[j].role === 'system') j++
     const r = msgs[j]
     if (r?.role === 'assistant' && !(Array.isArray(r.content) && r.content.some((b) => b.type === 'tool_use'))) {
-      const reminders = Array.isArray(msgs[i].content) ? (msgs[i].content as Block[]).filter(isReminder) : []
-      if (reminders.length) out.push({ ...msgs[i], content: reminders })
+      const tagged = Array.isArray(msgs[i].content) ? (msgs[i].content as Block[]).filter(isTagged) : []
+      if (tagged.length) out.push({ ...msgs[i], content: tagged })
       const control = [msgs[i], r].filter(marked).flatMap((m) => m.content as Block[]).find((b) => b.cache_control !== undefined)?.cache_control
       const k = out.findLastIndex((m) => m.role !== 'system')
       if (control !== undefined && k >= 0) out[k] = withControl(out[k], control)

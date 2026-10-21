@@ -17,9 +17,25 @@ test('a command is a user message whose only text is one', () => {
 
 const firstPrompt = (text: string) => ({ role: 'user', content: [{ type: 'text', text: '<system-reminder>\nAGENTS.md\n</system-reminder>' }, { type: 'text', text: '<system-reminder>\ngit status\n</system-reminder>\n' }, { type: 'text', text }] })
 
-test('a first prompt is a command despite the reminders before it', () => {
-  assert.equal(commandOf(firstPrompt(':shaver info')), ':shaver info')
-  assert.equal(commandOf(firstPrompt('hello')), undefined)
+// As Claude Code sent it after `/restart`, with `!` command blocks added.
+const afterLocal = (text: string) => ({
+  role: 'user',
+  content: [
+    { type: 'text', text: '<system-reminder>\nAGENTS.md\n</system-reminder>' },
+    { type: 'text', text: '<command-name>/restart</command-name>\n<command-message>restart</command-message>\n<command-args></command-args>\n' },
+    { type: 'text', text: '<local-command-stdout>Successfully updated</local-command-stdout>\n' },
+    { type: 'text', text: '<bash-input>ls</bash-input>' },
+    { type: 'text', text },
+  ],
+})
+
+test('a command is one despite any tagged blocks with it, which stripping keeps', () => {
+  assert.equal(commandOf(afterLocal(':shaver info')), ':shaver info')
+  assert.equal(commandOf(afterLocal('hello')), undefined)
+  assert.equal(commandOf(user('<b>bold</b> :shaver info')), undefined)
+  const kept = { role: 'user', content: afterLocal('').content.slice(0, 4) }
+  assert.deepEqual(withoutPending([user('a'), assistant('b'), afterLocal(':shaver info')]), [user('a'), assistant('b'), kept])
+  assert.deepEqual(stripCommands([user('a'), assistant('b'), afterLocal(':shaver info'), assistant('stats'), user('c')]), [user('a'), assistant('b'), kept, user('c')])
 })
 
 test('a request asks for a command despite the system messages after it', () => {
@@ -28,12 +44,12 @@ test('a request asks for a command despite the system messages after it', () => 
   assert.equal(pendingCommand([user(':shaver info'), assistant('stats')]), undefined)
 })
 
-test('the pending command is left out but for its reminders', () => {
+test('the pending command is left out but for its tagged blocks', () => {
   assert.deepEqual(withoutPending([firstPrompt(':shaver info'), system('environment')]), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, system('environment')])
   assert.deepEqual(withoutPending([user('a'), assistant('b'), user(':shaver info')]), [user('a'), assistant('b')])
 })
 
-test('an answered first-prompt command is stripped but for its reminders', () => {
+test('an answered first-prompt command is stripped but for its tagged blocks', () => {
   const msgs = [firstPrompt(':shaver info'), assistant('stats'), user('b')]
   assert.deepEqual(stripCommands(msgs), [{ role: 'user', content: firstPrompt('').content.slice(0, 2) }, user('b')])
 })
