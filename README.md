@@ -13,7 +13,7 @@ your context that are no longer needed.
 - **Lower cost.** You stop paying, request after request, for content that no
   longer matters.
 - **Automatic.** Trimming happens continuously, with no commands to run.
-- **Fast.** Compaction happens instantly, with no pauses to slow you down.
+- **Fast.** Context filtering happens instantly, with no pauses to slow you down.
 - **Intelligent.** Cache-aware price modeling means you optimize for true costs,
   not just raw token counts.
 - **Configurable.** What gets culled is up to you, controlled by a policy file.
@@ -40,13 +40,12 @@ wrapper, context-shaver can be chained in front of that proxy (see DESIGN.md).
 
 When running against the proxy, the prompt `:shaver info` will return details
 on how context-shaver is doing this session and where your context is being
-spent. `: shaver info`, with a space, works too. `:shaver info all` adds up
-the savings of every conversation the proxy has seen.
+spent. `:shaver info all` will show your savings across all sessions the
+proxy has seen.
 
-context-shaver requires only bash and Node 24 or newer, which `bin/run-proxy`
-installs with npm if need be ([DESIGN.md](DESIGN.md#node)). It has been
-tested most thoroughly with Claude Code 2.x, and less so with Codex 0.x and
-OpenCode 2.x.
+context-shaver requires only bash and Node 24 or newer. (`bin/run-proxy` will
+try to install Node 24 if needed.) It has been tested most thoroughly with
+Claude Code 2.x, and less so with Codex 0.x and OpenCode 2.x.
 
 See [DESIGN.md](DESIGN.md) for options, the policy file, how trimming works,
 logs, and limits.
