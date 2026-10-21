@@ -10,6 +10,9 @@
 // kept from the previous list as [from, to) and each other part whole. A line
 // also holds the request's usage as the API reported it (cache reads, cache
 // writes by TTL, output), which the stats leave out and replay ignores.
+//
+// A summary fork (summary.ts) gets a line of its own, { summaryFork: { time,
+// model, provider, usage } }, with no change to the stats, so replay skips it.
 
 import { appendFileSync, existsSync, readFileSync, renameSync } from 'node:fs'
 import type { Usage } from './cost.ts'
@@ -25,6 +28,7 @@ export type Delta = {
   parts?: Array<[number, number] | Part>
   usage?: Usage
 }
+export type SummaryForkLine = { time: string; model: string; provider?: string; usage?: Usage }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
@@ -57,15 +61,18 @@ export function diff(prev: Stats | undefined, next: Stats): Delta {
   return d
 }
 
-export function apply(prev: Stats | undefined, d: Delta): Stats {
-  const s = { ...prev, ...d.set } as Stats
+// Applies a line to the stats before it, in place: copying the records, which
+// every line changes, would cost a line as much as all the lines before it.
+function apply(s: Stats | undefined, d: Delta): Stats {
+  const parts = d.parts?.flatMap((op) => (Array.isArray(op) ? s!.parts.slice(op[0], op[1]) : [op]))
+  s = Object.assign(s ?? ({} as Stats), d.set)
   for (const f of RECORDS) {
     const r = d.records?.[f]
-    const out: Record<string, unknown> = { ...prev?.[f], ...r?.set }
+    const out: Record<string, unknown> = (s[f] ??= {} as never)
+    Object.assign(out, r?.set)
     for (const k of r?.del ?? []) delete out[k]
-    s[f] = out as never
   }
-  if (d.parts) s.parts = d.parts.flatMap((op) => (Array.isArray(op) ? prev!.parts.slice(op[0], op[1]) : [op]))
+  if (parts) s.parts = parts
   return s
 }
 
@@ -75,16 +82,29 @@ export function record(file: string, prev: Stats | undefined, next: Stats, usage
   appendFileSync(file, JSON.stringify({ ...diff(prev, next), ...(usage && { usage }) }) + '\n')
 }
 
-// The stats after each line of a journal, in order, each built from the one
-// before, with the usage the line holds; none if there is none.
-export function* history(file: string): Generator<{ stats: Stats; usage?: Usage }> {
+// Appends a summary fork's line.
+export function recordSummaryFork(file: string, f: SummaryForkLine): void {
+  appendFileSync(file, JSON.stringify({ summaryFork: f }) + '\n')
+}
+
+// The journal's lines, parsed; none if there is none.
+function* linesOf(file: string): Generator<Delta & { summaryFork?: SummaryForkLine }> {
   if (!existsSync(file)) return
+  for (const line of readFileSync(file, 'utf8').split('\n')) if (line) yield JSON.parse(line)
+}
+
+// The stats after each line of a journal, in order, each built from the one
+// before, with the usage the line holds; none if there is none. Every line
+// gives the same stats object, changed in place, so a caller that keeps a
+// line's stats past the next one copies what it needs.
+export function* history(file: string): Generator<{ stats: Stats; usage?: Usage }> {
   let s: Stats | undefined
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
-    if (!line) continue
-    const d: Delta = JSON.parse(line)
-    yield { stats: (s = apply(s, d)), usage: d.usage }
-  }
+  for (const d of linesOf(file)) if (!d.summaryFork) yield { stats: (s = apply(s, d)), usage: d.usage }
+}
+
+// The summary forks a journal records, in order.
+export function* summaryForks(file: string): Generator<SummaryForkLine> {
+  for (const d of linesOf(file)) if (d.summaryFork) yield d.summaryFork
 }
 
 export function* replay(file: string): Generator<Stats> {

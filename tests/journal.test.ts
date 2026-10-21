@@ -4,13 +4,15 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { diff, latest, record, replay } from '../src/journal.ts'
+import { diff, latest, record, recordSummaryFork, replay, summaryForks } from '../src/journal.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
 const body = (messages: ApiMsg[]) => ({ model: 'm', messages, system: 'sys', tools: [{ name: 'Bash' }] })
 const user = (text: string): ApiMsg => ({ role: 'user', content: text })
 const reply = (text: string): ApiMsg => ({ role: 'assistant', content: [{ type: 'text', text }] })
+// Replay changes one stats object in place, so steps kept for later are copied.
+const copy = (s: Stats) => structuredClone(s)
 
 test('replaying the journal gives the stats after every request', () => {
   const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
@@ -30,10 +32,22 @@ test('replaying the journal gives the stats after every request', () => {
     record(file, s, next, { input_tokens: 10, cache_read_input_tokens: 900 + 100 * i, cache_creation_input_tokens: 90, output_tokens: 30 })
     observed.push((s = next))
   })
-  assert.deepEqual([...replay(file)], observed)
+  assert.deepEqual(Array.from(replay(file), copy), observed)
   const lines = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   assert.deepEqual(lines.map((l) => l.usage.cache_read_input_tokens), [900, 1000, 1100, 1200, 1300])
   assert.deepEqual(latest(file), observed.at(-1))
+})
+
+test('a summary fork has its own line, which stats replay skips', () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
+  const s1 = observe(undefined, describe(body([user('a')]), ends, '2026-10-11T10:00:00Z'), 1000, 30)
+  record(file, undefined, s1, { input_tokens: 10, output_tokens: 30 })
+  const fork = { time: '2026-10-11T10:00:30Z', model: 'm', usage: { input_tokens: 5, cache_read_input_tokens: 900, output_tokens: 400 } }
+  recordSummaryFork(file, fork)
+  const s2 = observe(s1, describe(body([user('a'), reply('b'), user('c')]), ends, '2026-10-11T10:01:00Z'), 1100, 30)
+  record(file, s1, s2, { input_tokens: 10, output_tokens: 30 })
+  assert.deepEqual(Array.from(replay(file), copy), [s1, s2])
+  assert.deepEqual([...summaryForks(file)], [fork])
 })
 
 test('replaying the journal keeps the pinned provider', () => {

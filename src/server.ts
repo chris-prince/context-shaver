@@ -27,7 +27,7 @@ import { shaveSkills } from './skills.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
-import { history, latest, record } from './journal.ts'
+import { history, latest, record, recordSummaryFork } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
@@ -460,6 +460,7 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     const record = recordOf(out.content, f, time)
     const s = loadSummaries(key)
     writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(p.model, p.provider, out.usage) : 0) }))
+    recordSummaryFork(journalOf(key), { time, model: p.model, ...(p.provider && { provider: p.provider }), usage: out.usage })
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
   } catch (err) {
     console.error('shaver: summary fork failed:', err)

@@ -136,7 +136,12 @@ export function cost(lines: Iterable<{ stats: Stats; usage?: Usage }>, ttlMs: nu
   let prev: Stats | undefined
   for (const { stats: s, usage: u } of lines) {
     if (u) c = add(c, prev, s, u, ttlMs)
-    prev = s
+    prev = before(s)
   }
   return c
 }
+
+// What add reads of the stats before a request, copied, since a journal's
+// history changes its stats in place: the plain fields and the base's and the
+// parts' tokens, which it reads only when the stats have a base.
+const before = (s: Stats): Stats => (s.defs ? { ...s, tokens: Object.fromEntries([s.defs.key, ...s.parts.map((p) => p.key)].filter((k) => k in s.tokens).map((k) => [k, s.tokens[k]])) } : { ...s })

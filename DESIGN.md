@@ -521,7 +521,9 @@ Scripts:
   `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a
   request, with the usage the API reported for it: cache reads, cache writes
   by TTL, and output tokens. Replayed from the start, the journal gives the
-  stats after any request. Claude Code's prompt suggestions, which it sends
+  stats after any request. Each summary fork answered adds a line of its own
+  with its time, model and usage, which stats replay skips; its cost still
+  comes from the conversation's summaries file. Claude Code's prompt suggestions, which it sends
   after a reply asking what the user will type next, are trimmed like any
   request but not counted: they would add a turn the user never took. The
   proxy keeps only each conversation's latest stats in memory,
