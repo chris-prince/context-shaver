@@ -55,9 +55,12 @@ every run from the checkout uses it from then on. Where npm's registry is
 blocked, as behind some corporate proxies, it lists the `registry=` lines of
 the `.npmrc` files it finds on the machine, each with its file, and on a
 terminal asks which to install from; it uses none unasked. Setting a registry
-npm can reach (`npm config set registry <url>`) avoids the question. Deleting
-`proxy-data/node` makes the next run install the newest 24.x. `bin/run-proxy`
-starts the proxy through it.
+npm can reach (`npm config set registry <url>`) avoids the question, and so
+does `SHAVER_INSTALL_DEPS=1`: with that set, it asks nothing and tries each
+listed registry in turn. Being a variable, it reaches the install through
+`claude-via-shaver`, `codex-via-shaver` and any wrapper that runs them.
+Deleting `proxy-data/node` makes the next run install the newest 24.x.
+`bin/run-proxy` starts the proxy through it.
 
 | Option | Default | |
 | --- | --- | --- |

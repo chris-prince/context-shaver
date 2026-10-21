@@ -5,6 +5,7 @@
 # with npm (node@24 from npm's registry). If that fails, as where the default
 # registry is blocked, it lists the registries that .npmrc files on this machine
 # name, and on a terminal asks which to install from; it uses none unasked.
+# With SHAVER_INSTALL_DEPS=1, it asks nothing and tries each of them in turn.
 #
 # With --nohup <log>, it starts Node in the background, apart from the
 # terminal, with its output appended to the log, and returns; any install comes
@@ -18,6 +19,7 @@ dir=$repo/proxy-data/node
 PATH=$dir/bin:$PATH
 die() { echo "node-wrapper: $*" >&2; exit 1; }
 log=
+auto=${SHAVER_INSTALL_DEPS:-}
 if [[ ${1:-} == --nohup ]]; then
   [[ $# -ge 3 ]] || die "usage: node-wrapper [--nohup <log>] <node arguments>"
   log=$2
@@ -41,7 +43,8 @@ search() {
 # files name, under / to depth 4 (as /src/<repo>/.npmrc) and $HOME to depth 4
 # (as ~/src/<org>/<repo>/.npmrc); each registry once, with the first file that
 # names it, so a file reached by two paths, as through a bind mount, is listed
-# once. On a terminal, asks for one and prints it.
+# once. On a terminal, asks for one and prints it; with $auto set, prints them
+# all, one per line, without asking.
 pick() {
   local f r n seen=" " files=() regs=()
   while IFS= read -r f; do
@@ -63,6 +66,10 @@ pick() {
       printf '  %d) %s\n       registry=%s\n' $((n + 1)) "${files[n]}" "${regs[n]}"
     done
   } >&2
+  if [[ -n $auto ]]; then
+    printf '%s\n' "${regs[@]}"
+    return
+  fi
   [[ -t 0 ]] || return 1
   if ((${#files[@]} == 1)); then
     read -rp "Install Node 24 from it? [y/N] " n
@@ -78,7 +85,17 @@ if ! ok; then
   command -v npm >/dev/null || die "Node 24 or newer is needed, and there is no npm to install it with"
   echo "node-wrapper: Node 24 or newer is needed; installing it under $dir with npm" >&2
   out=$(mktemp)
-  install || { r=$(pick) && install --registry="$r"; } || {
+  # Default registry first, then those pick gives (none when it gives none).
+  tried() {
+    install && return
+    local r
+    for r in $(pick); do
+      echo "node-wrapper: trying $r" >&2
+      install --registry="$r" && return
+    done
+    return 1
+  }
+  tried || {
     cat "$out" >&2
     rm -f "$out"
     die "could not install Node 24; set a registry npm can reach (npm config set registry <url>)"
