@@ -4,6 +4,7 @@
 
 import { copyFileSync, existsSync, readFileSync } from 'node:fs'
 import type { Clock, Item, Kind } from './items.ts'
+import type { SkillRule } from './skills.ts'
 
 export type Action = 'stub' | 'drop'
 // Due once the item's step (or turn) is among the completed ones, leaving out
@@ -13,7 +14,9 @@ type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 // that way; the proxy defers the rest (defer.ts). `summary_threshold_tokens` is
 // how many tokens of completed turns a record leaves uncovered before the
 // proxy asks for the next (summary.ts); without it, none is made or applied.
-export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[]; summary_threshold_tokens?: number }
+// `skill_list` shortens the skills Claude Code lists to the model, first
+// matching rule winning (skills.ts).
+export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[]; summary_threshold_tokens?: number; skill_list?: SkillRule[] }
 
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
@@ -27,6 +30,13 @@ export function parsePolicy(v: unknown): Policy {
     }
     if (kind === 'summary_threshold_tokens') {
       if (!Number.isInteger(rules) || (rules as number) <= 0) throw new Error('policy: summary_threshold_tokens is not a positive token count')
+      continue
+    }
+    if (kind === 'skill_list') {
+      if (!Array.isArray(rules)) throw new Error('policy: skill_list is not a list of rules')
+      for (const r of rules)
+        if (typeof r?.match !== 'string' || !['keep', 'stub', 'drop'].includes(r.action) || (r.action === 'stub' ? !Number.isInteger(r.sentences) || r.sentences < 1 : r.sentences !== undefined))
+          throw new Error(`policy: bad skill_list rule ${JSON.stringify(r)}`)
       continue
     }
     if (!Object.hasOwn(ACTIONS, kind)) throw new Error(`policy: unknown kind ${kind}`)

@@ -282,6 +282,16 @@ not. Without the key nothing is deferred, and with tool search off (no
 `ENABLE_TOOL_SEARCH`, so no list) neither. Changing the list rewrites the cache of open
 sessions once.
 
+`skill_list` shortens the list of skills Claude Code gives the model in its
+environment message. Each rule has a `match`, a skill name with `*` for any
+run of characters, and an `action`: `keep`, `drop`, or `stub` with `sentences`,
+which keeps that many sentences of the description. Each skill takes the first
+rule that matches it, so `keep` rules go before a broader `stub` or `drop`; a
+skill no rule matches is kept. A dropped skill can still be run as `/name`, but
+the model won't invoke it. The bytes taken out count with the deferred tools,
+as base savings. Like `tools_not_deferred`, changing the rules rewrites the
+cache of open sessions once.
+
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens
 before the frontier. The default is 20000; a model can set its own

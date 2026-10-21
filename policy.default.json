@@ -14,5 +14,8 @@
     { "on": "turn", "wait": 0, "action": "drop" }
   ],
   "tools_not_deferred": ["ToolSearch", "Bash", "Edit", "Read", "Write"],
+  "skill_list": [
+    { "match": "*", "action": "keep" }
+  ],
   "summary_threshold_tokens": 20000
 }

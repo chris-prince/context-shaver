@@ -52,8 +52,8 @@ export type Context = { rest: number; client: number; cached: number }
 // and the time they'd have taken.
 export type Cost = { without: number; actual: number; deferral: number; compactions: number; waitMs: number; context?: Context }
 
-// A request's base without the proxy: with the tool definitions it deferred,
-// at the base's tokens a byte.
+// A request's base without the proxy: with the tool definitions it deferred
+// and the skill list it shortened, at the base's tokens a byte.
 // Blind spot: a deferred tool the model loads with ToolSearch is expanded into
 // the conversation from then on, so it's paid for there, while it's still
 // counted here as deferred. The estimate then pays for it twice, overstating

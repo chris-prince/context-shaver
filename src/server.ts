@@ -23,6 +23,7 @@ import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { forceDefer } from './defer.ts'
+import { shaveSkills } from './skills.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
@@ -127,7 +128,8 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { render, ids }: Wire, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
-  const deferred = proto.defers && h?.defers && policy.tools_not_deferred ? forceDefer(body, policy.tools_not_deferred) : 0
+  // What it takes out of the base: deferred tools, and skills off the list.
+  const deferred = (proto.defers && h?.defers && policy.tools_not_deferred ? forceDefer(body, policy.tools_not_deferred) : 0) + (policy.skill_list ? shaveSkills(body, policy.skill_list) : 0)
   const key = conversationId(h, proto.name, body, headers)
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
@@ -251,6 +253,7 @@ function policyText(): string {
 function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers: IncomingHttpHeaders): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   if (proto.defers && h?.defers && policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
+  if (policy.skill_list) shaveSkills(sent, policy.skill_list)
   const key = conversationId(h, proto.name, sent, headers)
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests } = loadSummaries(key)

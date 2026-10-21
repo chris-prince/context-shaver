@@ -31,8 +31,8 @@ export type Sent = {
   parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number; born?: string }>
   // `sections` is the system prompt's bytes by section, when the protocol's
   // conventions cut it (Conventions.promptHeadings); `deferred` is the bytes of
-  // the tool definitions the proxy deferred (defer.ts), which the base would
-  // hold without it.
+  // the tool definitions the proxy deferred (defer.ts) and of the skill list it
+  // shortened (skills.ts), which the base would hold without it.
   defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number>; deferred?: number }
   ends: { tools: number; reasoning: number }
   // Whether the proxy advanced its trim on this request.
