@@ -40,7 +40,8 @@ wrapper, context-shaver can be chained in front of that proxy (see DESIGN.md).
 
 When running against the proxy, the prompt `:shaver info` will return details
 on how context-shaver is doing this session and where your context is being
-spent. `: shaver info`, with a space, works too.
+spent. `: shaver info`, with a space, works too. `:shaver info all` adds up
+the savings of every conversation the proxy has seen.
 
 context-shaver requires only bash and Node 24 or newer, which `bin/run-proxy`
 installs with npm if need be ([DESIGN.md](DESIGN.md#node)). It has been

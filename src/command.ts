@@ -1,10 +1,10 @@
-// `:shaver info` and `:shaver policy`, typed as a prompt, are answered by the
-// proxy and never reach the model. Claude Code keeps the command and the
-// proxy's reply in its history and sends them again with every later request,
-// so the proxy strips each command, the system messages after it and the reply
-// from every request it forwards. Dropping them leaves what came before next to
-// what came after, a prompt or the end, so no system message is left after an
-// assistant one. A command the model answered instead, with a tool call, stays,
+// `:shaver info`, `:shaver info all` and `:shaver policy`, typed as a prompt,
+// are answered by the proxy and never reach the model. Claude Code keeps the
+// command and the proxy's reply in its history and sends them again with every
+// later request, so the proxy strips each command, the system messages after
+// it and the reply from every request it forwards. Dropping them leaves what
+// came before next to what came after, a prompt or the end, so no system
+// message is left after an assistant one. A command the model answered instead, with a tool call, stays,
 // since dropping the call would orphan its result. A prompt can come with blocks
 // that open with a tag: `<system-reminder>` with the instructions and context on
 // a first prompt, a local command's `<command-name>` and its output, a `!`
@@ -14,7 +14,7 @@
 // Code's prompt suggestion puts one on the last reply, and when that is the
 // proxy's, the suggestion would otherwise read only the system prompt.
 
-export const COMMANDS = [':shaver info', ':shaver policy']
+export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy']
 
 type Block = { type: string; text?: string; cache_control?: unknown }
 type Msg = { role: string; content: string | Block[] }

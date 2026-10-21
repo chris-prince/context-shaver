@@ -25,6 +25,7 @@ import { RESPONSES } from './responses.ts'
 import { forceDefer } from './defer.ts'
 import { shaveSkills } from './skills.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
+import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
 import { history, latest, record, recordSummaryFork } from './journal.ts'
@@ -334,7 +335,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const msgs = stripCommands(body.messages)
         const command = body.tools?.length && pendingCommand(msgs)
         if (command) {
-          const text = command === ':shaver policy' ? policyText() : stats(proto, h, { ...body, messages: msgs }, req.headers)
+          const text = command === ':shaver policy' ? policyText() : command === ':shaver info all' ? '```\n' + totals(stateDir, ttlMs) + '\n```' : stats(proto, h, { ...body, messages: msgs }, req.headers)
           res.writeHead(200, { ...limits.get(proto), 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
           const context = latestOf(conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers))?.inputTokens ?? 0
           return void res.end(proto.reply(text, body.model, !!body.stream, context))

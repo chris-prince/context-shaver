@@ -517,6 +517,10 @@ Scripts:
   proxy's, stripping it would leave the suggestion reading only the system
   prompt.
   `:shaver policy` shows the policy file the same way, as it is on disk now.
+  `:shaver info all` adds up the costs of every conversation with a journal
+  (`src/totals.ts`), replaying each as its own `:shaver info` does, then one
+  entry per harness and model. Requests that aren't journaled (suggestion
+  mode, side requests without tools) aren't counted.
   Each counted request appends what it changed to
   `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a
   request, with the usage the API reported for it: cache reads, cache writes

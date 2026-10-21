@@ -310,8 +310,8 @@ export function estimate(r: Sent): Stats {
 // split into the deferred tools' and the rest's when tools were deferred (each
 // a share of the cost without the shaver, as the saving is), with
 // the client's own compactions the shaver kept it from needing.
-const costLines = (c: Cost) => [
-  ...difference('Costs (session)', c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
+export const costLines = (c: Cost, heading = 'Costs (session)') => [
+  ...difference(heading, c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
   ...(c.deferral > 0 ? split(c) : []),
   `  Auto-compactions avoided: ${c.compactions} (about ${Math.round(c.waitMs / 60_000)} min of waiting)`,
 ]
@@ -323,7 +323,7 @@ function split(c: Cost): string[] {
   return amounts.map((v, i) => `      ${('$' + v.toFixed(2)).padStart(width)} (${String(percent(v, c.without)).padStart(2)}%) from trimming ${i ? 'conversation' : 'base'}`)
 }
 
-const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
+export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 
 // `summaries` is how many summary requests (summary.ts) the session has sent,
 // answered or not.
