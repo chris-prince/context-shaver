@@ -25,7 +25,11 @@ bin/run-proxy --restart
 
 Sessions running through it carry on with their next request. The new proxy
 keeps the old one's logging; pass `--log` or `--no-log` to choose. To stop it,
-run `bin/run-proxy --stop`.
+run `bin/run-proxy --stop`. `bin/run-proxy --update` fast-forwards the repo to
+its upstream (fetch, then `merge --ff-only`, so no `pull.*` setting applies)
+and restarts the proxy the same way, but only if that brought in new commits.
+If the repo has local changes in the way or has diverged, it stops with git's
+error and leaves the proxy running.
 
 `bin/run-proxy`, and so each wrapper, asks a proxy already on the port which
 repo it runs from. One from another repo, or too old to say, is restarted from

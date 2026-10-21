@@ -5,9 +5,11 @@
 # --restart, asks the proxy there to stop first, so a new one picks up code and
 # policy changes.
 # Sessions running through it resume with their next request, once it is back
-# up. With --stop, only stops it. With --log, the proxy it starts logs every
-# request under proxy-data/logs/; with --no-log, it doesn't. With neither, a
-# proxy that replaces a running one keeps that one's logging. It runs the proxy on Node 24 or newer, through
+# up. With --stop, only stops it. With --update, fast-forwards this repo to its
+# upstream first, and restarts the proxy only if that pulled anything. With
+# --log, the proxy it starts logs every request under proxy-data/logs/; with
+# --no-log, it doesn't. With neither, a proxy that replaces a running one keeps
+# that one's logging. It runs the proxy on Node 24 or newer, through
 # bin/node-wrapper, which installs one if need be.
 set -euo pipefail
 
@@ -16,12 +18,22 @@ port=${SHAVER_PORT:-8787}
 action= log=() logset=
 for arg; do
   case $arg in
-    --restart | --stop) action=$arg ;;
+    --restart | --stop | --update) action=$arg ;;
     --log) log=(--log-step-events) logset=1 ;;
     --no-log) log=() logset=1 ;;
-    *) echo "usage: run-proxy [--restart | --stop] [--log | --no-log]" >&2; exit 2 ;;
+    *) echo "usage: run-proxy [--restart | --stop | --update] [--log | --no-log]" >&2; exit 2 ;;
   esac
 done
+# Fetch and fast-forward rather than pull, so no pull.* setting changes what
+# happens. A failure (local changes in the way, or diverged history) stops
+# here, leaving the running proxy alone.
+if [[ $action == --update ]]; then
+  before=$(git -C "$repo" rev-parse HEAD)
+  git -C "$repo" fetch --quiet
+  git -C "$repo" merge --ff-only --quiet '@{upstream}'
+  action=
+  if [[ $(git -C "$repo" rev-parse HEAD) != "$before" ]]; then action=--restart; fi
+fi
 # True if anything accepts a connection, through bash's own /dev/tcp (no nc).
 up() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
 # Asks the proxy to exit (server.ts), so no lsof is needed to find its PID.
