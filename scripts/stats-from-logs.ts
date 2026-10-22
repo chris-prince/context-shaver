@@ -44,7 +44,15 @@ if (!(Number.isInteger(last) && 0 <= last && last < reqs.length)) {
 }
 const count = (s: Stats | undefined, r: any) => {
   const body = { model: r.model, messages: r.parts.map((p: { hash: string }) => part(p.hash)), system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
-  return observe(s, describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time, advanced.has(r.time)), r.inputTokens, r.outputTokens ?? 0)
+  return observe(s, describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time, advanced.has(r.time)), r.inputTokens, r.outputTokens ?? 0, apiCounts(r))
+}
+// What the API counted, as the proxy reads it (src/responses.ts, counted): the
+// head's and each part's tokens, where the usage per item counted all of it.
+const apiCounts = (r: any) => {
+  const items = r.attribution?.items
+  if (!items) return
+  const sum = (ids: string[] | undefined) => (ids?.length && ids.every((id) => items[id]?.input_tokens !== undefined) ? ids.reduce((n, id) => n + items[id].input_tokens, 0) : undefined)
+  return { defs: sum(r.headIds), parts: r.parts.map((p: { ids?: string[] }) => sum(p.ids)) }
 }
 const journal = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'journal.jsonl')
 let s: Stats | undefined

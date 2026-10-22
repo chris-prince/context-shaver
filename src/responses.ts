@@ -13,7 +13,8 @@
 
 import type { Usage } from './cost.ts'
 import { blocks, type ApiMsg, type Block } from './items.ts'
-import { eventReader, openaiError, openaiUsage, type Canonical, type Content, type Protocol, type Wire } from './protocol.ts'
+import { kinds } from './log.ts'
+import { eventReader, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Protocol, type Wire } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Item = { type: string; role?: string; content?: Part[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: unknown; encrypted_content?: string; summary?: Part[]; [k: string]: unknown }
@@ -31,6 +32,24 @@ const isHead = (it: Item) => it.type === 'additional_tools' || (it.type === 'mes
 const sideOf = (it: Item): ApiMsg['role'] | 'output' =>
   it.type === 'message' ? (it.role === 'assistant' ? 'assistant' : it.role === 'user' ? 'user' : 'system') : it.type === 'reasoning' || it.type.endsWith('_call') ? 'assistant' : it.type.endsWith('_output') ? 'output' : 'system'
 
+// An item's blocks: a message's parts, reasoning as a thinking block, a call
+// as a tool_use block, an output as a tool_result block, and any other item a
+// block that holds it.
+function toBlocks(it: Item): Block[] {
+  if (it.type === 'message') return (it.content ?? []).map((p) => (p.type === 'input_text' || p.type === 'output_text' ? { type: 'text', text: p.text ?? '' } : { ...p }))
+  if (it.type === 'reasoning') return [{ type: 'thinking', thinking: (it.summary ?? []).map((p) => p.text ?? '').join('\n'), ...(typeof it.encrypted_content === 'string' && { signature: it.encrypted_content }) }]
+  if (CALLS.has(it.type)) {
+    let input: unknown = it.type === 'custom_tool_call' ? it.input : it.arguments
+    if (it.type === 'function_call')
+      try {
+        input = JSON.parse(String(it.arguments))
+      } catch {}
+    return [{ type: 'tool_use', id: it.call_id, name: it.name, input }]
+  }
+  if (OUTPUTS.has(it.type)) return [{ type: 'tool_result', tool_use_id: it.call_id, content: it.output ?? '' }]
+  return [{ type: 'item', item: it }]
+}
+
 // A tools item's tools and the request's own, each namespace's under its name.
 const toolsOf = (ts: Tool[]): Tool[] => ts.flatMap((t) => (t.type === 'namespace' && t.tools ? toolsOf(t.tools).map((x) => ({ ...x, name: `${t.name}.${x.name}` })) : [{ name: t.name ?? t.type, ...t }]))
 
@@ -46,25 +65,10 @@ export function canonical(wire: Record<string, unknown>): Wire {
   const srcOf = new WeakMap<object, { item: Item; part?: Part }>()
   const byCall = new Map<string, Item>()
   const byResult = new Map<string, Item>()
-  const made = (b: Block, item: Item, part?: Part) => (srcOf.set(b, { item, part }), b)
   const blocksOf = (it: Item): Block[] => {
-    if (it.type === 'message') return (it.content ?? []).map((p) => made(p.type === 'input_text' || p.type === 'output_text' ? { type: 'text', text: p.text ?? '' } : { ...p }, it, p))
-    if (it.type === 'reasoning')
-      return [made({ type: 'thinking', thinking: (it.summary ?? []).map((p) => p.text ?? '').join('\n'), ...(typeof it.encrypted_content === 'string' && { signature: it.encrypted_content }) }, it)]
-    if (CALLS.has(it.type)) {
-      let input: unknown = it.type === 'custom_tool_call' ? it.input : it.arguments
-      if (it.type === 'function_call')
-        try {
-          input = JSON.parse(String(it.arguments))
-        } catch {}
-      byCall.set(String(it.call_id), it)
-      return [made({ type: 'tool_use', id: it.call_id, name: it.name, input }, it)]
-    }
-    if (OUTPUTS.has(it.type)) {
-      byResult.set(String(it.call_id), it)
-      return [made({ type: 'tool_result', tool_use_id: it.call_id, content: it.output ?? '' }, it)]
-    }
-    return [made({ type: 'item', item: it }, it)]
+    if (CALLS.has(it.type)) byCall.set(String(it.call_id), it)
+    if (OUTPUTS.has(it.type)) byResult.set(String(it.call_id), it)
+    return toBlocks(it).map((b, k) => (srcOf.set(b, { item: it, part: it.type === 'message' ? it.content?.[k] : undefined }), b))
   }
   const messages: ApiMsg[] = []
   for (let i = 0; i < rest.length; ) {
@@ -121,14 +125,58 @@ export function canonical(wire: Record<string, unknown>): Wire {
   }
 
   const idsOf = (items: Item[]) => items.flatMap((it) => (typeof it.id === 'string' ? [it.id] : []))
-  return { body, render: (c) => ({ ...wire, input: [...head, ...c.messages.flatMap(renderMsg)] }), ids: { head: idsOf(head), of: (m) => idsOf(renderMsg(m)) } }
+  // A list of items' tokens, when the usage counted each of them.
+  const counted = (msgs: readonly ApiMsg[], attribution: unknown): Counted | undefined => {
+    const items = (attribution as { items?: Record<string, { input_tokens?: number }> } | undefined)?.items
+    if (!items) return
+    const tokensOf = (it: Item) => (typeof it.id === 'string' ? items[it.id]?.input_tokens : undefined)
+    const sum = (its: Item[]) => (its.length && its.every((it) => tokensOf(it) !== undefined) ? its.reduce((n, it) => n + tokensOf(it)!, 0) : undefined)
+    const rendered = msgs.map(renderMsg)
+    const reasoning = new Map<string, number>()
+    for (const it of rendered.flat()) if (it.type === 'reasoning' && typeof it.encrypted_content === 'string' && tokensOf(it) !== undefined) reasoning.set(it.encrypted_content, tokensOf(it)!)
+    // A message's tokens by kind, each item's as counted. An item is mostly of
+    // one kind; one that mixes them, a prompt with a reminder say, is split by
+    // bytes as log.ts splits a message, but with no envelope, the blocks'
+    // JSON alone, since an item has none.
+    const responded = msgs.findIndex((m) => m.role === 'assistant')
+    const kindsOf = (its: Item[], i: number) => {
+      if (sum(its) === undefined) return
+      const out: Record<string, number> = {}
+      for (const it of its) {
+        const m: ApiMsg = { role: msgs[i].role, content: toBlocks(it) }
+        const k = kinds(m.content.map((b) => JSON.stringify(b)).join(''), m, responded < 0 || i < responded).kinds
+        const bytes = Object.values(k).reduce((a, b) => a + b, 0)
+        for (const [kind, b] of Object.entries(k)) out[kind] = (out[kind] ?? 0) + (tokensOf(it)! * b) / bytes
+      }
+      return out
+    }
+    return { head: sum(head), messages: rendered.map(sum), kinds: rendered.map(kindsOf), reasoning }
+  }
+  return { body, render: (c) => ({ ...wire, input: [...head, ...c.messages.flatMap(renderMsg)] }), ids: { head: idsOf(head), of: (m) => idsOf(renderMsg(m)) }, counted }
 }
 
 type Response = { output?: Item[]; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; attribution?: unknown } }
 
+// ChatGPT's backend doesn't say what it wrote. Measured through OpenRouter
+// (local/notes.md, "Make Codex's cost and savings figures accurate"), OpenAI
+// writes all a prompt's uncached tokens but 3, once it's past the cache's
+// 1024-token minimum, so that's what it's taken to have written.
+const inferred = (input: number, read: number) => (input >= 1024 ? Math.max(0, input - read - 3) : 0)
+
 function usageOf(u: Response['usage']): Usage | undefined {
   if (!u?.input_tokens) return undefined
-  return openaiUsage(u.input_tokens, u.input_tokens_details?.cached_tokens ?? 0, u.input_tokens_details?.cache_write_tokens ?? 0, u.output_tokens ?? 0)
+  const read = u.input_tokens_details?.cached_tokens ?? 0
+  const written = u.input_tokens_details?.cache_write_tokens ?? inferred(u.input_tokens, read)
+  return openaiUsage(u.input_tokens, read, written, u.output_tokens ?? 0)
+}
+
+// Codex usage journaled before writes were inferred holds none, so they're
+// inferred as it's replayed. Usage that already has them is unchanged: it
+// either wrote, or left 3 tokens or fewer uncached, which infer no writes.
+export function withWrites(u: Usage): Usage {
+  if (u.cache_creation_input_tokens) return u
+  const read = u.cache_read_input_tokens ?? 0
+  return openaiUsage(u.input_tokens + read, read, inferred(u.input_tokens + read, read), u.output_tokens ?? 0)
 }
 
 // The finished response: a stream's last event holds it whole.

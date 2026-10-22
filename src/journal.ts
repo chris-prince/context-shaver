@@ -15,7 +15,9 @@
 // model, provider, usage } }, with no change to the stats, so replay skips it.
 
 import { appendFileSync, existsSync, readFileSync, renameSync } from 'node:fs'
+import path from 'node:path'
 import type { Usage } from './cost.ts'
+import { withWrites } from './responses.ts'
 import type { Stats } from './stats.ts'
 
 const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'provider', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
@@ -96,10 +98,12 @@ function* linesOf(file: string): Generator<Delta & { summaryFork?: SummaryForkLi
 // The stats after each line of a journal, in order, each built from the one
 // before, with the usage the line holds; none if there is none. Every line
 // gives the same stats object, changed in place, so a caller that keeps a
-// line's stats past the next one copies what it needs.
+// line's stats past the next one copies what it needs. A Codex journal's
+// usage gets the cache writes ChatGPT's backend doesn't report (responses.ts).
 export function* history(file: string): Generator<{ stats: Stats; usage?: Usage }> {
+  const codex = path.basename(file).startsWith('codex-')
   let s: Stats | undefined
-  for (const d of linesOf(file)) if (!d.summaryFork) yield { stats: (s = apply(s, d)), usage: d.usage }
+  for (const d of linesOf(file)) if (!d.summaryFork) yield { stats: (s = apply(s, d)), usage: d.usage && codex ? withWrites(d.usage) : d.usage }
 }
 
 // The summary forks a journal records, in order.

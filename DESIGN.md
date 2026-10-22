@@ -295,8 +295,8 @@ run of characters, and an `action`: `keep`, `drop`, or `stub` with `sentences`,
 which keeps that many sentences of the description. Each skill takes the first
 rule that matches it, so `keep` rules go before a broader `stub` or `drop`; a
 skill no rule matches is kept. A dropped skill can still be run as `/name`, but
-the model won't invoke it. The bytes taken out count with the deferred tools,
-as base savings. Like `tools_not_deferred`, changing the rules rewrites the
+the model won't invoke it. The bytes taken out count as a base saving of their
+own. Like `tools_not_deferred`, changing the rules rewrites the
 cache of open sessions once.
 
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
@@ -503,7 +503,13 @@ Scripts:
   logged or not, in three sections: the base, the conversation before the
   frontier (by age, then by type), and the frontier. Every percentage is of
   the whole request. After each request the proxy counts its parts' tokens
-  (`src/stats.ts`) and answers from those counts. Before any request is
+  (`src/stats.ts`) and answers from those counts. Where the API counts each
+  input item, as the Responses API does, the base and each part it counted
+  all of take its counts, and so does what a reasoning item costs to send
+  back, for the trims; the rest share what is left by bytes, as every part
+  does where the API gives only totals. Such a part also keeps its tokens by
+  kind, each item's count going to its kind, so splitting it by kind needs no
+  bytes either. Before any request is
   answered it shows the command's own request instead, as it will be sent,
   its count estimated from its bytes and marked so. It answers without calling
   the model, and strips the command and its answer from every later request
@@ -541,7 +547,9 @@ Scripts:
   a running total. Each request's actual uncached, cache-read, cache-write and
   output tokens come from its usage. Without the shaver the prompt would have
   been `inputTokens + removedTokens`, plus the tool definitions the proxy
-  deferred (`defs.deferred`, in bytes, at the base's tokens a byte), until
+  deferred (`defs.deferred`) and the skill list it shortened (`defs.skills`),
+  in bytes, at the base's tokens a byte (before 2026-10-21, `defs.deferred`
+  held both), until
   the client compacts it itself: past the model's `compactAt` (165K for
   Claude Code), the shaverless prompt keeps its base and 20% of the rest,
   then grows as the client's prompt grows. Each compaction adds a request
@@ -549,13 +557,26 @@ Scripts:
   seconds of waiting, which the stats show as avoided; the figures come
   from five logged compactions. The split is estimated from the gap
   since the previous request and whether the trim advanced. After a gap
-  longer than the cache TTL, both read only the shared prefix and write the
+  longer than the cache TTL (the model's, where it has one), both read only the shared prefix and write the
   rest. On a warm advance, which rewrites the cache, the shaverless prompt
   would have read everything the previous one sent, or the base after a
   compaction. Otherwise it mirrors the actual request, with the trimmed-out
   tokens read on a hit and written on a miss. Output is the same in both.
   Dollars use a per-model price table; for an
-  unknown model the costs are left out. Prompt suggestions and command replies
+  unknown model the costs are left out.
+  The saving is shown by type of trim. Each base shave's is what the request
+  would cost without that shave alone. The rest is the conversation's: tool
+  calls and results, reasoning, messages, or other. A replay works out what
+  each request's trim took out of each, from the parts it dropped or changed
+  and their tokens by kind. A request that trims still gains from the trims
+  before it: they're credited what the request without the shaver paid for
+  the tokens of theirs it still held, as a base shave is, shared by what
+  each type has taken out so far. The trim's own types take what's left,
+  its rewrite with it, shared by what it took out. Every other request is
+  shared by what each type has taken out so far. When the request without
+  the shaver compacts, what was taken out until then is cut to the share a
+  compaction keeps. That rule, and the byte split of a part's
+  tokens where the API gives no count by kind, make the split an estimate. Prompt suggestions and command replies
   are left out, as the journal leaves them out.
 - `bin/node-wrapper scripts/stats-from-logs.ts <conversation dir> [--request N]
   [--check-journal]` replays a logged conversation through `src/stats.ts`

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canonical, RESPONSES } from '../src/responses.ts'
+import { canonical, RESPONSES, withWrites } from '../src/responses.ts'
 import type { ApiMsg, Block } from '../src/items.ts'
 
 // Shaped like Codex's requests to ChatGPT's backend.
@@ -89,6 +89,25 @@ test("usage and content come from the stream's last event", () => {
   assert.deepEqual(attribution, { items: { msg_1: { input_tokens: 1000, cached_tokens: 900 } } })
 })
 
+test("past the cache's minimum, what the usage doesn't say was written is all uncached but 3", () => {
+  const usageOf = (usage: unknown) => {
+    const r = RESPONSES.usageReader()
+    r.push(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'response.completed', response: { output: [], usage } })}\n\n`))
+    return r.end().usage
+  }
+  assert.deepEqual(usageOf({ input_tokens: 5000, output_tokens: 20, input_tokens_details: { cached_tokens: 900 } }), { input_tokens: 3, cache_read_input_tokens: 900, cache_creation_input_tokens: 4097, output_tokens: 20 })
+  assert.deepEqual(usageOf({ input_tokens: 5000, output_tokens: 20, input_tokens_details: { cached_tokens: 900, cache_write_tokens: 100 } }), { input_tokens: 4000, cache_read_input_tokens: 900, cache_creation_input_tokens: 100, output_tokens: 20 })
+})
+
+test('usage journaled without writes gets them on replay, and usage with them is unchanged', () => {
+  const old = { input_tokens: 4100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, output_tokens: 20 }
+  const inferred = { input_tokens: 3, cache_read_input_tokens: 900, cache_creation_input_tokens: 4097, output_tokens: 20 }
+  assert.deepEqual(withWrites(old), inferred)
+  assert.deepEqual(withWrites(inferred), inferred)
+  assert.deepEqual(withWrites({ ...old, input_tokens: 3 }), { ...old, input_tokens: 3 })
+  assert.deepEqual(withWrites({ input_tokens: 225, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 5 }), { input_tokens: 225, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 5 })
+})
+
 test('a summary fork asks after the items as sent, still streamed', () => {
   const sent = canonical(wire).render(canonical(wire).body) as typeof wire
   const f = RESPONSES.summaryFork(sent, 'summarize') as typeof wire
@@ -109,4 +128,19 @@ test("a local answer streams as one message, and turn state isn't kept as a limi
   assert.equal(events.at(-1).response.output[0].content[0].text, 'hi')
   assert.ok(RESPONSES.limits?.test('x-codex-primary-used-percent'))
   assert.ok(!RESPONSES.limits?.test('x-codex-turn-state'))
+})
+
+test("the API's usage per item counts the head, each message it counted all of, and reasoning", () => {
+  const named = { ...wire, input: wire.input.map((it, i) => ({ ...it, id: `i${i}` })) }
+  const c = canonical(named)
+  const items = Object.fromEntries(named.input.map((it, i) => [it.id, { input_tokens: i + 1 }]))
+  delete items.i7
+  const n = c.counted!(c.body.messages, { items })
+  assert.equal(n?.head, 1 + 2 + 3)
+  assert.deepEqual(n?.messages, [4, 5 + 6 + 7, undefined, 9, 10])
+  // Each counted message's tokens by kind add up to its count.
+  n!.kinds.forEach((k, i) => assert.equal(k && Math.round(Object.values(k).reduce((a, b) => a + b, 0)), n!.messages[i]))
+  assert.deepEqual(n!.kinds[1], { reasoning: 5, assistant: 6, toolCalls: 7 })
+  assert.deepEqual([...n!.reasoning], [['enc', 5]])
+  assert.equal(c.counted!(c.body.messages, {}), undefined)
 })

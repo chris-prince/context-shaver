@@ -37,19 +37,27 @@ const CLAUDE_CODE = { compactAt: 165_000 }
 // OpenCode sessions did best counting a trim over 5 requests.
 const SHORT = () => 5
 
+// compactAt: Codex caps its auto-compact limit at 90% of the context window,
+// and luna's is 272K (~/.codex/models_cache.json; local/notes.md, "Make
+// Codex's cost and savings figures accurate").
+const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 1800, horizon: SHORT, compactAt: 244_800 } // 90% of 272K
+
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },
   'claude-fable-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
   'claude-mythos-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
-  'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.2 }, ...CLAUDE_CODE },
+  // Reads at 0.1, as billed through OpenRouter (scripts/check-prices.ts).
+  'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.1 }, ...CLAUDE_CODE },
   'claude-haiku-5-5': { price: { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } }, ...CLAUDE_CODE },
   // OpenAI's pricing page and prompt-caching guide (local/notes.md, "Check
   // Codex in use"): writes at 1.25x input, the latest 50 breakpoints looked
   // through, and entries kept at least 30 minutes after their last use. A
   // Codex session read nearly all of it after 35 minutes and nothing after 59,
   // so the 30 minutes is what's counted on. Past 272K input tokens, input
-  // doubles and output is 1.5x, which `long` can't say.
-  'gpt-6-luna': { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 1800, horizon: SHORT },
+  // doubles and output is 1.5x, which `long` can't say. OpenRouter names it
+  // openai/gpt-6-luna.
+  'gpt-6-luna': LUNA,
+  'openai/gpt-6-luna': LUNA,
   // Priced apart by each provider, so only per provider.
   'deepseek/deepseek-v4.1-flash': {
     providers: {

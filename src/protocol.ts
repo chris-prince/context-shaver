@@ -67,7 +67,13 @@ export const openaiUsage = (input: number, read: number, written: number, output
 
 export const openaiError = (status: number, message: string) => JSON.stringify({ error: { message, type: status === 403 ? 'permission_error' : status === 400 ? 'invalid_request_error' : 'api_error', code: status } })
 
-export type Wire = { body: Canonical; render(c: Canonical): unknown; ids?: { head: string[]; of(m: ApiMsg): string[] } }
+// What the API counted, from its usage per input item: the head's tokens and
+// each message's, where it counted every item of it, with those tokens by
+// kind (log.ts, kinds), and what each reasoning item sent back cost, by its
+// encrypted content.
+export type Counted = { head?: number; messages: Array<number | undefined>; kinds: Array<Record<string, number> | undefined>; reasoning: Map<string, number> }
+
+export type Wire = { body: Canonical; render(c: Canonical): unknown; ids?: { head: string[]; of(m: ApiMsg): string[] }; counted?(msgs: readonly ApiMsg[], attribution: unknown): Counted | undefined }
 
 export type Protocol = {
   name: 'messages' | 'chat' | 'responses'
@@ -77,7 +83,8 @@ export type Protocol = {
   // every message the core left as it was is sent as it came, byte for byte,
   // or the cache misses. Where the wire names its items, as Responses does,
   // ids gives the names: the head's (system and tools) and a message's, as
-  // sent, for the log to match the API's usage per item (log.ts).
+  // sent, for the log to match the API's usage per item (log.ts), and counted
+  // reads that usage, for the stats and the cache model to use over estimates.
   canonical(wire: Record<string, unknown>): Wire
   usageReader(): UsageReader
   // A response holding just `text`, as Claude Code's `:shaver` answers are made

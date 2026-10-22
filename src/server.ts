@@ -17,8 +17,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { hash, kinds, LOG_DIR, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
-import { clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
-import type { Canonical, Content, Protocol, UsageReader, Wire } from './protocol.ts'
+import { blocks, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
+import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
@@ -118,7 +118,7 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown> }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
 // are trimmed: those are the main loop and subagents. Claude Code's side
@@ -126,11 +126,12 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
-function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { render, ids }: Wire, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
+function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { render, ids, counted }: Wire, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   // What it takes out of the base: deferred tools, and skills off the list.
-  const deferred = (proto.defers && h?.defers && policy.tools_not_deferred ? forceDefer(body, policy.tools_not_deferred) : 0) + (policy.skill_list ? shaveSkills(body, policy.skill_list) : 0)
+  const deferred = proto.defers && h?.defers && policy.tools_not_deferred ? forceDefer(body, policy.tools_not_deferred) : 0
+  const skills = policy.skill_list ? shaveSkills(body, policy.skill_list) : 0
   const key = conversationId(h, proto.name, body, headers)
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
@@ -192,6 +193,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   // A record takes its turns' prompts out of the messages; the stats count them still.
   const described = { ...describe(body, trimmed, time, d?.advanced || records > before, conv), turns: msgs.filter(isPrompt).length }
   if (deferred) described.defs.deferred = deferred
+  if (skills) described.defs.skills = skills
   // Each record is dated by the first message it covers.
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
@@ -199,7 +201,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const after = policy.summary_threshold_tokens && (model.summaryThreshold ?? policy.summary_threshold_tokens)
   // Whether to send a summary fork is known once the response's counts are in.
   const summaryFork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, summaryFork, stats: latestOf(key), sent: described, suggestion }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
@@ -272,6 +274,19 @@ function thinkingOf(u: Usage | undefined, c: Content): Record<string, number> {
   if (!u?.output_tokens || !total) return {}
   const tokens = Math.max(0, u.output_tokens - TEXT_TOKENS * c.visibleChars)
   return Object.fromEntries(sigs.map((sg) => [hash(sg), Math.round((tokens * sg.length) / total)]))
+}
+
+// What each thinking block sent back billed, where the API counted it, in
+// place of thinkingOf's guess: its count less its visible text's worth, which
+// trim.ts's sizeOf counts apart.
+function billedThinking(msgs: readonly ApiMsg[], billed: ReadonlyMap<string, number>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const m of msgs)
+    for (const b of blocks(m)) {
+      const n = typeof b.signature === 'string' ? billed.get(b.signature) : undefined
+      if (b.type === 'thinking' && n !== undefined) out[hash(String(b.signature))] = Math.max(0, Math.round(n - TEXT_TOKENS * (JSON.stringify(b).length - String(b.signature).length)))
+    }
+  return out
 }
 
 // Upgrade too: a WebSocket the client tries first (OpenCode's OpenAI provider)
@@ -412,14 +427,15 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
-  const next = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0) : p.stats
+  const c = attribution !== undefined ? p.counted?.(attribution) : undefined
+  const next = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0, c && { defs: c.head, parts: c.messages, kinds: c.kinds }) : p.stats
   if (inputTokens && next && !p.suggestion) {
-    const c = currentOf(p.key)
-    record(journalOf(p.key), c.stats, next, u)
-    current.set(p.key, { stats: next, cost: add(c.cost, c.stats, next, u!, ttlMs) })
+    const was = currentOf(p.key)
+    record(journalOf(p.key), was.stats, next, u)
+    current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u!, ttlMs) })
   }
   const due = p.summaryFork && next && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content) }, summarized: p.summarized, offered: due?.current ?? p.offered })
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, summarized: p.summarized, offered: due?.current ?? p.offered })
   if (due) void summarize(p, due, target, headers)
   if (p.logDir && p.logLine) {
     writeLine(p.logDir, {

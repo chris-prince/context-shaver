@@ -157,3 +157,16 @@ test('settled leaves out what the frontier holds, and only that', () => {
   const frontier = Number(/\n  Frontier +([\d,]+)/.exec(render(s, 'x'))![1].replace(/,/g, ''))
   assert.ok(frontier > 0)
 })
+
+test('parts the API counted take its counts, and only the rest share what is left', () => {
+  const prompt: ApiMsg = { role: 'user', content: 'hi' }
+  let s = observe(undefined, describe(body([prompt]), ends, '2026-10-11T10:00:00Z'), 1000, 40)
+  const reply: ApiMsg = { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'x'.repeat(5000) }, { type: 'text', text: 'hello' }] }
+  const next: ApiMsg = { role: 'user', content: 'more' }
+  s = observe(s, describe(body([prompt, reply, next]), ends, '2026-10-11T10:01:00Z'), 1100, 0, { defs: 900, parts: [100, 47, undefined] })
+  assert.equal(sum(s), 1100)
+  assert.equal(s.tokens[s.defs.key], 900)
+  assert.equal(s.tokens[s.parts[0].key], 100)
+  assert.equal(s.tokens[s.parts[1].key], 47)
+  assert.equal(s.tokens[s.parts[2].key], 53)
+})

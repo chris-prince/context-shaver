@@ -14,12 +14,11 @@ import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { add, before, spent, type Cost } from './cost.ts'
 import { history, summaryForks } from './journal.ts'
-import { costLines, counted, type Stats } from './stats.ts'
+import { costLines, counted, money, type Stats } from './stats.ts'
 
-type Sum = { conversations: Set<string>; requests: number; without: number; actual: number; deferral: number; compactions: number; waitMs: number }
-const blank = (): Sum => ({ conversations: new Set(), requests: 0, without: 0, actual: 0, deferral: 0, compactions: 0, waitMs: 0 })
+type Sum = { conversations: Set<string>; requests: number; without: number; actual: number; saved: Record<string, number>; compactions: number; waitMs: number }
+const blank = (): Sum => ({ conversations: new Set(), requests: 0, without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 })
 
-const money = (v: number) => (v.toFixed(2).startsWith('-') && Number(v.toFixed(2)) ? '-$' : '$') + Math.abs(v).toFixed(2)
 const localDay = (iso: string) => new Date(iso).toLocaleDateString('en-CA')
 
 export function totals(stateDir: string, ttlMs: number): string {
@@ -29,7 +28,10 @@ export function totals(stateDir: string, ttlMs: number): string {
     for (const g of ['all', `env:${key.split('-')[0]}\0${model}`]) {
       const t = at(g)
       t.conversations.add(key)
-      for (const [k, v] of Object.entries(d) as Array<[keyof typeof d, number]>) t[k] += v
+      for (const [k, v] of Object.entries(d)) {
+        if (k === 'saved') for (const [type, n] of Object.entries(v as Sum['saved'])) t.saved[type] = (t.saved[type] ?? 0) + n
+        else t[k as Exclude<keyof Sum, 'conversations' | 'saved'>] += v as number
+      }
     }
   }
   let first: string | undefined
@@ -39,7 +41,7 @@ export function totals(stateDir: string, ttlMs: number): string {
   for (const f of files) {
     const key = f.slice(0, -'.journal.jsonl'.length)
     const file = path.join(stateDir, f)
-    let c: Cost | undefined = { without: 0, actual: 0, deferral: 0, compactions: 0, waitMs: 0 }
+    let c: Cost | undefined = { without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 }
     let prev: Stats | undefined
     let last: string | undefined
     let forks = 0
@@ -48,7 +50,7 @@ export function totals(stateDir: string, ttlMs: number): string {
         const next = u && c ? add(c, prev, s, u, ttlMs) : c
         if (c && !next) stopped++
         const d = { requests: s.requests - (prev?.requests ?? 0) }
-        count(key, s.model, next && c ? { ...d, without: next.without - c.without, actual: next.actual - c.actual, deferral: next.deferral - c.deferral, compactions: next.compactions - c.compactions, waitMs: next.waitMs - c.waitMs } : d)
+        count(key, s.model, next && c ? { ...d, without: next.without - c.without, actual: next.actual - c.actual, saved: Object.fromEntries(Object.entries(next.saved).map(([t, n]) => [t, n - (c!.saved[t] ?? 0)])), compactions: next.compactions - c.compactions, waitMs: next.waitMs - c.waitMs } : d)
         if (!first || s.first < first) first = s.first
         c = next
         prev = before(s)

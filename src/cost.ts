@@ -22,9 +22,15 @@
 //   proxy took out, up to what the previous prompt was.
 // - Otherwise, a miss without a trim, as cold.
 // Output is the same either way.
+//
+// The saving is told by type of trim. Each base shave's is what the request
+// would cost without it alone. The rest is the conversation's, shared by the
+// tokens each type of trim has taken out so far (stats.ts, removedByType), or
+// on a request that trims, by what it takes out, since its rewriting is that
+// trim's cost.
 
 import { modelOf, type Price } from './models.ts'
-import { baseOf, type Stats } from './stats.ts'
+import { BASE, baseOf, removedByType, type Stats } from './stats.ts'
 
 export type Usage = {
   input_tokens: number
@@ -47,19 +53,23 @@ export type Tokens = { uncached: number; reads: number; writes: number; output: 
 // those of the client's own (untrimmed) prompt, and how much of it the cache
 // holds for the next request.
 export type Context = { rest: number; client: number; cached: number }
-// Dollars, without the proxy and as it was, and the share of the difference
-// that is the tool definitions it deferred; the compactions the proxy saved,
-// and the time they'd have taken.
-export type Cost = { without: number; actual: number; deferral: number; compactions: number; waitMs: number; context?: Context }
+// Dollars, without the proxy and as it was, and the difference by type of
+// trim (BASE's, and stats.ts, removedByType's); the compactions the proxy
+// saved, and the time they'd have taken. `removed` is the tokens each type
+// of trim has taken out so far.
+export type Cost = { without: number; actual: number; saved: Record<string, number>; compactions: number; waitMs: number; context?: Context; removed?: Record<string, number> }
+
+// A base shave's tokens: its bytes at the base's tokens a byte.
+const shaved = (s: Stats, bytes = 0) => (s.defs && bytes ? ((s.tokens[s.defs.key] ?? 0) * bytes) / (s.defs.systemPrompt + s.defs.tools) : 0)
 
 // A request's base without the proxy: with the tool definitions it deferred
-// and the skill list it shortened, at the base's tokens a byte.
+// and the skill list it shortened.
 // Blind spot: a deferred tool the model loads with ToolSearch is expanded into
 // the conversation from then on, so it's paid for there, while it's still
 // counted here as deferred. The estimate then pays for it twice, overstating
 // the saving (and the deferral share) by about its size a request; the
 // ToolSearch request itself, a cost of deferring, isn't charged to it either.
-const baseWithout = (s: Stats) => (s.defs ? baseOf(s) + (s.defs.deferred ? ((s.tokens[s.defs.key] ?? 0) * s.defs.deferred) / (s.defs.systemPrompt + s.defs.tools) : 0) : 0)
+const baseWithout = (s: Stats) => (s.defs ? baseOf(s) + shaved(s, s.defs.deferred) + shaved(s, s.defs.skills) : 0)
 // The client's own (untrimmed) prompt past the base.
 const clientRest = (s: Stats) => s.inputTokens + (s.removedTokens ?? 0) - (s.defs ? baseOf(s) : 0)
 // The prompt without the proxy after a request, before any compaction.
@@ -106,25 +116,63 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   const m = modelOf(s.model, s.provider)
   const p = m.price
   if (!c || !p) return undefined
+  // The model's TTL where it has one, as the proxy's cache model uses (server.ts, prepare).
+  const ttl = m.ttl ? m.ttl * 1000 : ttlMs
   const actual: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
-  const short = (t: Tokens) => (ttlMs > 300_000 ? 0 : t.writes)
-  const wo = without(prev, s, u, ttlMs, c.context, m.compactAt)
+  const short = (t: Tokens) => (ttl > 300_000 ? 0 : t.writes)
+  const wo = without(prev, s, u, ttl, c.context, m.compactAt)
   const all = wo.tokens.uncached + wo.tokens.reads + wo.tokens.writes
   const compaction: Tokens = { uncached: 0, reads: all, writes: 0, output: SUMMARY_TOKENS }
-  // The deferred tools sit at the front, so they were read with the base or
+  // The base shaves sit at the front, so they were read with the base or
   // written with it. A compaction's reading them counts with the conversation,
   // whose growth it comes from.
-  const deferred = baseWithout(s) - (s.defs ? baseOf(s) : 0)
   const read = wo.tokens.reads >= baseWithout(s)
-  const less: Tokens = { ...wo.tokens, reads: wo.tokens.reads - (read ? deferred : 0), writes: wo.tokens.writes - (read ? 0 : deferred) }
   const withoutRequest = dollars(p, wo.tokens, short(wo.tokens))
+  const saving = (n: number) => {
+    const less: Tokens = { ...wo.tokens, reads: wo.tokens.reads - (read ? n : 0), writes: wo.tokens.writes - (read ? 0 : n) }
+    return withoutRequest - dollars(p, less, short(less))
+  }
+  const base = [saving(shaved(s, s.defs?.deferred)), saving(shaved(s, s.defs?.skills))]
+  const withoutAll = withoutRequest + (wo.compacted ? dollars(p, compaction, 0) : 0)
+  const actualRequest = dollars(p, actual, u.cache_creation?.ephemeral_5m_input_tokens ?? 0)
+
+  // A journal begun after the stats holds what was taken out before it with
+  // no type.
+  const before = { ...c.removed, ...(!prev && s.removedTokens && { other: s.removedTokens }) }
+  const trimmed = prev && (s.removedTokens ?? 0) !== (prev.removedTokens ?? 0) ? removedByType(prev, s) : {}
+  const removed = { ...before }
+  for (const [t, n] of Object.entries(trimmed)) removed[t] = (removed[t] ?? 0) + n
+  const positive = (r: Record<string, number>) => Object.entries(r).filter(([, n]) => n > 0)
+  let rest = withoutAll - actualRequest - base[0] - base[1]
+  const saved = { ...c.saved }
+  const credit = (t: string, v: number) => v && (saved[t] = (saved[t] ?? 0) + v)
+  BASE.forEach((t, i) => credit(t, base[i]))
+  // A request that trims still gains from the trims before it: what the
+  // request without the shaver paid for the tokens they took out that it
+  // still held, as a base shave is, shared by what each type took out. The
+  // trim's own types take what's left, its rewrite with it.
+  if (positive(trimmed).length) {
+    const sum = (r: Array<[string, number]>) => r.reduce((n, [, w]) => n + w, 0)
+    const held = Math.max(0, all - s.inputTokens - shaved(s, s.defs?.deferred) - shaved(s, s.defs?.skills) - sum(positive(trimmed)))
+    const earlier = saving(held)
+    for (const [t, n] of positive(before)) credit(t, (earlier * n) / sum(positive(before)))
+    if (positive(before).length) rest -= earlier
+  }
+  const by = positive(trimmed).length ? positive(trimmed) : positive(removed).length ? positive(removed) : [['other', 1] as [string, number]]
+  const weight = by.reduce((n, [, w]) => n + w, 0)
+  for (const [t, w] of by) credit(t, (rest * w) / weight)
+  // Once the prompt without the shaver compacts, what was taken out before
+  // would have been summarised away but for KEPT of it, so it weighs that
+  // much against what's taken out after.
+  if (wo.compacted) for (const t in removed) removed[t] *= KEPT
   return {
-    without: c.without + withoutRequest + (wo.compacted ? dollars(p, compaction, 0) : 0),
-    actual: c.actual + dollars(p, actual, u.cache_creation?.ephemeral_5m_input_tokens ?? 0),
-    deferral: c.deferral + withoutRequest - dollars(p, less, short(less)),
+    without: c.without + withoutAll,
+    actual: c.actual + actualRequest,
+    saved,
     compactions: c.compactions + (wo.compacted ? 1 : 0),
     waitMs: c.waitMs + (wo.compacted ? COMPACTION_MS : 0),
     context: wo.context,
+    removed,
   }
 }
 
@@ -132,7 +180,7 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
 // and the usage it holds. Lines from before the journal held usage count for
 // nothing.
 export function cost(lines: Iterable<{ stats: Stats; usage?: Usage }>, ttlMs: number): Cost | undefined {
-  let c: Cost | undefined = { without: 0, actual: 0, deferral: 0, compactions: 0, waitMs: 0 }
+  let c: Cost | undefined = { without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 }
   let prev: Stats | undefined
   for (const { stats: s, usage: u } of lines) {
     if (u) c = add(c, prev, s, u, ttlMs)

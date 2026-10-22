@@ -31,9 +31,10 @@ export type Sent = {
   parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number; born?: string }>
   // `sections` is the system prompt's bytes by section, when the protocol's
   // conventions cut it (Conventions.promptHeadings); `deferred` is the bytes of
-  // the tool definitions the proxy deferred (defer.ts) and of the skill list it
-  // shortened (skills.ts), which the base would hold without it.
-  defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number>; deferred?: number }
+  // the tool definitions the proxy deferred (defer.ts) and `skills` those it
+  // took off the skill list (skills.ts), which the base would hold without it.
+  // Before 2026-10-21 `deferred` held both.
+  defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number>; deferred?: number; skills?: number }
   ends: { tools: number; reasoning: number }
   // Whether the proxy advanced its trim on this request.
   advanced: boolean
@@ -58,7 +59,9 @@ export type Stats = {
   answers: Record<string, number>
   // When each part, and each lineage, first appeared.
   seen: Record<string, string>
-  parts: Array<{ key: string; kinds: Record<string, number>; lineage?: string }>
+  // Each part's bytes by kind, and its tokens by kind where the API counted
+  // them (protocol.ts, Counted).
+  parts: Array<{ key: string; kinds: Record<string, number>; counted?: Record<string, number>; lineage?: string }>
   defs: Sent['defs']
   ends: Sent['ends']
 }
@@ -136,8 +139,10 @@ export function isSuggestion(msgs: readonly ApiMsg[]): boolean {
   return text.startsWith('[SUGGESTION MODE:')
 }
 
-// The stats once a request is answered with these counts.
-export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number): Stats {
+// The stats once a request is answered with these counts. Where the API
+// counted parts itself (protocol.ts, Counted), they take its counts, and only
+// the rest are estimated, from what is left.
+export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number, apiCounts?: { defs?: number; parts: Array<number | undefined>; kinds?: Array<Record<string, number> | undefined> }): Stats {
   const known = { ...prev?.tokens }
   const bound = { ...prev?.bound }
   const answers = { ...prev?.answers }
@@ -149,6 +154,13 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     count[p.key] = (count[p.key] ?? 0) + 1
   }
   sizes[r.defs.key] = r.defs.systemPrompt + r.defs.tools
+  const exact = new Map<string, number>()
+  if (apiCounts?.defs !== undefined) exact.set(r.defs.key, apiCounts.defs)
+  apiCounts?.parts.forEach((n, i) => n !== undefined && exact.set(keys[i], n))
+  for (const [k, n] of exact) {
+    known[k] = n
+    delete bound[k]
+  }
   const isNew = new Set(Object.keys(sizes).filter((k) => !(k in known)))
   const first = keys.findIndex((k) => isNew.has(k))
   if (first >= 0)
@@ -161,6 +173,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   const replies: string[] = []
   let left = inputTokens - Object.keys(sizes).filter((k) => !isNew.has(k)).reduce((n, k) => n + known[k] * (count[k] ?? 1), 0)
   r.parts.forEach((p, i) => {
+    if (exact.has(p.key) && p.role === 'assistant' && i) delete answers[keys[i - 1]]
     // A reply first sent with its thinking trimmed off costs less than its
     // output, which counted the thinking.
     if (!isNew.has(p.key) || p.role !== 'assistant' || !i || i < r.ends.reasoning) return
@@ -189,16 +202,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   // repeats, since Claude Code sends the same reminder again. What follows
   // that is the turn's new parts.
   let removedTokens = prev?.removedTokens ?? 0
-  if (prev && r.advanced) {
-    const left: Record<string, number> = {}
-    for (const p of prev.parts) left[p.key] = (left[p.key] ?? 0) + 1
-    let end = 0
-    r.parts.forEach((p, i) => {
-      if (left[p.key]) [left[p.key], end] = [left[p.key] - 1, i + 1]
-    })
-    const kept = r.parts.slice(0, end)
-    removedTokens += prev.parts.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - kept.reduce((n, p) => n + known[p.key], 0)
-  }
+  if (prev && r.advanced) removedTokens += prev.parts.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - r.parts.slice(0, keptOf(prev.parts, r.parts)).reduce((n, p) => n + known[p.key], 0)
 
   const seen = { ...prev?.seen }
   for (const p of r.parts) {
@@ -219,19 +223,55 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     bound,
     answers,
     seen,
-    parts: r.parts.map((p) => ({ key: p.key, kinds: p.kinds, ...(p.lineage ? { lineage: p.lineage } : {}) })),
+    parts: r.parts.map((p, i) => ({ key: p.key, kinds: p.kinds, ...(apiCounts?.kinds?.[i] && { counted: rounded(apiCounts.kinds[i]) }), ...(p.lineage ? { lineage: p.lineage } : {}) })),
     defs: r.defs,
     ends: r.ends,
   }
 }
 
+const rounded = (r: Record<string, number>) => Object.fromEntries(Object.entries(r).map(([k, n]) => [k, Math.round(n)]))
+
+// How many of a request's parts it kept from the request before: those
+// through the last part it also sent, counting repeats, since Claude Code
+// sends the same reminder again.
+function keptOf(prev: ReadonlyArray<{ key: string }>, parts: ReadonlyArray<{ key: string }>): number {
+  const left: Record<string, number> = {}
+  for (const p of prev) left[p.key] = (left[p.key] ?? 0) + 1
+  let end = 0
+  parts.forEach((p, i) => {
+    if (left[p.key]) [left[p.key], end] = [left[p.key] - 1, i + 1]
+  })
+  return end
+}
+
+// A part's tokens by kind: by the API's count of each kind where it counted
+// them, else its count split by bytes.
+function sharesOf(p: Stats['parts'][number], tokens: Record<string, number>): Array<[string, number]> {
+  const by = p.counted ?? p.kinds
+  const total = Object.values(by).reduce((a, b) => a + b, 0)
+  return Object.entries(by).map(([k, n]) => [k, total ? ((tokens[p.key] ?? 0) * n) / total : 0])
+}
+
+// The types of trim a saving is told by: the base's shaves (cost.ts), and in
+// the conversation each kind's (log.ts, kinds), with `other` for the rest.
+export const BASE = ['deferred-tools', 'skill-list']
+const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages' }
+
+// What a request took out of the conversation, by type of trim: what
+// removedTokens added, a kind at a time. Given the stats before, as cost.ts
+// keeps them, and after.
+export function removedByType(prev: Stats, s: Stats): Record<string, number> {
+  const out: Record<string, number> = {}
+  const add = (k: string, n: number) => (out[TYPES[k] ?? 'other'] = (out[TYPES[k] ?? 'other'] ?? 0) + n)
+  for (const p of prev.parts) for (const [k, n] of sharesOf(p, prev.tokens)) add(k, n)
+  for (const p of s.parts.slice(0, keptOf(prev.parts, s.parts))) for (const [k, n] of sharesOf(p, s.tokens)) add(k, -n)
+  return out
+}
+
 // The base's tokens: the system blocks and tools, and the system messages.
 export function baseOf(s: Stats): number {
   let n = s.tokens[s.defs.key] ?? 0
-  for (const p of s.parts) {
-    const bytes = Object.values(p.kinds).reduce((a, b) => a + b, 0)
-    for (const [kind, b] of Object.entries(p.kinds)) if (kind === 'system' || kind.startsWith('system:')) n += ((s.tokens[p.key] ?? 0) * b) / bytes
-  }
+  for (const p of s.parts) for (const [kind, share] of sharesOf(p, s.tokens)) if (kind === 'system' || kind.startsWith('system:')) n += share
   return n
 }
 
@@ -306,21 +346,27 @@ export function estimate(r: Sent): Stats {
   return { ...observe(undefined, r, Math.round(bytes * BYTE_TOKENS), 0), requests: 0, turns: 0 }
 }
 
+// Dollars, a minus before the sign, and none on what rounds to nothing.
+export const money = (v: number) => (v.toFixed(2).startsWith('-') && Number(v.toFixed(2)) ? '-$' : '$') + Math.abs(v).toFixed(2)
+
 // The session's cost without the shaver and as it was (cost.ts), the saving
-// split into the deferred tools' and the rest's when tools were deferred (each
-// a share of the cost without the shaver, as the saving is), with
-// the client's own compactions the shaver kept it from needing.
+// split by type of trim, each named for the base or the conversation (each a
+// share of the cost without the shaver, as the saving is), with the client's
+// own compactions the shaver kept it from needing.
 export const costLines = (c: Cost, heading = 'Costs (session)') => [
   ...difference(heading, c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
-  ...(c.deferral > 0 ? split(c) : []),
+  ...(Object.keys(c.saved).some((t) => t !== 'other') ? split(c) : []),
   `  Auto-compactions avoided: ${c.compactions} (about ${Math.round(c.waitMs / 60_000)} min of waiting)`,
 ]
 
-// Indented under the saving, shares padded to 2 digits as in line().
+const SAVED = [...BASE, 'tools', 'reasoning', 'messages', 'other']
+
+// Indented under the saving, each type named for its half, shares padded to 2
+// digits as in line(). A type that rounds to nothing is left out.
 function split(c: Cost): string[] {
-  const amounts = [c.deferral, c.without - c.actual - c.deferral]
-  const width = Math.max(...amounts.map((v) => ('$' + v.toFixed(2)).length))
-  return amounts.map((v, i) => `      ${('$' + v.toFixed(2)).padStart(width)} (${String(percent(v, c.without)).padStart(2)}%) from trimming ${i ? 'conversation' : 'base'}`)
+  const types = SAVED.filter((t) => money(c.saved[t] ?? 0) !== '$0.00')
+  const width = Math.max(...types.map((t) => money(c.saved[t]).length))
+  return types.map((t) => `      ${money(c.saved[t]).padStart(width)} (${String(percent(c.saved[t], c.without)).padStart(2)}%) ${BASE.includes(t) ? 'base' : 'conv'}:${t}`)
 }
 
 export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
@@ -344,9 +390,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   s.parts.forEach((p, i) => {
     const born = (p.lineage && s.seen['lineage:' + p.lineage]) || s.seen[p.key]
     const ago = ref - day(born)
-    const bytes = Object.values(p.kinds).reduce((a, b) => a + b, 0)
-    for (const [kind, n] of Object.entries(p.kinds)) {
-      const share = ((s.tokens[p.key] ?? 0) * n) / bytes
+    for (const [kind, share] of sharesOf(p, s.tokens)) {
       if (kind === 'system' || kind.startsWith('system:')) {
         add('preamble', share)
         const name = kind.slice('system:'.length) || 'other'
