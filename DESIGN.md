@@ -73,7 +73,7 @@ Deleting `proxy-data/node` makes the next run install the newest 24.x.
 | `--dir` | the repo's `proxy-data/` | Where `state/` and `logs/` go |
 | `--policy` | the repo's `policy.json` | The policy file to use (format documented below). If not specified, defaults to `policy.json` and if missing creates a local `policy.json` from `policy.default.json` |
 | `--log-step-events` | off | Write the log (below) |
-| `--cache-ttl-seconds` | `3600` | The cache TTL. Lower it only to test the cold path |
+| `--cache-ttl-seconds` | `3600` | The longest cache TTL; a request's breakpoints or its model can make it shorter. Lower it only to test the cold path |
 
 ### When the model is already proxied
 
@@ -383,13 +383,15 @@ batch: a call the clock skipped past both rules for goes straight to dropped.
 It prices each candidate, keeping and advancing, against the cache
 entries the conversation's earlier requests left. They are saved in the
 state with the time each was last written or read, and they expire after the
-TTL. Each breakpoint (a block with `cache_control`) leaves an entry for the
+TTL: an hour if every breakpoint asks for `"ttl": "1h"`, else the API's
+default of 5 minutes, which Bedrock clients often keep. Each breakpoint (a block with `cache_control`) leaves an entry for the
 prefix through it. A request reads the longest live entry it finds by looking
 back at most 20 positions from each of its breakpoints. A position is a block,
 or a message's run of `tool_use` or `tool_result` blocks. The request writes
 from there to its last breakpoint. A written character costs M + 1 reads, where
 M + 1 = 2 / read cost, because a 1-hour write is 2× input. So M = 19 at the
-usual 0.1× read, 39 on Opus 5.5, and 79 on Fable and Mythos 5.1.
+usual 0.1× read, 39 on Opus 5.5, and 79 on Fable and Mythos 5.1. A 5-minute
+write is 1.25× input, so M = 11.5 at the usual read.
 
 Advancing pays when its extra cost on this request is at most H·S read
 characters, where S is the characters it saves every later request and H, the
@@ -557,7 +559,7 @@ Scripts:
   seconds of waiting, which the stats show as avoided; the figures come
   from five logged compactions. The split is estimated from the gap
   since the previous request and whether the trim advanced. After a gap
-  longer than the cache TTL (the model's, where it has one), both read only the shared prefix and write the
+  longer than the cache TTL (the request's, as the journal records it), both read only the shared prefix and write the
   rest. On a warm advance, which rewrites the cache, the shaverless prompt
   would have read everything the previous one sent, or the base after a
   compaction. Otherwise it mirrors the actual request, with the trimmed-out

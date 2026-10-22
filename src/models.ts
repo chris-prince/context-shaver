@@ -15,7 +15,7 @@ export type Model = {
   price?: Price
   // How far back from a breakpoint a request finds an entry (trim.ts, readThrough).
   lookback: number
-  // Seconds an entry lasts unread, where it isn't --cache-ttl-seconds.
+  // Seconds an entry lasts unread, where the request's breakpoints don't say.
   ttl?: number
   // Tokens of earlier turns that start a summary fork, in place of the policy's
   // summary_threshold_tokens; the policy still decides whether there are any.
@@ -80,3 +80,7 @@ export function modelOf(name: string, provider?: string): Model {
   const { providers, ...m } = MODELS[name] ?? {}
   return { ...DEFAULT, ...m, ...(provider ? providers?.[provider] : undefined) }
 }
+
+// How long entries last, in ms: `ttl` (what the request's breakpoints asked
+// for, trim.ts, markedTtl, else the model's), but never past --cache-ttl-seconds.
+export const lifetimeMs = (ttl: number | undefined, capMs: number) => Math.min(capMs, (ttl ?? Infinity) * 1000)

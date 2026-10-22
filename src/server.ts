@@ -32,8 +32,8 @@ import { history, latest, record, recordSummaryFork } from './journal.ts'
 import { add, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
-import { modelOf } from './models.ts'
-import { anchored, apply, freedSystem, decide, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
+import { lifetimeMs, modelOf } from './models.ts'
+import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { summaryForkOf, instructions, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
@@ -138,8 +138,9 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const s = load(key)
   const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
   const clock = clockOf(msgs)
-  const model = modelOf(body.model, body.provider)
-  const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= (model.ttl ? model.ttl * 1000 : ttlMs)))
+  const marked = markedTtl(body)
+  const model = { ...modelOf(body.model, body.provider), ...(marked && { ttl: marked }) }
+  const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= lifetimeMs(model.ttl, ttlMs)))
   const live = new Set(Object.keys(entries))
   const seed = seedOf(body.model, body.tools, body.system)
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
@@ -194,6 +195,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const described = { ...describe(body, trimmed, time, d?.advanced || records > before, conv), turns: msgs.filter(isPrompt).length }
   if (deferred) described.defs.deferred = deferred
   if (skills) described.defs.skills = skills
+  if (marked) described.ttl = marked
   // Each record is dated by the first message it covers.
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))

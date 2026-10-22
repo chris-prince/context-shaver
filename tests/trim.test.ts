@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { parsePolicy, seedPolicy, treatment, type Policy } from '../src/policy.ts'
-import { anchored, apply, decide, freedSystem, isStubbed, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { anchored, apply, decide, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 
 const long = 'x'.repeat(5000)
@@ -354,6 +354,8 @@ test('a model with cheaper reads makes a rewrite cost more of them', () => {
   const drop = [...head, { role: 'user', content: '' } as ApiMsg, keep[2]]
   assert.equal(writeCost(modelOf('claude-haiku-5-5')), 19)
   assert.equal(writeCost(modelOf('claude-opus-5-5')), 39)
+  // A 5-minute write is 1.25x input.
+  assert.ok(Math.abs(writeCost({ ...modelOf('claude-haiku-5-5'), ttl: 300 }) - 11.5) < 1e-9)
   assert.ok(Math.abs(writeCost(modelOf('gpt-6-luna'), true) - 11.5) < 1e-9)
   assert.equal(gate(keep, drop, keep).advanced, true)
   assert.equal(gate(keep, drop, keep, 'claude-opus-5-5').advanced, false)
@@ -445,4 +447,15 @@ test('with automatic caching, a request reads back only 20 user runs from its en
   // A change within reach reads up to the user run before it; one further back, nothing.
   assert.equal(readThrough(pos(stubbedAt(110)), live, 20), 108)
   assert.equal(readThrough(pos(stubbedAt(2)), live, 20), -1)
+})
+
+test("a request's breakpoints give its entries' lifetime", () => {
+  const hour = { type: 'ephemeral', ttl: '1h' }
+  const five = { type: 'ephemeral' }
+  const body = (system: object, last: object) => ({ system: [{ type: 'text', text: 's', cache_control: system }], messages: [{ role: 'user', content: [{ type: 'text', text: 'u', cache_control: last }] }] })
+  assert.equal(markedTtl(body(hour, hour)), 3600)
+  // Bedrock clients often leave the TTL out: the API's 5 minutes.
+  assert.equal(markedTtl(body(five, five)), 300)
+  assert.equal(markedTtl(body(hour, five)), 300)
+  assert.equal(markedTtl({ messages: [{ role: 'user', content: 'u' }] }), undefined)
 })

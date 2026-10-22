@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { add, cost, without, type Usage } from '../src/cost.ts'
-import { modelOf } from '../src/models.ts'
+import { lifetimeMs, modelOf } from '../src/models.ts'
 import { render, type Stats } from '../src/stats.ts'
 
 const HOUR = 3600e3
@@ -49,6 +49,18 @@ test('5-minute writes, long prompts and unknown models', () => {
   const haiku = cost([{ stats: at(0, 200_000, 0, 'claude-haiku-5-5'), usage: usage(200_000, 0, 0) }], HOUR)
   assert.equal(haiku!.actual, (200_000 * 0.5) / 1e6)
   assert.equal(cost([{ stats: at(0, 1000, 0, 'm'), usage: usage(0, 0, 1000) }], HOUR), undefined)
+})
+
+test("a request's 5-minute breakpoints make a 7-minute gap cold", () => {
+  const five = { ...usage(10, 5000, 6990), cache_creation: { ephemeral_5m_input_tokens: 6990 } }
+  const zero = { without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 }
+  // Warm at the hour, the shaverless prompt would have read all 20k.
+  assert.ok(add(zero, at(0, 20_000, 0), at(7, 12_000, 9000), five, HOUR)!.saved.other! < 0)
+  // Cold, it reads only the 5k prefix and writes 16k at 1.25x input ($4).
+  const c = add(zero, { ...at(0, 20_000, 0), ttl: 300 }, { ...at(7, 12_000, 9000), ttl: 300 }, five, HOUR)!
+  assert.ok(Math.abs(c.without - (10 * 4 + 5000 * 0.2 + 15_990 * 5) / 1e6) < 1e-12)
+  assert.equal(lifetimeMs(undefined, HOUR), HOUR)
+  assert.equal(lifetimeMs(1800, 600e3), 600e3)
 })
 
 test('adding a request at a time gives the same cost as the whole journal', () => {

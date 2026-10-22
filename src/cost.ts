@@ -29,7 +29,7 @@
 // on a request that trims, by what it takes out, since its rewriting is that
 // trim's cost.
 
-import { modelOf, type Price } from './models.ts'
+import { lifetimeMs, modelOf, type Price } from './models.ts'
 import { BASE, baseOf, removedByType, type Stats } from './stats.ts'
 
 export type Usage = {
@@ -116,8 +116,8 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   const m = modelOf(s.model, s.provider)
   const p = m.price
   if (!c || !p) return undefined
-  // The model's TTL where it has one, as the proxy's cache model uses (server.ts, prepare).
-  const ttl = m.ttl ? m.ttl * 1000 : ttlMs
+  // The TTL the proxy's cache model used for the request (server.ts, prepare).
+  const ttl = lifetimeMs(s.ttl ?? m.ttl, ttlMs)
   const actual: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
   const short = (t: Tokens) => (ttl > 300_000 ? 0 : t.writes)
   const wo = without(prev, s, u, ttl, c.context, m.compactAt)

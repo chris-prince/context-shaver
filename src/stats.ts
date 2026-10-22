@@ -38,6 +38,8 @@ export type Sent = {
   ends: { tools: number; reasoning: number }
   // Whether the proxy advanced its trim on this request.
   advanced: boolean
+  // The seconds its breakpoints asked the cache to keep it (trim.ts, markedTtl).
+  ttl?: number
 }
 
 export type Stats = {
@@ -47,6 +49,8 @@ export type Stats = {
   time: string
   model: string
   provider?: string
+  // The latest request's Sent.ttl; none before 2026-10-22.
+  ttl?: number
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
@@ -217,6 +221,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     time: r.time,
     model: r.model,
     ...(r.provider && { provider: r.provider }),
+    ...(r.ttl && { ttl: r.ttl }),
     inputTokens,
     removedTokens,
     tokens: known,

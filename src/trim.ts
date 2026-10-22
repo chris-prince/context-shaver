@@ -252,9 +252,9 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock
 // goes cold: 40 at an hour's TTL (context-shaver's local/notes.md, "Light
 // compaction"). The proxy now asks the model (models.ts, horizon); K stays
 // the horizon tests and replays of old logs assume. Automatic caching writes
-// at the input price, so a written character costs half the reads, unless the
-// model prices its writes (models.ts).
-export const writeCost = (m: Model, automatic = false) => (m.price?.write ? m.price.write / m.price.input : automatic ? 1 : 2) / (m.price ? m.price.read / m.price.input : 0.1) - 1 // M
+// at the input price, so a written character costs half the reads, and a
+// 5-minute write at 1.25x, unless the model prices its writes (models.ts).
+export const writeCost = (m: Model, automatic = false) => (m.price?.write ? m.price.write / m.price.input : automatic ? 1 : m.ttl === 300 ? 1.25 : 2) / (m.price ? m.price.read / m.price.input : 0.1) - 1 // M
 export const K = 40
 
 // What a thinking block bills, which its length does not show: Claude Code
@@ -291,6 +291,15 @@ export function sizeOf(b: Block, thinking: Thinking): number {
 // over the same prefix), its size, whether it is a breakpoint, and whether it
 // continues the previous block's position, in a run of tool calls or results.
 export type Position = { prefix: string; size: number; breakpoint: boolean; joined: boolean }
+
+// The seconds a request's entries last, by its breakpoints: an hour where each
+// asks for "1h", else 5 minutes (the API's default, which Bedrock clients
+// often keep); none without breakpoints.
+export function markedTtl(body: { system?: unknown; tools?: unknown; messages?: unknown }): number | undefined {
+  const marks: Array<{ ttl?: string } | undefined> = []
+  JSON.stringify([body.system, body.tools, body.messages], (k, v) => (k === 'cache_control' && marks.push(v), v))
+  return marks.length ? (marks.every((c) => c?.ttl === '1h') ? 3600 : 300) : undefined
+}
 
 const uncontrolled = (k: string, v: unknown) => (k === 'cache_control' ? undefined : v)
 export const seedOf = (model: string, tools: unknown, system: unknown) => hash(JSON.stringify([model, tools, system], uncontrolled))

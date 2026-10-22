@@ -20,7 +20,7 @@ import type { Usage } from './cost.ts'
 import { withWrites } from './responses.ts'
 import type { Stats } from './stats.ts'
 
-const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'provider', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
+const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'provider', 'ttl', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
 const RECORDS = ['tokens', 'bound', 'answers', 'seen'] as const
 
 type Part = Stats['parts'][number]
