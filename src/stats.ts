@@ -432,8 +432,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   // The prompt as sent, then as it would be without the shaver, lined up.
   const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
   const requests = forks.applied + forks.pending + forks.dropped
-  const w = String(Math.max(forks.applied, forks.pending, forks.dropped)).length
-  const fates = requests ? Object.entries(forks).map(([fate, n]) => `    ${String(n).padStart(w)} ${fate}`) : []
+  const fates = requests ? [`    ${Object.entries(forks).map(([fate, n]) => `${n} ${fate}`).join(', ')}`] : []
   out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.

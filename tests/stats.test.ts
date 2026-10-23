@@ -114,8 +114,8 @@ test('before any request is answered, the request is estimated from its bytes', 
 
 test('the summaries line counts summary creation requests by what became of them, none as 0', () => {
   const s = estimate(describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'))
-  assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 0 }), /\n  1 summary creation request\n    1 applied\n    0 pending\n    0 dropped\n\n/)
-  assert.match(render(s, 'session', true, undefined, { applied: 10, pending: 1, dropped: 2 }), /\n  13 summary creation requests\n    10 applied\n     1 pending\n     2 dropped\n\n/)
+  assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 0 }), /\n  1 summary creation request\n    1 applied, 0 pending, 0 dropped\n\n/)
+  assert.match(render(s, 'session', true, undefined, { applied: 10, pending: 1, dropped: 2 }), /\n  13 summary creation requests\n    10 applied, 1 pending, 2 dropped\n\n/)
   assert.match(render(s, 'session', true), /\n  0 summary creation requests\n\n/)
 })
 
