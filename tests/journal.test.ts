@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { diff, latest, record, recordSummaryFork, replay, summaryForks } from '../src/journal.ts'
+import { diff, history, latest, record, recordResent, recordSummaryFork, replay, summaryForks } from '../src/journal.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -48,6 +48,18 @@ test('a summary fork has its own line, which stats replay skips', () => {
   record(file, s1, s2, { input_tokens: 10, output_tokens: 30 })
   assert.deepEqual(Array.from(replay(file), copy), [s1, s2])
   assert.deepEqual([...summaryForks(file)], [fork])
+})
+
+test('a resent request counts as a request, with its usage, and leaves the rest of the stats', () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
+  const s1 = observe(undefined, describe(body([user('a')]), ends, '2026-10-11T10:00:00Z'), 1000, 30)
+  record(file, undefined, s1, { input_tokens: 10, output_tokens: 30 })
+  const u = { input_tokens: 10, cache_creation_input_tokens: 1200, output_tokens: 30 }
+  const s2 = recordResent(file, copy(s1), '2026-10-11T10:01:00Z', u)
+  assert.deepEqual(s2, { ...s1, requests: 2, time: '2026-10-11T10:01:00Z' })
+  const lines = Array.from(history(file), (l) => ({ ...l, stats: copy(l.stats) }))
+  assert.deepEqual(lines.at(-1), { stats: s2, usage: u, resent: true })
+  assert.equal(lines[0].resent, undefined)
 })
 
 test('replaying the journal keeps the pinned provider', () => {

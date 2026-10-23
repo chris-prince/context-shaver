@@ -529,17 +529,22 @@ Scripts:
   `:shaver policy` shows the policy file the same way, as it is on disk now.
   `:shaver info all` adds up the costs of every conversation with a journal
   (`src/totals.ts`), replaying each as its own `:shaver info` does, then one
-  entry per harness and model. Requests that aren't journaled (suggestion
-  mode, side requests without tools) aren't counted.
-  Each counted request appends what it changed to
+  entry per harness and model. Requests that aren't journaled (side requests
+  without tools, and suggestion mode before 2026-10-23) aren't counted.
+  Each request the API answers appends what it changed to
   `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a
   request, with the usage the API reported for it: cache reads, cache writes
   by TTL, and output tokens. Replayed from the start, the journal gives the
   stats after any request. Each summary fork answered adds a line of its own
   with its time, model and usage, which stats replay skips; its cost still
   comes from the conversation's summaries file. Claude Code's prompt suggestions, which it sends
-  after a reply asking what the user will type next, are trimmed like any
-  request but not counted: they would add a turn the user never took. The
+  after a reply asking what the user will type next, are trimmed and
+  journaled like any request, with what they cost and any trim they make,
+  but marked, and not counted as requests or turns: the user took none.
+  Before 2026-10-23 they weren't journaled, so a trim made on one went
+  uncounted. A changed request the API refuses, answered as it came, adds a
+  line marked resent: one more request, its usage, the stats otherwise as
+  they were, and the same cost with or without the shaver. The
   proxy keeps only each conversation's latest stats in memory,
   replaying the journal once after a restart; a journal that won't replay
   is moved aside to `<key>.journal.bad.jsonl` and the stats start again.
@@ -580,7 +585,7 @@ Scripts:
   shared by what each type has taken out so far. When the request without
   the shaver compacts, what was taken out until then is cut to the share a
   compaction keeps. That rule, and the byte split of a part's
-  tokens where the API gives no count by kind, make the split an estimate. Prompt suggestions and command replies
+  tokens where the API gives no count by kind, make the split an estimate. Command replies
   are left out, as the journal leaves them out.
 - `bin/node-wrapper scripts/stats-from-logs.ts <conversation dir> [--request N]
   [--check-journal]` replays a logged conversation through `src/stats.ts`

@@ -28,8 +28,8 @@ import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
-import { history, latest, record, recordSummaryFork } from './journal.ts'
-import { add, cost, spent, type Cost, type Usage } from './cost.ts'
+import { history, latest, record, recordResent, recordSummaryFork } from './journal.ts'
+import { add, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
@@ -200,6 +200,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
   const suggestion = isSuggestion(msgs)
+  if (suggestion) described.suggestion = true
   const after = policy.summary_threshold_tokens && (model.summaryThreshold ?? policy.summary_threshold_tokens)
   // Whether to send a summary fork is known once the response's counts are in.
   const summaryFork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
@@ -389,10 +390,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     fetch(upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
   let up = await send(p?.body ?? raw)
   // A changed request the API refuses is sent again as it came, so the proxy
-  // never costs the user a turn.
+  // never costs the user a turn, and journaled as resent.
+  let resent: Prepared | undefined
   if ((p || raw !== original) && up.status === 400) {
     console.error(`shaver: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
-    p = undefined
+    ;[resent, p] = [p, undefined]
     up = await send(original)
   }
   const out: Record<string, string> = {}
@@ -414,9 +416,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // its end: Codex sends the next request then, before the stream closes.
   let finished = false
   const finish = () => {
-    if (finished || !p || up.status !== 200) return
+    if (finished || !(p || resent) || up.status !== 200) return
     finished = true
-    answered(p, usage, upstream + url, headers)
+    if (p) answered(p, usage, upstream + url, headers)
+    else answeredResent(resent!, usage)
   }
   if (up.body)
     for await (const chunk of up.body) {
@@ -437,7 +440,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
   const c = attribution !== undefined ? p.counted?.(attribution) : undefined
   const next = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0, c && { defs: c.head, parts: c.messages, kinds: c.kinds }) : p.stats
-  if (inputTokens && next && !p.suggestion) {
+  if (inputTokens && next) {
     const was = currentOf(p.key)
     record(journalOf(p.key), was.stats, next, u)
     current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u!, ttlMs) })
@@ -458,6 +461,18 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
       ...(attribution !== undefined && { attribution }),
     })
   }
+}
+
+// Records a request answered as it came after its changed form was refused:
+// its line in the journal and its cost. The proxy's state stays as it was,
+// since none of this request's trim went up. A conversation with no journal
+// yet has no stats to count it in, so it starts with the next.
+function answeredResent(p: Prepared, usage: UsageReader): void {
+  const { usage: u } = usage.end()
+  const was = currentOf(p.key)
+  if (!u || !was.stats) return
+  const stats = recordResent(journalOf(p.key), was.stats, new Date().toISOString(), u)
+  current.set(p.key, { stats, cost: addResent(was.cost, stats, u) })
 }
 
 // The conversations with a summary fork under way, which get no second one.

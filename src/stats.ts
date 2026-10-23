@@ -40,6 +40,8 @@ export type Sent = {
   advanced: boolean
   // The seconds its breakpoints asked the cache to keep it (trim.ts, markedTtl).
   ttl?: number
+  // Whether it is Claude Code's prompt suggestion (isSuggestion).
+  suggestion?: boolean
 }
 
 export type Stats = {
@@ -51,6 +53,9 @@ export type Stats = {
   provider?: string
   // The latest request's Sent.ttl; none before 2026-10-22.
   ttl?: number
+  // Whether the latest request was a prompt suggestion, which counts as no
+  // request or turn; none before 2026-10-23, when suggestions weren't journaled.
+  suggestion?: boolean
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
@@ -134,8 +139,9 @@ export function describe(body: { model: string; provider?: string; messages: Api
 
 // Whether a request is Claude Code's prompt suggestion: the conversation so far
 // and a last message asking what the user will type next. It sends one after a
-// reply, interactively, with no header to tell it apart, so the stats leave it
-// out by that message; counted, it would add a turn the user never took.
+// reply, interactively, with no header to tell it apart. Its cost and any trim
+// it makes count, but not it as a request or its message as a turn the user
+// took.
 export function isSuggestion(msgs: readonly ApiMsg[]): boolean {
   const last = msgs.at(-1)
   if (last?.role !== 'user') return false
@@ -204,24 +210,27 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   // An advance takes out what the previous request's parts cost less what
   // they cost now: the parts through the last one it also sent, counting
   // repeats, since Claude Code sends the same reminder again. What follows
-  // that is the turn's new parts.
+  // that is the turn's new parts. A suggestion's last message, which nothing
+  // sends again, is no part of it.
   let removedTokens = prev?.removedTokens ?? 0
-  if (prev && r.advanced) removedTokens += prev.parts.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - r.parts.slice(0, keptOf(prev.parts, r.parts)).reduce((n, p) => n + known[p.key], 0)
+  const was = prev?.suggestion ? prev.parts.slice(0, -1) : prev?.parts ?? []
+  if (prev && r.advanced) removedTokens += was.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - r.parts.slice(0, keptOf(was, r.parts)).reduce((n, p) => n + known[p.key], 0)
 
   const seen = { ...prev?.seen }
   for (const p of r.parts) {
     seen[p.key] ??= p.born ?? r.time
     if (p.lineage) seen['lineage:' + p.lineage] ??= r.time
   }
-  const requests = (prev?.requests ?? 0) + 1
+  const requests = (prev?.requests ?? 0) + (r.suggestion ? 0 : 1)
   return {
     first: prev?.first ?? r.time,
     requests,
-    turns: r.turns,
+    turns: r.suggestion ? prev?.turns ?? 0 : r.turns,
     time: r.time,
     model: r.model,
     ...(r.provider && { provider: r.provider }),
     ...(r.ttl && { ttl: r.ttl }),
+    suggestion: !!r.suggestion,
     inputTokens,
     removedTokens,
     tokens: known,
@@ -357,7 +366,7 @@ export const money = (v: number) => (v.toFixed(2).startsWith('-') && Number(v.to
 // share of the cost without the shaver, as the saving is), with the client's
 // own compactions the shaver kept it from needing.
 export const costLines = (c: Cost, heading = 'Costs (session)') => [
-  ...difference(heading, c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
+  ...difference(heading, c.without, c.actual, money, ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
   ...(Object.keys(c.saved).some((t) => t !== 'other') ? ['', '  Savings Breakdown', ...split(c)] : []),
   '',
   '  Speedup',

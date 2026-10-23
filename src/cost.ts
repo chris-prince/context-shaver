@@ -179,14 +179,23 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
 // The cost of the requests each stats line follows, given as each line's stats
 // and the usage it holds. Lines from before the journal held usage count for
 // nothing.
-export function cost(lines: Iterable<{ stats: Stats; usage?: Usage }>, ttlMs: number): Cost | undefined {
+export function cost(lines: Iterable<{ stats: Stats; usage?: Usage; resent?: true }>, ttlMs: number): Cost | undefined {
   let c: Cost | undefined = { without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 }
   let prev: Stats | undefined
-  for (const { stats: s, usage: u } of lines) {
-    if (u) c = add(c, prev, s, u, ttlMs)
+  for (const { stats: s, usage: u, resent } of lines) {
+    if (u) c = resent ? addResent(c, s, u) : add(c, prev, s, u, ttlMs)
     prev = before(s)
   }
   return c
+}
+
+// The cost so far with a resent request's added (journal.ts): sent as it
+// came, it cost what it would have without the proxy. None once a request's
+// model has no price, as with add.
+export function addResent(c: Cost | undefined, s: Stats, u: Usage): Cost | undefined {
+  if (!c || !modelOf(s.model, s.provider).price) return undefined
+  const v = spent(s.model, s.provider, u)
+  return { ...c, without: c.without + v, actual: c.actual + v }
 }
 
 // What add reads of the stats before a request, copied, since a journal's

@@ -6,13 +6,14 @@
 // line gives; spend from before forks were journaled, for the conversation's
 // last model.
 //
-// Not counted: requests that aren't journaled (Claude Code's suggestion-mode
-// requests, side requests without tools), and a conversation's requests after
-// one whose model has no price, where its cost stops, as in its info.
+// Not counted: requests that aren't journaled (side requests without tools,
+// and Claude Code's suggestion-mode requests before 2026-10-23), and a
+// conversation's requests after one whose model has no price, where its cost
+// stops, as in its info.
 
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { add, before, spent, type Cost } from './cost.ts'
+import { add, addResent, before, spent, type Cost } from './cost.ts'
 import { history, summaryForks } from './journal.ts'
 import { costLines, counted, money, type Stats } from './stats.ts'
 
@@ -46,8 +47,8 @@ export function totals(stateDir: string, ttlMs: number): string {
     let last: string | undefined
     let forks = 0
     try {
-      for (const { stats: s, usage: u } of history(file)) {
-        const next = u && c ? add(c, prev, s, u, ttlMs) : c
+      for (const { stats: s, usage: u, resent } of history(file)) {
+        const next = u && c ? (resent ? addResent(c, s, u) : add(c, prev, s, u, ttlMs)) : c
         if (c && !next) stopped++
         const d = { requests: s.requests - (prev?.requests ?? 0) }
         count(key, s.model, next && c ? { ...d, without: next.without - c.without, actual: next.actual - c.actual, saved: Object.fromEntries(Object.entries(next.saved).map(([t, n]) => [t, n - (c!.saved[t] ?? 0)])), compactions: next.compactions - c.compactions, waitMs: next.waitMs - c.waitMs } : d)
@@ -96,7 +97,7 @@ export function totals(stateDir: string, ttlMs: number): string {
   const notes = [
     ...(stopped ? [`${counted(stopped, 'session')} stopped at a model with no price`] : []),
     ...(unreadable ? [`${counted(unreadable, 'journal')} couldn't be read`] : []),
-    "suggestion-mode and side requests aren't journaled",
+    "side requests, and suggestion-mode requests before 2026-10-23, aren't journaled",
   ]
   out.push('', `Not counted: ${notes.join('; ')}.`)
   return out.join('\n')

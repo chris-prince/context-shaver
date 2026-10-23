@@ -119,6 +119,24 @@ test('an advance removes what the earlier parts cost less what they cost now', (
   assert.equal(s.removedTokens, before - kept)
 })
 
+test('a prompt suggestion counts its trim but not itself as a request or turn', () => {
+  const a: ApiMsg = { role: 'user', content: 'a'.repeat(400) }
+  const b: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b'.repeat(400) }] }
+  const c: ApiMsg = { role: 'user', content: 'c' }
+  const s1 = observe(undefined, describe(body([a, b, c]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
+  const before = s1.parts.reduce((n, p) => n + s1.tokens[p.key], 0)
+  const stub: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b' }] }
+  const ask: ApiMsg = { role: 'user', content: '[SUGGESTION MODE: Suggest what the user might naturally type next]'.repeat(20) }
+  const s2 = observe(s1, { ...describe(body([a, stub, c, ask]), ends, '2026-10-11T10:00:10Z', true), suggestion: true }, 900, 10)
+  assert.deepEqual([s2.requests, s2.turns, s2.suggestion], [1, s1.turns, true])
+  assert.equal(s2.removedTokens, before - s2.parts.slice(0, 3).reduce((n, p) => n + s2.tokens[p.key], 0))
+  // The next request leaves the suggestion's message out, and isn't
+  // taking it out.
+  const d: ApiMsg = { role: 'user', content: 'd' }
+  const s3 = observe(s2, describe(body([a, stub, c, d]), ends, '2026-10-11T10:01:00Z', true), 700, 0)
+  assert.deepEqual([s3.requests, s3.turns, s3.suggestion, s3.removedTokens], [2, s1.turns + 1, false, s2.removedTokens])
+})
+
 test('records show as their own type, each dated by the first message it covers', () => {
   const [a, c, e, g]: ApiMsg[] = ['a', 'c', 'e', 'g'].map((t) => ({ role: 'user', content: t }))
   const [b, d, f]: ApiMsg[] = ['b', 'd', 'f'].map((t) => ({ role: 'assistant', content: [{ type: 'text', text: t }] }))

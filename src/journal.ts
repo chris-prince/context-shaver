@@ -13,6 +13,10 @@
 //
 // A summary fork (summary.ts) gets a line of its own, { summaryFork: { time,
 // model, provider, usage } }, with no change to the stats, so replay skips it.
+//
+// A request the API refused changed and answered as it came (server.ts) gets a
+// line marked resent: true, its usage and its count as a request, with the
+// rest of the stats as they were, since it went up untrimmed.
 
 import { appendFileSync, existsSync, readFileSync, renameSync } from 'node:fs'
 import path from 'node:path'
@@ -20,7 +24,7 @@ import type { Usage } from './cost.ts'
 import { withWrites } from './responses.ts'
 import type { Stats } from './stats.ts'
 
-const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'provider', 'ttl', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
+const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'provider', 'ttl', 'suggestion', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
 const RECORDS = ['tokens', 'bound', 'answers', 'seen'] as const
 
 type Part = Stats['parts'][number]
@@ -29,6 +33,7 @@ export type Delta = {
   records?: Partial<Record<(typeof RECORDS)[number], { set?: Record<string, unknown>; del?: string[] }>>
   parts?: Array<[number, number] | Part>
   usage?: Usage
+  resent?: true
 }
 export type SummaryForkLine = { time: string; model: string; provider?: string; usage?: Usage }
 
@@ -84,6 +89,14 @@ export function record(file: string, prev: Stats | undefined, next: Stats, usage
   appendFileSync(file, JSON.stringify({ ...diff(prev, next), ...(usage && { usage }) }) + '\n')
 }
 
+// Appends a resent request's line, given the stats the journal ends with, and
+// returns the stats it leaves.
+export function recordResent(file: string, prev: Stats, time: string, usage: Usage): Stats {
+  const set = { requests: prev.requests + 1, time }
+  appendFileSync(file, JSON.stringify({ set, usage, resent: true }) + '\n')
+  return { ...prev, ...set }
+}
+
 // Appends a summary fork's line.
 export function recordSummaryFork(file: string, f: SummaryForkLine): void {
   appendFileSync(file, JSON.stringify({ summaryFork: f }) + '\n')
@@ -100,10 +113,10 @@ function* linesOf(file: string): Generator<Delta & { summaryFork?: SummaryForkLi
 // gives the same stats object, changed in place, so a caller that keeps a
 // line's stats past the next one copies what it needs. A Codex journal's
 // usage gets the cache writes ChatGPT's backend doesn't report (responses.ts).
-export function* history(file: string): Generator<{ stats: Stats; usage?: Usage }> {
+export function* history(file: string): Generator<{ stats: Stats; usage?: Usage; resent?: true }> {
   const codex = path.basename(file).startsWith('codex-')
   let s: Stats | undefined
-  for (const d of linesOf(file)) if (!d.summaryFork) yield { stats: (s = apply(s, d)), usage: d.usage && codex ? withWrites(d.usage) : d.usage }
+  for (const d of linesOf(file)) if (!d.summaryFork) yield { stats: (s = apply(s, d)), usage: d.usage && codex ? withWrites(d.usage) : d.usage, ...(d.resent && { resent: d.resent }) }
 }
 
 // The summary forks a journal records, in order.
