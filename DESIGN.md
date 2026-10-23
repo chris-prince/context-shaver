@@ -342,6 +342,9 @@ A step is an assistant message with the tool results that answer it. The
 latest step, the one the model is answering, is never touched. A turn starts
 at a prompt (user text that is not a tool result, a `<system-reminder>` or a
 command row). The current turn, from the last prompt on, is never touched.
+Claude Code's prompt suggestion is not a prompt: it comes after a reply that
+may not end the turn, as when a background task's notice resumes the agent,
+so a turn ends only at the next prompt.
 
 The API constrains what can go:
 

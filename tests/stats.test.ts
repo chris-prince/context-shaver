@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Stats } from '../src/stats.ts'
-import { SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
+import { bornOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Stats } from '../src/stats.ts'
+import { clockOf, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
 const body = (messages: ApiMsg[]) => ({ model: 'm', messages, system: 'sys', tools: [{ name: 'Bash' }] })
@@ -49,6 +49,21 @@ test('a prompt suggestion is told apart by its last message', () => {
   assert.equal(isSuggestion([a, b, { role: 'user', content: [{ type: 'text', text: '[SUGGESTION MODE: …]' }] }]), true)
   assert.equal(isSuggestion([a, b, { role: 'user', content: 'what is [SUGGESTION MODE:]?' }]), false)
   assert.equal(isSuggestion([a, b]), false)
+})
+
+test('a prompt suggestion does not end the turn before it', () => {
+  const p1: ApiMsg = { role: 'user', content: 'one' }
+  const r1: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'done' }] }
+  const p2: ApiMsg = { role: 'user', content: 'two' }
+  const r2: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'started a task' }] }
+  const ask: ApiMsg = { role: 'user', content: '[SUGGESTION MODE: Suggest what the user might naturally type next]' }
+  const turn2 = clockOf([p1, r1, p2])
+  assert.deepEqual(clockOf(withoutSuggestion([p1, r1, p2, r2, ask])), { ...turn2, steps: 1 })
+  // A background task's notice resumes the agent within the same turn.
+  const notice: ApiMsg = { role: 'user', content: '<system-reminder>\nA background task finished.\n</system-reminder>' }
+  assert.deepEqual(clockOf(withoutSuggestion([p1, r1, p2, r2, notice])), clockOf(withoutSuggestion([p1, r1, p2, r2, ask])))
+  // A typed prompt ends it.
+  assert.equal(clockOf([p1, r1, p2, r2, { role: 'user', content: 'three' }]).turns, turn2.turns + 1)
 })
 
 test('a loaded tool counts with the message that loads it, once, even when deferred later', () => {

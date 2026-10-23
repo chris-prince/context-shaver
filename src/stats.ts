@@ -149,6 +149,11 @@ export function isSuggestion(msgs: readonly ApiMsg[]): boolean {
   return text.startsWith('[SUGGESTION MODE:')
 }
 
+// The messages but a suggestion's own, which is not a prompt the user typed, so
+// does not end the turn before it: the agent may yet go on, as on a background
+// task's notice. The next prompt ends it.
+export const withoutSuggestion = (msgs: ApiMsg[]): ApiMsg[] => (isSuggestion(msgs) ? msgs.slice(0, -1) : msgs)
+
 // The stats once a request is answered with these counts. Where the API
 // counted parts itself (protocol.ts, Counted), they take its counts, and only
 // the rest are estimated, from what is left.

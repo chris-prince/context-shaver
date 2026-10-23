@@ -27,7 +27,7 @@ import { shaveSkills } from './skills.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornOf, describe, estimate, isSuggestion, observe, render, settled, type Sent, type Stats } from './stats.ts'
+import { bornOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Sent, type Stats } from './stats.ts'
 import { history, latest, record, recordResent, recordSummaryFork } from './journal.ts'
 import { add, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -136,8 +136,10 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
   const s = load(key)
-  const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, msgs)
-  const clock = clockOf(msgs)
+  const suggestion = isSuggestion(msgs)
+  const own = withoutSuggestion(msgs)
+  const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, own)
+  const clock = clockOf(own)
   const marked = markedTtl(body)
   const model = { ...modelOf(body.model, body.provider), ...(marked && { ttl: marked }) }
   const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= lifetimeMs(model.ttl, ttlMs)))
@@ -199,7 +201,6 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   // Each record is dated by the first message it covers.
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
-  const suggestion = isSuggestion(msgs)
   if (suggestion) described.suggestion = true
   const after = policy.summary_threshold_tokens && (model.summaryThreshold ?? policy.summary_threshold_tokens)
   // Whether to send a summary fork is known once the response's counts are in.
