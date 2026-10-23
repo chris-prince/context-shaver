@@ -339,8 +339,6 @@ function difference(heading: string, without: number, now: number, show: (v: num
   return ['  ' + heading, `    ${w.padStart(width)} ${labels[0]}`, `    ${n.padStart(width)} ${labels[1]}`, `    ${d.padStart(width)} ${labels[2]} (${percent(without - now, without)}%)`]
 }
 
-const tally = (now: number, removed: number) => difference('Tokens (current)', now + removed, now, (v) => Math.round(v).toLocaleString('en-US'), ['if no shaver', 'actual', 'saved'])
-
 // Tokens a byte on a session's first request, which measured 0.345 to 0.367.
 const BYTE_TOKENS = 0.36
 
@@ -360,25 +358,30 @@ export const money = (v: number) => (v.toFixed(2).startsWith('-') && Number(v.to
 // own compactions the shaver kept it from needing.
 export const costLines = (c: Cost, heading = 'Costs (session)') => [
   ...difference(heading, c.without, c.actual, (v) => '$' + v.toFixed(2), ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
-  ...(Object.keys(c.saved).some((t) => t !== 'other') ? split(c) : []),
-  `  Auto-compactions avoided: ${c.compactions} (about ${Math.round(c.waitMs / 60_000)} min of waiting)`,
+  ...(Object.keys(c.saved).some((t) => t !== 'other') ? ['', '  Savings Breakdown', ...split(c)] : []),
+  '',
+  '  Speedup',
+  `    ${counted(Math.round(c.waitMs / 60_000), 'minute')} saved (by avoiding ${c.compactions} /autocompact)`,
 ]
 
 const SAVED = [...BASE, 'tools', 'reasoning', 'messages', 'other']
 
-// Indented under the saving, each type named for its half, shares padded to 2
-// digits as in line(). A type that rounds to nothing is left out.
+// Each type named for its half, shares padded to 2 digits as in line(). A
+// type that rounds to nothing is left out.
 function split(c: Cost): string[] {
   const types = SAVED.filter((t) => money(c.saved[t] ?? 0) !== '$0.00')
   const width = Math.max(...types.map((t) => money(c.saved[t]).length))
-  return types.map((t) => `      ${money(c.saved[t]).padStart(width)} (${String(percent(c.saved[t], c.without)).padStart(2)}%) ${BASE.includes(t) ? 'base' : 'conv'}:${t}`)
+  return types.map((t) => `    ${money(c.saved[t]).padStart(width)} (${String(percent(c.saved[t], c.without)).padStart(2)}%) ${BASE.includes(t) ? 'base' : 'conv'}:${t}`)
 }
 
 export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 
-// `summaries` is how many summary requests (summary.ts) the session has sent,
-// answered or not.
-export function render(s: Stats, session: string, estimated = false, cost?: Cost, summaries = 0): string {
+// What became of a session's summary requests (summary.ts): their records the
+// prompt sends now (applied), those still to answer or waiting for a cold cache
+// (pending), and the rest (dropped).
+export type Forks = { applied: number; pending: number; dropped: number }
+
+export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, dropped: 0 }): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
@@ -411,8 +414,13 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, '', estimated ? 'Context Summary (estimated)' : 'Context Summary', ...tally(total, s.removedTokens ?? 0), ...(cost ? costLines(cost) : []), `  Summaries: ${counted(summaries, 'creation request')}`]
-  out.push('', 'Context Details', '', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
+  const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost)] : [])]
+  // The prompt as sent, then as it would be without the shaver, lined up.
+  const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
+  const requests = forks.applied + forks.pending + forks.dropped
+  const w = String(Math.max(forks.applied, forks.pending, forks.dropped)).length
+  const fates = requests ? Object.entries(forks).map(([fate, n]) => `    ${String(n).padStart(w)} ${fate}`) : []
+  out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.
   const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections)]

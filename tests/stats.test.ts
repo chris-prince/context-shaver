@@ -71,7 +71,7 @@ test('render prints the stats from the state alone', () => {
   const s = observe(undefined, describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
   const out = render(s, 'session')
   assert.match(out, /^Session: session\nModel: m\n/)
-  assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Summary\n  Tokens \(current\)\n    1,000 if no shaver\n    1,000 actual\n        0 saved \(0%\)\n/)
+  assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Details\n\n  1,000 tokens, actual\n  1,000 tokens, if no shaver\n\n  0 summary creation requests\n\n  Base/)
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. If over 10k, shrink big items\./)
   assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by age:\n      today .*\n    by type:\n      user /)
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
@@ -94,14 +94,14 @@ test('before any request is answered, the request is estimated from its bytes', 
   assert.ok(s.inputTokens > 0)
   assert.equal(Math.round(sum(s)), s.inputTokens)
   const out = render(s, 'session', true)
-  assert.match(out, /0 requests across 0 turns, spanning 0m\n\nContext Summary \(estimated\)\n  Tokens \(current\)\n.*\n.*\n     +0 saved \(0%\)\n/)
+  assert.match(out, /0 requests across 0 turns, spanning 0m\n\nContext Details \(estimated\)\n\n  [\d,]+ tokens, actual\n  [\d,]+ tokens, if no shaver\n/)
 })
 
-test('the Summaries line counts summary creation requests, none as 0', () => {
+test('the summaries line counts summary creation requests by what became of them, none as 0', () => {
   const s = estimate(describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'))
-  assert.match(render(s, 'session', true, undefined, 1), /\n  Summaries: 1 creation request\n/)
-  assert.match(render(s, 'session', true, undefined, 3), /\n  Summaries: 3 creation requests\n/)
-  assert.match(render(s, 'session', true), /\n  Summaries: 0 creation requests\n/)
+  assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 0 }), /\n  1 summary creation request\n    1 applied\n    0 pending\n    0 dropped\n\n/)
+  assert.match(render(s, 'session', true, undefined, { applied: 10, pending: 1, dropped: 2 }), /\n  13 summary creation requests\n    10 applied\n     1 pending\n     2 dropped\n\n/)
+  assert.match(render(s, 'session', true), /\n  0 summary creation requests\n\n/)
 })
 
 test('an advance removes what the earlier parts cost less what they cost now', () => {

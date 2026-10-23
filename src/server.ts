@@ -261,9 +261,15 @@ function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers
   if (policy.skill_list) shaveSkills(sent, policy.skill_list)
   const key = conversationId(h, proto.name, sent, headers)
   const { stats: s, cost: c } = currentOf(key)
-  const { spent: summaryForks, requests } = loadSummaries(key)
+  const { spent: summaryForks, requests, chain } = loadSummaries(key)
   const withSummaryForks = c && { ...c, actual: c.actual + summaryForks }
-  const text = s ? render(s, key, false, withSummaryForks, requests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)), key, true, withSummaryForks, requests)
+  // Each summary request is running, or left a record or none. A record no
+  // longer fitting the messages is dropped, like one replaced or none at all.
+  const valid = validChain(chain, sent.messages).length
+  const applied = Math.min(load(key)?.summarized ?? 0, valid)
+  const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
+  const forks = { applied, pending, dropped: requests - applied - pending }
+  const text = s ? render(s, key, false, withSummaryForks, forks) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)), key, true, withSummaryForks, forks)
   return '```\n' + text + '\n```'
 }
 

@@ -461,8 +461,10 @@ record is kept apart from sending it.
   message it replaced, so several records can fall in several age rows.
 
 A summary fork's cost is in the session's actual cost in `:shaver info`, which
-also shows how many summary forks have been sent, answered or not, as
-`Summaries: N creation requests`.
+also shows how many summary forks have been sent, answered or not, and what
+became of them: their records the prompt now sends (applied), those still to
+answer or waiting for a cold cache (pending), and the rest, which failed,
+answered with nothing, were replaced or no longer fit the messages (dropped).
 
 ## Logs
 
