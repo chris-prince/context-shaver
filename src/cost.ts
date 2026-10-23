@@ -198,6 +198,15 @@ export function addResent(c: Cost | undefined, s: Stats, u: Usage): Cost | undef
   return { ...c, without: c.without + v, actual: c.actual + v }
 }
 
+// The cost so far with a bare line's request added (journal.ts): sent as it
+// came or cut off, it's counted as costing what it would have without the
+// proxy, at its own model, as a summary fork is; nothing for one with no price.
+export function addBare(c: Cost | undefined, b: { model: string; provider?: string; usage?: Usage }): Cost | undefined {
+  if (!c || !b.usage) return c
+  const v = spent(b.model, b.provider, b.usage)
+  return { ...c, without: c.without + v, actual: c.actual + v }
+}
+
 // What add reads of the stats before a request, copied, since a journal's
 // history changes its stats in place: the plain fields and the base's and the
 // parts' tokens, which it reads only when the stats have a base.

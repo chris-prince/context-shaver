@@ -5,7 +5,8 @@
 // line, so its history starts there.
 //
 // A line records results, not inputs, so a replay never reruns the counting.
-// Its fields: the plain fields that changed; for each record, the entries set
+// Its fields: the plain fields that changed, null for one gone (before
+// 2026-10-24 one gone was left out, so replay kept it); for each record, the entries set
 // and the keys deleted; and, when it changed, the part list, each run of parts
 // kept from the previous list as [from, to) and each other part whole. A line
 // also holds the request's usage as the API reported it (cache reads, cache
@@ -17,8 +18,16 @@
 // A request the API refused changed and answered as it came (server.ts) gets a
 // line marked resent: true, its usage and its count as a request, with the
 // rest of the stats as they were, since it went up untrimmed.
+//
+// Any other request the API answered gets a bare line, { bare: { time, model,
+// provider, usage, why } }, with no change to the stats, so replay skips it:
+// one sent as it came (a side request without tools, or one not read or not
+// trimmed), one cut off before its answer ended, one answered with no usage,
+// and one resent before the conversation had stats. It counts what it was
+// billed, the same with and without the shaver, and not as a request. Before
+// 2026-10-24 none of these were journaled.
 
-import { appendFileSync, existsSync, readFileSync, renameSync } from 'node:fs'
+import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import path from 'node:path'
 import type { Usage } from './cost.ts'
 import { withWrites } from './responses.ts'
@@ -36,12 +45,22 @@ export type Delta = {
   resent?: true
 }
 export type SummaryForkLine = { time: string; model: string; provider?: string; usage?: Usage }
+export type Why = 'side' | 'unread' | 'untrimmed' | 'cut off' | 'no usage' | 'resent'
+export type BareLine = { time: string; model: string; provider?: string; usage?: Usage; why: Why }
+
+// The request lines written since the proxy started (server.ts checks one is
+// written for every answered request).
+export let written = 0
+const append = (file: string, line: object) => {
+  appendFileSync(file, JSON.stringify(line) + '\n')
+  written++
+}
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 export function diff(prev: Stats | undefined, next: Stats): Delta {
   const d: Delta = {}
-  for (const f of PLAIN) if (!prev || !same(prev[f], next[f])) (d.set ??= {})[f] = next[f] as never
+  for (const f of PLAIN) if (!prev || !same(prev[f], next[f])) (d.set ??= {})[f] = (next[f] ?? null) as never
   for (const f of RECORDS) {
     const a: Record<string, unknown> = prev?.[f] ?? {}
     const b: Record<string, unknown> = next[f]
@@ -73,6 +92,7 @@ export function diff(prev: Stats | undefined, next: Stats): Delta {
 function apply(s: Stats | undefined, d: Delta): Stats {
   const parts = d.parts?.flatMap((op) => (Array.isArray(op) ? s!.parts.slice(op[0], op[1]) : [op]))
   s = Object.assign(s ?? ({} as Stats), d.set)
+  for (const [k, v] of Object.entries(d.set ?? {})) if (v === null) delete s[k as keyof Stats]
   for (const f of RECORDS) {
     const r = d.records?.[f]
     const out: Record<string, unknown> = (s[f] ??= {} as never)
@@ -86,14 +106,19 @@ function apply(s: Stats | undefined, d: Delta): Stats {
 // Appends the change from prev, the stats the journal ends with, to next, and
 // the usage the request reported.
 export function record(file: string, prev: Stats | undefined, next: Stats, usage?: Usage): void {
-  appendFileSync(file, JSON.stringify({ ...diff(prev, next), ...(usage && { usage }) }) + '\n')
+  append(file, { ...diff(prev, next), ...(usage && { usage }) })
+}
+
+// Appends a bare line.
+export function recordBare(file: string, b: BareLine): void {
+  append(file, { bare: b })
 }
 
 // Appends a resent request's line, given the stats the journal ends with, and
 // returns the stats it leaves.
 export function recordResent(file: string, prev: Stats, time: string, usage: Usage): Stats {
   const set = { requests: prev.requests + 1, time }
-  appendFileSync(file, JSON.stringify({ set, usage, resent: true }) + '\n')
+  append(file, { set, usage, resent: true })
   return { ...prev, ...set }
 }
 
@@ -103,7 +128,7 @@ export function recordSummaryFork(file: string, f: SummaryForkLine): void {
 }
 
 // The journal's lines, parsed; none if there is none.
-function* linesOf(file: string): Generator<Delta & { summaryFork?: SummaryForkLine }> {
+function* linesOf(file: string): Generator<Delta & { summaryFork?: SummaryForkLine; bare?: BareLine }> {
   if (!existsSync(file)) return
   for (const line of readFileSync(file, 'utf8').split('\n')) if (line) yield JSON.parse(line)
 }
@@ -116,12 +141,31 @@ function* linesOf(file: string): Generator<Delta & { summaryFork?: SummaryForkLi
 export function* history(file: string): Generator<{ stats: Stats; usage?: Usage; resent?: true }> {
   const codex = path.basename(file).startsWith('codex-')
   let s: Stats | undefined
-  for (const d of linesOf(file)) if (!d.summaryFork) yield { stats: (s = apply(s, d)), usage: d.usage && codex ? withWrites(d.usage) : d.usage, ...(d.resent && { resent: d.resent }) }
+  for (const d of linesOf(file)) if (!d.summaryFork && !d.bare) yield { stats: (s = apply(s, d)), usage: d.usage && codex ? withWrites(d.usage) : d.usage, ...(d.resent && { resent: d.resent }) }
 }
 
 // The summary forks a journal records, in order.
 export function* summaryForks(file: string): Generator<SummaryForkLine> {
   for (const d of linesOf(file)) if (d.summaryFork) yield d.summaryFork
+}
+
+// The conversation a request sent as it came is journaled with, given its own
+// key: its own, if it has a journal, else its session's latest, since a side
+// request's first message is its own, not the conversation's. A key with no
+// session (only its harness's name and the hash) is its own.
+export function sideKey(dir: string, key: string): string {
+  const session = key.slice(0, key.lastIndexOf('-') + 1)
+  if (existsSync(path.join(dir, `${key}.journal.jsonl`)) || !session.slice(0, -1).includes('-')) return key
+  const theirs = readdirSync(dir)
+    .filter((f) => f.startsWith(session) && f.endsWith('.journal.jsonl'))
+    .map((f) => ({ f, at: statSync(path.join(dir, f)).mtimeMs }))
+    .sort((x, y) => x.at - y.at)
+  return theirs.length ? theirs[theirs.length - 1].f.slice(0, -'.journal.jsonl'.length) : key
+}
+
+// The bare lines a journal records, in order.
+export function* bareLines(file: string): Generator<BareLine> {
+  for (const d of linesOf(file)) if (d.bare) yield d.bare
 }
 
 export function* replay(file: string): Generator<Stats> {

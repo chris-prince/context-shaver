@@ -6,15 +6,16 @@
 // line gives; spend from before forks were journaled, for the conversation's
 // last model.
 //
-// Not counted: requests that aren't journaled (side requests without tools,
-// and Claude Code's suggestion-mode requests before 2026-10-23), and a
+// Not counted: requests that weren't journaled (side requests without tools,
+// and requests cut off, before 2026-10-24; Claude Code's suggestion-mode
+// requests before 2026-10-23), and a
 // conversation's requests after one whose model has no price, where its cost
 // stops, as in its info.
 
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { add, addResent, before, spent, type Cost } from './cost.ts'
-import { history, summaryForks } from './journal.ts'
+import { bareLines, history, summaryForks } from './journal.ts'
 import { costLines, counted, money, type Stats } from './stats.ts'
 
 type Sum = { conversations: Set<string>; requests: number; without: number; actual: number; saved: Record<string, number>; compactions: number; waitMs: number }
@@ -62,6 +63,10 @@ export function totals(stateDir: string, ttlMs: number): string {
         count(key, k.model, { actual: v })
         forks += v
       }
+      for (const b of bareLines(file)) {
+        const v = b.usage ? spent(b.model, b.provider, b.usage) : 0
+        count(key, b.model, { without: v, actual: v })
+      }
     } catch {
       unreadable++
       continue
@@ -97,7 +102,7 @@ export function totals(stateDir: string, ttlMs: number): string {
   const notes = [
     ...(stopped ? [`${counted(stopped, 'session')} stopped at a model with no price`] : []),
     ...(unreadable ? [`${counted(unreadable, 'journal')} couldn't be read`] : []),
-    "side requests, and suggestion-mode requests before 2026-10-23, aren't journaled",
+    "side requests and requests cut off before 2026-10-24, and suggestion-mode requests before 2026-10-23, weren't journaled",
   ]
   out.push('', `Not counted: ${notes.join('; ')}.`)
   return out.join('\n')

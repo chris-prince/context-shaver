@@ -532,8 +532,9 @@ Scripts:
   `:shaver policy` shows the policy file the same way, as it is on disk now.
   `:shaver info all` adds up the costs of every conversation with a journal
   (`src/totals.ts`), replaying each as its own `:shaver info` does, then one
-  entry per harness and model. Requests that aren't journaled (side requests
-  without tools, and suggestion mode before 2026-10-23) aren't counted.
+  entry per harness and model. Requests that weren't journaled (side requests
+  and requests cut off before 2026-10-24, and suggestion mode before
+  2026-10-23) aren't counted.
   Each request the API answers appends what it changed to
   `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a
   request, with the usage the API reported for it: cache reads, cache writes
@@ -548,7 +549,22 @@ Scripts:
   uncounted; `scripts/backfill-suggestions.ts` adds them back from a
   logged conversation's logs. A changed request the API refuses, answered as it came, adds a
   line marked resent: one more request, its usage, the stats otherwise as
-  they were, and the same cost with or without the shaver. The
+  they were, and the same cost with or without the shaver. Any other request
+  the API answers is journaled bare, with its time, model, usage if it
+  came, and why: a side request without tools (Codex's compaction, Claude
+  Code's titles), sent as it came and journaled with its session's main
+  conversation; a request answered with no usage; or one cut off before
+  its answer ended, whose state is left as it was, so its trim is decided
+  again with the next. A bare line counts as no request and costs the same
+  with or without the shaver, at its own model; with `--log`, a side
+  request is logged too. A line writes null for a field that has gone, so
+  replay drops it (before 2026-10-24 it was left out, so replay kept the
+  old value). The proxy counts each request answered that wrote no line,
+  logs it to `proxy.log` and shows the count in `:shaver info`; there
+  should be none. `scripts/audit-journal.ts` checks the journals against
+  the harnesses' own records of their API calls (Codex's rollouts,
+  OpenCode's database, Claude Code's transcripts) and lists the calls with
+  no line. The
   proxy keeps only each conversation's latest stats in memory,
   replaying the journal once after a restart; a journal that won't replay
   is moved aside to `<key>.journal.bad.jsonl` and the stats start again.

@@ -36,19 +36,21 @@ test('a backfilled suggestion is journaled as the proxy now journals it, and its
   record(live, s2, observe(s2, sent3, 700, 0), usage(700))
 
   // As it did before: the suggestion missing, so the next request finds the
-  // trim made already and counts nothing removed.
+  // trim made already and counts nothing removed. Lines then had no
+  // suggestion field, so the line after an inserted suggestion must clear it.
   const old = path.join(dir, 'old.journal.jsonl')
-  const t3 = observe(s1, sent3, 700, 0)
+  const { suggestion: _, ...o1 } = s1
+  const { suggestion: __, ...t3 } = observe(s1, sent3, 700, 0)
   assert.equal(t3.removedTokens, 0)
-  record(old, undefined, s1, usage(1000))
+  record(old, undefined, o1, usage(1000))
   recordSummaryFork(old, fork)
-  record(old, s1, t3, usage(700))
+  record(old, o1, t3, usage(700))
 
   const filled = path.join(dir, 'filled.journal.jsonl')
   assert.deepEqual(fill(old, filled, [{ sent: suggestion, inputTokens: 900, outputTokens: 10, usage: usage(900) }]), { inserted: 1, removed: s2.removedTokens })
   const [f1, f2, f3] = stats(filled)
-  const [l1, l2, l3] = stats(live)
-  assert.deepEqual([f1, f2], [l1, l2])
+  const [, l2, l3] = stats(live)
+  assert.deepEqual([f1, f2], [o1, l2])
   assert.equal(f3.removedTokens, l3.removedTokens)
   assert.deepEqual({ ...f3, removedTokens: 0 }, t3)
   assert.deepEqual([...history(filled)].map((h) => h.usage), [usage(1000), usage(900), usage(700)])

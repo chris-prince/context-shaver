@@ -14,7 +14,7 @@ import type { Policy } from '../src/policy.ts'
 const [dir, from = '', to = '9999'] = process.argv.slice(2)
 const TTL = 3600e3
 const all = readFileSync(dir + '/step_events.jsonl', 'utf8').trim().split('\n').map((l) => JSON.parse(l))
-  .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.tools)
+  .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.tools && !e.bare)
 const reqs = all.filter((e) => e.time >= from && e.time < to)
 const load = (h: string): ApiMsg => JSON.parse(readFileSync(`${dir}/parts/${h}.json`, 'utf8'))
 // A message as sent without breakpoints. Claude Code sends a lone text block

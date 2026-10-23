@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { history, latest, record, recordResent, recordSummaryFork } from '../src/journal.ts'
+import { history, latest, record, recordBare, recordResent, recordSummaryFork } from '../src/journal.ts'
 import { cost, spent } from '../src/cost.ts'
 import { totals } from '../src/totals.ts'
 import type { ApiMsg } from '../src/items.ts'
@@ -38,6 +38,10 @@ test('all-time totals add up what each conversation info shows', () => {
   // A request refused changed and resent as it came.
   const resent = { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 6000, output_tokens: 30 }
   recordResent(a, latest(a)!, '2026-10-11T10:31:00Z', resent)
+  // A side request at another model, and one that ended with no usage.
+  const side = { input_tokens: 400, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 20 }
+  recordBare(a, { time: '2026-10-11T10:32:00Z', model: 'claude-haiku-5-5', usage: side, why: 'side' })
+  recordBare(a, { time: '2026-10-11T10:33:00Z', model: 'claude-opus-5-5', why: 'cut off' })
   // The summaries file holds the fork's spend and one from before forks were
   // journaled.
   writeFileSync(path.join(dir, 'claude-aaaa.summaries.json'), JSON.stringify({ spent: spent(fork.model, undefined, fork.usage) + 0.5 }))
@@ -51,10 +55,15 @@ test('all-time totals add up what each conversation info shows', () => {
   const v = spent('claude-opus-5-5', undefined, resent)
   assert.ok(Math.abs(ca.without - before.without - v) < 1e-12)
   assert.ok(Math.abs(ca.actual - before.actual - v) < 1e-12)
+  // So does the side request, at its own model, and neither bare line is a
+  // request; the one cut off with no usage costs nothing.
+  const s = spent('claude-haiku-5-5', undefined, side)
+  assert.ok(s > 0)
   assert.match(text, /^All sessions: 2 sessions, 11 requests, since 2026-10-11/)
-  assert.match(text, new RegExp(`\\${money(ca.without + cb.without)} if no shaver`))
-  assert.match(text, new RegExp(`\\${money(ca.actual + cb.actual + spent(fork.model, undefined, fork.usage) + 0.5)} actual`))
-  assert.match(text, /\nBy environment\n +#sess  #req  .*\n  claude-opus-5-5\n  on claude\n +1 {5}7  /)
+  assert.match(text, new RegExp(`\\${money(ca.without + cb.without + s)} if no shaver`))
+  assert.match(text, new RegExp(`\\${money(ca.actual + cb.actual + s + spent(fork.model, undefined, fork.usage) + 0.5)} actual`))
+  // The side request's model is an environment of its own, with no requests.
+  assert.match(text, /\nBy environment\n +#sess  #req  .*\n  claude-haiku-5-5\n  on claude\n +1 {5}0  .*\n  claude-opus-5-5\n  on claude\n +1 {5}7  /)
   assert.match(text, /\n {2}gpt-6-luna\n {2}on codex\n +1 {5}4  /)
   assert.doesNotMatch(text, /days/)
 })

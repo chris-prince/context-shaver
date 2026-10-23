@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { diff, history, latest, record, recordResent, recordSummaryFork, replay, summaryForks } from '../src/journal.ts'
+import { bareLines, diff, history, latest, record, recordBare, recordResent, recordSummaryFork, replay, sideKey, summaryForks } from '../src/journal.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -60,6 +60,41 @@ test('a resent request counts as a request, with its usage, and leaves the rest 
   const lines = Array.from(history(file), (l) => ({ ...l, stats: copy(l.stats) }))
   assert.deepEqual(lines.at(-1), { stats: s2, usage: u, resent: true })
   assert.equal(lines[0].resent, undefined)
+})
+
+test('a field that goes away stays gone on replay', () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
+  const s1 = { ...observe(undefined, describe(body([user('a')]), ends, '2026-10-11T10:00:00Z'), 1000, 30), suggestion: true }
+  record(file, undefined, s1, { input_tokens: 10, output_tokens: 30 })
+  const { suggestion: _, ...s2 } = observe(s1, describe(body([user('a'), reply('b'), user('c')]), ends, '2026-10-11T10:01:00Z'), 1100, 30)
+  record(file, s1, s2, { input_tokens: 10, output_tokens: 30 })
+  assert.deepEqual(Array.from(replay(file), copy), [s1, s2])
+})
+
+test('a bare line has its usage and leaves the stats alone', () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
+  const s1 = observe(undefined, describe(body([user('a')]), ends, '2026-10-11T10:00:00Z'), 1000, 30)
+  record(file, undefined, s1, { input_tokens: 10, output_tokens: 30 })
+  const side = { time: '2026-10-11T10:00:30Z', model: 'haiku', usage: { input_tokens: 500, output_tokens: 20 }, why: 'side' as const }
+  const cut = { time: '2026-10-11T10:00:40Z', model: 'm', why: 'cut off' as const }
+  recordBare(file, side)
+  recordBare(file, cut)
+  const s2 = observe(s1, describe(body([user('a'), reply('b'), user('c')]), ends, '2026-10-11T10:01:00Z'), 1100, 30)
+  record(file, s1, s2, { input_tokens: 10, output_tokens: 30 })
+  assert.deepEqual(Array.from(replay(file), copy), [s1, s2])
+  assert.deepEqual([...bareLines(file)], [side, cut])
+})
+
+test('a side request is journaled with its own conversation, or failing that its session', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'journal-'))
+  const touch = (k: string) => appendFileSync(path.join(dir, `${k}.journal.jsonl`), '')
+  touch('claude-s1-main-aaaa')
+  touch('claude-s1-agent-x-bbbb')
+  assert.equal(sideKey(dir, 'claude-s1-main-cccc'), 'claude-s1-main-aaaa')
+  assert.equal(sideKey(dir, 'claude-s1-agent-x-dddd'), 'claude-s1-agent-x-bbbb')
+  touch('codex-t1-eeee')
+  assert.equal(sideKey(dir, 'codex-t1-eeee'), 'codex-t1-eeee')
+  assert.equal(sideKey(dir, 'claude-s2-main-ffff'), 'claude-s2-main-ffff')
 })
 
 test('replaying the journal keeps the pinned provider', () => {

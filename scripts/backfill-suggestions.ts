@@ -16,7 +16,7 @@
 import { copyFileSync, existsSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { describe, isSuggestion, observe, type Sent, type Stats } from '../src/stats.ts'
-import { history, record, recordResent, recordSummaryFork } from '../src/journal.ts'
+import { history, record, recordBare, recordResent, recordSummaryFork } from '../src/journal.ts'
 import type { Usage } from '../src/cost.ts'
 
 export type Suggestion = { sent: Sent; inputTokens: number; outputTokens: number; usage: Usage }
@@ -51,6 +51,11 @@ export function fill(file: string, out: string, suggestions: Suggestion[]): { in
       recordSummaryFork(out, d.summaryFork)
       continue
     }
+    if (d.bare) {
+      before(d.bare.time)
+      recordBare(out, d.bare)
+      continue
+    }
     const { stats } = lines.next().value!
     before(stats.time)
     const next = structuredClone({ ...stats, removedTokens: stats.removedTokens + extra })
@@ -71,7 +76,7 @@ export function fromLogs(dir: string): Suggestion[] {
   const advanced = new Set(events.filter((e) => e.event === 'compaction' && e.advanced).map((e) => e.time))
   const part = (h: string) => JSON.parse(readFileSync(path.join(dir, 'parts', h + '.json'), 'utf8'))
   return events
-    .filter((e) => e.event === 'request' && e.inputTokens && e.tools)
+    .filter((e) => e.event === 'request' && e.inputTokens && e.tools && !e.bare)
     .flatMap((r) => {
       const messages = r.parts.map((p: { hash: string }) => part(p.hash))
       if (!isSuggestion(messages)) return []

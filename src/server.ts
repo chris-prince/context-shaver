@@ -27,9 +27,9 @@ import { shaveSkills } from './skills.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Sent, type Stats } from './stats.ts'
-import { history, latest, record, recordResent, recordSummaryFork } from './journal.ts'
-import { add, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
+import { bornOf, counted as countOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bareLines, history, latest, record, recordBare, recordResent, recordSummaryFork, sideKey, written, type BareLine, type Why } from './journal.ts'
+import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
@@ -111,9 +111,17 @@ const current = new Map<string, Current>()
 const journalOf = (key: string) => path.join(stateDir, `${key}.journal.jsonl`)
 function currentOf(key: string): Current {
   let c = current.get(key)
-  if (!c) current.set(key, (c = { stats: latest(journalOf(key)), cost: cost(history(journalOf(key)), ttlMs) }))
+  if (!c) {
+    let spentSoFar = cost(history(journalOf(key)), ttlMs)
+    for (const b of bareLines(journalOf(key))) spentSoFar = addBare(spentSoFar, b)
+    current.set(key, (c = { stats: latest(journalOf(key)), cost: spentSoFar }))
+  }
   return c
 }
+
+// The requests answered since the proxy started that no journal line was
+// written for, which `:shaver info` and proxy.log report.
+let missed = 0
 const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
@@ -121,8 +129,9 @@ const latestOf = (key: string) => currentOf(key).stats
 type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
-// are trimmed: those are the main loop and subagents. Claude Code's side
-// requests are sent as they came.
+// are trimmed: those are the main loop and subagents. Side requests (Claude
+// Code's titles, Codex's compactions) are sent as they came, and journaled
+// bare (journal.ts).
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
@@ -272,7 +281,8 @@ function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers
   const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
   const forks = { applied, pending, dropped: requests - applied - pending }
   const text = s ? render(s, key, false, withSummaryForks, forks) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)), key, true, withSummaryForks, forks)
-  return '```\n' + text + '\n```'
+  const warning = missed ? `\n\nshaver: since it started, the journal missed ${countOf(missed, 'request')}; see proxy.log` : ''
+  return '```\n' + text + warning + '\n```'
 }
 
 // What each thinking block of a response bills when sent back: the output
@@ -324,6 +334,7 @@ function refuse(res: ServerResponse, proto: Protocol, status: 400 | 403, message
 const protocolOf = (url: string) => [MESSAGES, CHAT, RESPONSES].find((p) => p.serves(url.split('?')[0])) ?? MESSAGES
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const arrived = Date.now()
   const original = await readBody(req)
   let raw = original
   const r = route(req.url ?? '/', a.upstream)
@@ -346,12 +357,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return void res.end(`shaver repo: ${path.resolve(import.meta.dirname, '..')}\nshaver logging: ${a['log-step-events'] ? 'on' : 'off'}\n`)
   }
   let p: Prepared | undefined
-  if (req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length) {
+  // Why a request the API answers would be journaled bare, if it's sent as it came.
+  let why: Why = 'side'
+  let c: ReturnType<Protocol['canonical']> | undefined
+  const served = req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length > 0
+  if (served) {
     // `:shaver` commands are answered here; answered ones are stripped (command.ts).
-    let c: ReturnType<Protocol['canonical']> | undefined
     try {
       c = proto.canonical(JSON.parse(raw.toString('utf8')))
     } catch (err) {
+      why = 'unread'
       console.error('shaver: request not read:', err)
     }
     const body = c?.body
@@ -376,6 +391,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       if (c && body) p = prepare(proto, h, body, c, req.headers, Date.now())
     } catch (err) {
+      why = 'untrimmed'
       console.error('shaver: request left untrimmed:', err)
     }
   }
@@ -415,21 +431,49 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   res.writeHead(up.status, out)
   // The answer's state is saved once it is complete, before the client sees
   // its end: Codex sends the next request then, before the stream closes.
+  // Every request the API answers is journaled: as answered once its answer
+  // is complete, and bare when it was sent as it came or cut off, with the
+  // usage read by then. A cut-off request leaves the state as it was, so its
+  // trim is decided again and journaled with the next.
   let finished = false
-  const finish = () => {
-    if (finished || !(p || resent) || up.status !== 200) return
+  const finish = (cut: boolean) => {
+    if (finished || !served || up.status !== 200) return
     finished = true
-    if (p) answered(p, usage, upstream + url, headers)
-    else answeredResent(resent!, usage)
-  }
-  if (up.body)
-    for await (const chunk of up.body) {
-      usage.push(chunk)
-      if (usage.done) finish()
-      if (!res.destroyed) res.write(chunk)
+    const before = written
+    try {
+      if (p && !cut) answered(p, usage, upstream + url, headers)
+      else if (resent && !cut) answeredResent(resent, usage)
+      else {
+        const q = p ?? resent
+        const body = c?.body
+        const u = usage.end().usage
+        const provider = q ? q.provider : body?.provider
+        const b: BareLine = { time: q?.sent.time ?? new Date(arrived).toISOString(), model: q?.model ?? body?.model ?? 'unknown', ...(provider && { provider }), ...(u && { usage: u }), why: cut ? 'cut off' : why }
+        // One not read has no conversation to go with, so its harness's own.
+        const key = q?.key ?? (body && Array.isArray(body.messages) ? sideKey(stateDir, conversationId(h, proto.name, body, req.headers)) : `${h?.name ?? proto.name}-unread`)
+        const log = !a['log-step-events'] ? undefined : q ? q.logLine && { dir: q.logDir!, line: q.logLine } : body && { dir: path.join(logRoot, key), side: body, protocol: proto.name }
+        answeredBare(key, b, log)
+      }
+    } finally {
+      if (written === before) {
+        missed++
+        console.error(`${new Date().toISOString()} shaver: journal missed a request to ${url.split('?')[0]}`)
+      }
     }
+  }
+  try {
+    if (up.body)
+      for await (const chunk of up.body) {
+        usage.push(chunk)
+        if (usage.done) finish(false)
+        if (!res.destroyed) res.write(chunk)
+      }
+  } catch (err) {
+    finish(true)
+    throw err
+  }
   res.end()
-  finish()
+  finish(false)
 }
 
 // Records an answered request: its stats, cost and cache entries, the
@@ -439,41 +483,54 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
+  // With no usage there are no counts to take the stats on from, so it's
+  // journaled bare, and like one cut off leaves the state as it was.
+  if (!u || !inputTokens) return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), why: 'no usage' }, p.logLine && { dir: p.logDir!, line: p.logLine })
   const c = attribution !== undefined ? p.counted?.(attribution) : undefined
-  const next = inputTokens ? observe(p.stats, p.sent, inputTokens, u?.output_tokens ?? 0, c && { defs: c.head, parts: c.messages, kinds: c.kinds }) : p.stats
-  if (inputTokens && next) {
-    const was = currentOf(p.key)
-    record(journalOf(p.key), was.stats, next, u)
-    current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u!, ttlMs) })
-  }
-  const due = p.summaryFork && next && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
+  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, parts: c.messages, kinds: c.kinds })
+  const was = currentOf(p.key)
+  record(journalOf(p.key), was.stats, next, u)
+  current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
+  const due = p.summaryFork && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, summarized: p.summarized, offered: due?.current ?? p.offered })
   if (due) void summarize(p, due, target, headers)
-  if (p.logDir && p.logLine) {
-    writeLine(p.logDir, {
-      ...withReceivedDelta(p.logDir, p.logLine),
-      ...(u && {
-        inputTokens,
-        cachedTokens: u.cache_read_input_tokens ?? 0,
-        writtenTokens60m: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
-        writtenTokens5m: (u.cache_creation_input_tokens ?? 0) - (u.cache_creation?.ephemeral_1h_input_tokens ?? 0),
-        outputTokens: u.output_tokens ?? 0,
-      }),
-      ...(attribution !== undefined && { attribution }),
-    })
-  }
+  if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }) })
 }
+
+// A log line's counts from a request's usage.
+const usageFields = (u: Usage | undefined) =>
+  u && {
+    inputTokens: u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+    cachedTokens: u.cache_read_input_tokens ?? 0,
+    writtenTokens60m: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+    writtenTokens5m: (u.cache_creation_input_tokens ?? 0) - (u.cache_creation?.ephemeral_1h_input_tokens ?? 0),
+    outputTokens: u.output_tokens ?? 0,
+  }
 
 // Records a request answered as it came after its changed form was refused:
 // its line in the journal and its cost. The proxy's state stays as it was,
 // since none of this request's trim went up. A conversation with no journal
-// yet has no stats to count it in, so it starts with the next.
+// yet has no stats to count it in, so it's journaled bare.
 function answeredResent(p: Prepared, usage: UsageReader): void {
   const { usage: u } = usage.end()
   const was = currentOf(p.key)
-  if (!u || !was.stats) return
+  if (!u || !was.stats) return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), ...(u && { usage: u }), why: u ? 'resent' : 'no usage' })
   const stats = recordResent(journalOf(p.key), was.stats, new Date().toISOString(), u)
   current.set(p.key, { stats, cost: addResent(was.cost, stats, u) })
+}
+
+// Records a request journaled bare (journal.ts): its line and its cost, and
+// with logging its log line. A request the proxy prepared is logged as
+// requests are, marked bare; a side request as an event of its own, its
+// messages whole, so the logs' request lines stay the conversation's.
+function answeredBare(key: string, b: BareLine, log?: { dir: string; line: Record<string, unknown> } | { dir: string; side: Canonical; protocol: string }): void {
+  const was = currentOf(key)
+  recordBare(journalOf(key), b)
+  current.set(key, { ...was, cost: addBare(was.cost, b) })
+  if (!log) return
+  const counts = { ...usageFields(b.usage), bare: b.why }
+  if ('line' in log) writeLine(log.dir, { ...withReceivedDelta(log.dir, log.line), ...counts })
+  else writeLine(log.dir, { event: 'side', time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, parts: writeParts(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...counts })
 }
 
 // The conversations with a summary fork under way, which get no second one.

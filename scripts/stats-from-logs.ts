@@ -31,7 +31,8 @@ const events = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8')
   })
 // The answered request lines, with their tools, and the times of the requests
 // a trim advanced on, which share their compaction line's time.
-const reqs = events.filter((e) => e.event === 'request' && e.inputTokens && e.tools)
+// A request logged bare (cut off, say) has no stats line (journal.ts).
+const reqs = events.filter((e) => e.event === 'request' && e.inputTokens && e.tools && !e.bare)
 const advanced = new Set(events.filter((e) => e.event === 'compaction' && e.advanced).map((e) => e.time))
 if (!reqs.length) {
   console.error(`no request lines with usage under ${dir}`)
