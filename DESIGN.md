@@ -545,7 +545,8 @@ Scripts:
   journaled like any request, with what they cost and any trim they make,
   but marked, and not counted as requests or turns: the user took none.
   Before 2026-10-23 they weren't journaled, so a trim made on one went
-  uncounted. A changed request the API refuses, answered as it came, adds a
+  uncounted; `scripts/backfill-suggestions.ts` adds them back from a
+  logged conversation's logs. A changed request the API refuses, answered as it came, adds a
   line marked resent: one more request, its usage, the stats otherwise as
   they were, and the same cost with or without the shaver. The
   proxy keeps only each conversation's latest stats in memory,
@@ -595,6 +596,10 @@ Scripts:
   and prints what `:shaver info` would have said. `--check-journal` also
   checks that the journal replays to the same stats after every
   request.
+- `bin/node-wrapper scripts/backfill-suggestions.ts <key>…`, with the proxy
+  stopped, adds to each conversation's journal the prompt suggestions its
+  logs hold and the journal doesn't, keeping the journal as
+  `<key>.journal.jsonl.pre-backfill`.
 - `python3 scripts/strip-savings.py [dir ...]` reports, per conversation, the savings
   against the cost of rewriting the cache.
 - `bin/node-wrapper scripts/refresh-kinds.ts <conversation dir>` relabels a conversation's
