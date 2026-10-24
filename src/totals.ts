@@ -15,7 +15,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { add, addResent, before, spent, type Cost } from './cost.ts'
-import { bareLines, history, summaryForks } from './journal.ts'
+import { bareLines, forks as forksOf, history } from './journal.ts'
 import { costLines, counted, money, type Stats } from './stats.ts'
 
 type Sum = { conversations: Set<string>; requests: number; without: number; actual: number; saved: Record<string, number>; compactions: number; waitMs: number }
@@ -58,8 +58,8 @@ export function totals(stateDir: string, ttlMs: number): string {
         prev = before(s)
         last = s.model
       }
-      for (const k of summaryForks(file)) {
-        const v = spent(k.model, k.provider, k.usage)
+      for (const k of forksOf(file)) {
+        const v = k.usage ? spent(k.model, k.provider, k.usage) : 0
         count(key, k.model, { actual: v })
         forks += v
       }

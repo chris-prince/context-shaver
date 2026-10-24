@@ -14,7 +14,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { bareLines, history, summaryForks } from '../src/journal.ts'
+import { bareLines, forks, history } from '../src/journal.ts'
 import type { Usage } from '../src/cost.ts'
 
 const WINDOW = 120_000
@@ -58,7 +58,7 @@ function journal(): Line[] {
     const file = join(STATE, f)
     // A resent line keeps the stats before it, so its own size is its usage.
     for (const { stats: s, usage, resent } of history(file)) out.push({ session, time: Date.parse(s.time), input: resent ? inputOf(usage) : s.inputTokens, used: false })
-    for (const k of summaryForks(file)) out.push({ session, time: Date.parse(k.time), input: inputOf(k.usage), used: false })
+    for (const k of forks(file)) out.push({ session, time: Date.parse(k.time), input: inputOf(k.usage), used: false })
     // A bare line with no usage matches a call of any size.
     for (const b of bareLines(file)) out.push({ session, time: Date.parse(b.time), input: inputOf(b.usage), used: false })
   }

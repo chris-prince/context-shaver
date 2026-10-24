@@ -16,7 +16,7 @@
 import { copyFileSync, existsSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { describe, isSuggestion, observe, type Sent, type Stats } from '../src/stats.ts'
-import { history, record, recordBare, recordResent, recordSummaryFork } from '../src/journal.ts'
+import { forkOf, history, record, recordBare, recordFork, recordResent } from '../src/journal.ts'
 import type { Usage } from '../src/cost.ts'
 
 export type Suggestion = { sent: Sent; inputTokens: number; outputTokens: number; usage: Usage }
@@ -46,9 +46,10 @@ export function fill(file: string, out: string, suggestions: Suggestion[]): { in
     }
   }
   for (const d of raw) {
-    if (d.summaryFork) {
-      before(d.summaryFork.time)
-      recordSummaryFork(out, d.summaryFork)
+    const f = forkOf(d)
+    if (f) {
+      before(f.time)
+      recordFork(out, f)
       continue
     }
     if (d.bare) {

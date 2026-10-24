@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe } from '../src/stats.ts'
-import { history, record, recordSummaryFork, summaryForks } from '../src/journal.ts'
+import { forks, history, record } from '../src/journal.ts'
 import type { ApiMsg } from '../src/items.ts'
 import { fill } from '../scripts/backfill-suggestions.ts'
 
@@ -43,7 +43,7 @@ test('a backfilled suggestion is journaled as the proxy now journals it, and its
   const { suggestion: __, ...t3 } = observe(s1, sent3, 700, 0)
   assert.equal(t3.removedTokens, 0)
   record(old, undefined, o1, usage(1000))
-  recordSummaryFork(old, fork)
+  appendFileSync(old, JSON.stringify({ summaryFork: fork }) + '\n')
   record(old, o1, t3, usage(700))
 
   const filled = path.join(dir, 'filled.journal.jsonl')
@@ -54,10 +54,11 @@ test('a backfilled suggestion is journaled as the proxy now journals it, and its
   assert.equal(f3.removedTokens, l3.removedTokens)
   assert.deepEqual({ ...f3, removedTokens: 0 }, t3)
   assert.deepEqual([...history(filled)].map((h) => h.usage), [usage(1000), usage(900), usage(700)])
-  // The fork keeps its place, after the suggestion it came after.
+  // The fork keeps its place, after the suggestion it came after, an older
+  // summary fork's line written as a fork's.
   const lines = readFileSync(filled, 'utf8').trim().split('\n')
-  assert.ok(JSON.parse(lines[2]).summaryFork)
-  assert.deepEqual([...summaryForks(filled)], [fork])
+  assert.ok(JSON.parse(lines[2]).fork)
+  assert.deepEqual([...forks(filled)], [{ ...fork, kind: 'summary' }])
 
   // A second run finds the suggestion journaled and adds nothing.
   const again = path.join(dir, 'again.journal.jsonl')

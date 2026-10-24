@@ -539,9 +539,15 @@ Scripts:
   `proxy-data/state/<key>.journal.jsonl` (`src/journal.ts`), about 1 KB a
   request, with the usage the API reported for it: cache reads, cache writes
   by TTL, and output tokens. Replayed from the start, the journal gives the
-  stats after any request. Each summary fork answered adds a line of its own
-  with its time, model and usage, which stats replay skips; its cost still
-  comes from the conversation's summaries file. Claude Code's prompt suggestions, which it sends
+  stats after any request. Each fork the proxy sends of its own (only
+  summary forks so far) goes through one routine, `forked` in
+  `src/server.ts`, which journals it as soon as the API answers 200, before
+  its answer is used: a `fork` line with its kind, time, model and usage,
+  or, with none read, why (`no usage`, or `cut off` if the answer broke
+  off), as for a request. Stats replay skips fork lines; a summary fork's
+  cost still comes from the conversation's summaries file. Before
+  2026-10-24 the line was `summaryFork`, read now as a fork of kind
+  summary. Claude Code's prompt suggestions, which it sends
   after a reply asking what the user will type next, are trimmed and
   journaled like any request, with what they cost and any trim they make,
   but marked, and not counted as requests or turns: the user took none.

@@ -28,7 +28,7 @@ import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornOf, counted as countOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Sent, type Stats } from './stats.ts'
-import { bareLines, history, latest, record, recordBare, recordResent, recordSummaryFork, sideKey, written, type BareLine, type Why } from './journal.ts'
+import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
@@ -122,6 +122,20 @@ function currentOf(key: string): Current {
 // The requests answered since the proxy started that no journal line was
 // written for, which `:shaver info` and proxy.log report.
 let missed = 0
+
+// Journals a request the API answered, a client's or a fork's, and reports it
+// missed if that wrote no line.
+function journaling(to: string, f: () => void): void {
+  const before = written
+  try {
+    f()
+  } finally {
+    if (written === before) {
+      missed++
+      console.error(`${new Date().toISOString()} shaver: journal missed a request to ${to}`)
+    }
+  }
+}
 const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
@@ -439,8 +453,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const finish = (cut: boolean) => {
     if (finished || !served || up.status !== 200) return
     finished = true
-    const before = written
-    try {
+    journaling(url.split('?')[0], () => {
       if (p && !cut) answered(p, usage, upstream + url, headers)
       else if (resent && !cut) answeredResent(resent, usage)
       else {
@@ -454,12 +467,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const log = !a['log-step-events'] ? undefined : q ? q.logLine && { dir: q.logDir!, line: q.logLine } : body && { dir: path.join(logRoot, key), side: body, protocol: proto.name }
         answeredBare(key, b, log)
       }
-    } finally {
-      if (written === before) {
-        missed++
-        console.error(`${new Date().toISOString()} shaver: journal missed a request to ${url.split('?')[0]}`)
-      }
-    }
+    })
   }
   try {
     if (up.body)
@@ -536,6 +544,27 @@ function answeredBare(key: string, b: BareLine, log?: { dir: string; line: Recor
 // The conversations with a summary fork under way, which get no second one.
 const summaryForking = new Set<string>()
 
+// Sends a request the proxy makes of its own, a fork, and journals it as
+// finish journals a client's: once the API answers 200, before the answer is
+// used, with the usage its protocol reads in it, or marked cut off or no usage.
+// Gives the answer and that usage; throws for any other status.
+async function forked(p: Prepared, kind: ForkKind, body: Canonical, target: string, headers: Record<string, string>): Promise<{ text: string; usage?: Usage }> {
+  const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
+  if (r.status !== 200) throw new Error(`${r.status} ${(await r.text()).slice(0, 500)}`)
+  let text: string | undefined
+  let usage: Usage | undefined
+  try {
+    text = await r.text()
+    const reader = p.proto.usageReader()
+    reader.push(Buffer.from(text))
+    usage = reader.end().usage
+  } finally {
+    const line: ForkLine = { time: new Date().toISOString(), kind, model: p.model, ...(p.provider && { provider: p.provider }), ...(usage ? { usage } : { why: text === undefined ? 'cut off' : 'no usage' }) }
+    journaling(`a ${kind} fork`, () => recordFork(journalOf(p.key), line))
+  }
+  return { text, usage }
+}
+
 // Sends a summary fork of an answered request for a record of its turns
 // (summary.ts): the request as sent, with the instructions asked after it, in
 // its protocol's form, not streamed. Its cost goes to the conversation's
@@ -550,16 +579,19 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
   const before = loadSummaries(key)
   writeFileSync(summariesOf(key), JSON.stringify({ ...before, requests: before.requests + 1 }))
   try {
-    const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
-    const text = await r.text()
-    if (!r.ok) throw new Error(`${r.status} ${text.slice(0, 500)}`)
+    const { text, usage } = await forked(p, 'summary', body, target, headers)
+    if (usage) {
+      const s = loadSummaries(key)
+      writeFileSync(summariesOf(key), JSON.stringify({ ...s, spent: s.spent + spent(p.model, p.provider, usage) }))
+    }
     const out = p.proto.summaryForkAnswer(text)
     const time = new Date().toISOString()
     const record = recordOf(out.content, f, time)
-    const s = loadSummaries(key)
-    writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: record ? [...s.chain.filter((r) => r.endsBefore <= f.start), record] : s.chain, spent: s.spent + (out.usage ? spent(p.model, p.provider, out.usage) : 0) }))
-    recordSummaryFork(journalOf(key), { time, model: p.model, ...(p.provider && { provider: p.provider }), usage: out.usage })
-    if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage: out.usage })
+    if (record) {
+      const s = loadSummaries(key)
+      writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: [...s.chain.filter((r) => r.endsBefore <= f.start), record] }))
+    }
+    if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage })
   } catch (err) {
     console.error('shaver: summary fork failed:', err)
     if (logDir) writeLine(logDir, { event: 'summary', time: new Date().toISOString(), ...asked, ms: Date.now() - began, error: String(err).slice(0, 500) })

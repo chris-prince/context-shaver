@@ -12,8 +12,10 @@
 // also holds the request's usage as the API reported it (cache reads, cache
 // writes by TTL, output), which the stats leave out and replay ignores.
 //
-// A summary fork (summary.ts) gets a line of its own, { summaryFork: { time,
-// model, provider, usage } }, with no change to the stats, so replay skips it.
+// A request the proxy makes of its own, a fork (server.ts, forked), gets a
+// line of its own, { fork: { time, kind, model, provider, usage, why } }, with
+// no change to the stats, so replay skips it. Older journals have summary
+// forks' as { summaryFork: { time, model, provider, usage } }.
 //
 // A request the API refused changed and answered as it came (server.ts) gets a
 // line marked resent: true, its usage and its count as a request, with the
@@ -44,7 +46,9 @@ export type Delta = {
   usage?: Usage
   resent?: true
 }
-export type SummaryForkLine = { time: string; model: string; provider?: string; usage?: Usage }
+// why is set when the answer gave no usage, as on a bare line.
+export type ForkKind = 'summary'
+export type ForkLine = { time: string; kind: ForkKind; model: string; provider?: string; usage?: Usage; why?: Why }
 export type Why = 'side' | 'unread' | 'untrimmed' | 'cut off' | 'no usage' | 'resent'
 export type BareLine = { time: string; model: string; provider?: string; usage?: Usage; why: Why }
 
@@ -122,13 +126,16 @@ export function recordResent(file: string, prev: Stats, time: string, usage: Usa
   return { ...prev, ...set }
 }
 
-// Appends a summary fork's line.
-export function recordSummaryFork(file: string, f: SummaryForkLine): void {
-  appendFileSync(file, JSON.stringify({ summaryFork: f }) + '\n')
+// Appends a fork's line.
+export function recordFork(file: string, f: ForkLine): void {
+  append(file, { fork: f })
 }
 
+// A line's fork, if it is one, an older summary fork's line included.
+export const forkOf = (d: { fork?: ForkLine; summaryFork?: Omit<ForkLine, 'kind'> }): ForkLine | undefined => d.fork ?? (d.summaryFork && { ...d.summaryFork, kind: 'summary' })
+
 // The journal's lines, parsed; none if there is none.
-function* linesOf(file: string): Generator<Delta & { summaryFork?: SummaryForkLine; bare?: BareLine }> {
+export function* linesOf(file: string): Generator<Delta & { fork?: ForkLine; summaryFork?: Omit<ForkLine, 'kind'>; bare?: BareLine }> {
   if (!existsSync(file)) return
   for (const line of readFileSync(file, 'utf8').split('\n')) if (line) yield JSON.parse(line)
 }
@@ -141,12 +148,15 @@ function* linesOf(file: string): Generator<Delta & { summaryFork?: SummaryForkLi
 export function* history(file: string): Generator<{ stats: Stats; usage?: Usage; resent?: true }> {
   const codex = path.basename(file).startsWith('codex-')
   let s: Stats | undefined
-  for (const d of linesOf(file)) if (!d.summaryFork && !d.bare) yield { stats: (s = apply(s, d)), usage: d.usage && codex ? withWrites(d.usage) : d.usage, ...(d.resent && { resent: d.resent }) }
+  for (const d of linesOf(file)) if (!forkOf(d) && !d.bare) yield { stats: (s = apply(s, d)), usage: d.usage && codex ? withWrites(d.usage) : d.usage, ...(d.resent && { resent: d.resent }) }
 }
 
-// The summary forks a journal records, in order.
-export function* summaryForks(file: string): Generator<SummaryForkLine> {
-  for (const d of linesOf(file)) if (d.summaryFork) yield d.summaryFork
+// The forks a journal records, in order.
+export function* forks(file: string): Generator<ForkLine> {
+  for (const d of linesOf(file)) {
+    const f = forkOf(d)
+    if (f) yield f
+  }
 }
 
 // The conversation a request sent as it came is journaled with, given its own

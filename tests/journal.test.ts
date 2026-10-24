@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { bareLines, diff, history, latest, record, recordBare, recordResent, recordSummaryFork, replay, sideKey, summaryForks } from '../src/journal.ts'
+import { bareLines, diff, history, latest, record, recordBare, recordFork, recordResent, replay, sideKey, forks } from '../src/journal.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -38,16 +38,21 @@ test('replaying the journal gives the stats after every request', () => {
   assert.deepEqual(latest(file), observed.at(-1))
 })
 
-test('a summary fork has its own line, which stats replay skips', () => {
+test('a fork has its own line, which stats replay skips', () => {
   const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
   const s1 = observe(undefined, describe(body([user('a')]), ends, '2026-10-11T10:00:00Z'), 1000, 30)
   record(file, undefined, s1, { input_tokens: 10, output_tokens: 30 })
-  const fork = { time: '2026-10-11T10:00:30Z', model: 'm', usage: { input_tokens: 5, cache_read_input_tokens: 900, output_tokens: 400 } }
-  recordSummaryFork(file, fork)
+  const fork = { time: '2026-10-11T10:00:30Z', kind: 'summary' as const, model: 'm', usage: { input_tokens: 5, cache_read_input_tokens: 900, output_tokens: 400 } }
+  recordFork(file, fork)
+  // One answered 200 with nothing to read, and an older summary fork's line.
+  const unread = { time: '2026-10-11T10:00:40Z', kind: 'summary' as const, model: 'm', why: 'no usage' as const }
+  recordFork(file, unread)
+  const older = { time: '2026-10-11T10:00:50Z', model: 'm', usage: { input_tokens: 7, output_tokens: 70 } }
+  appendFileSync(file, JSON.stringify({ summaryFork: older }) + '\n')
   const s2 = observe(s1, describe(body([user('a'), reply('b'), user('c')]), ends, '2026-10-11T10:01:00Z'), 1100, 30)
   record(file, s1, s2, { input_tokens: 10, output_tokens: 30 })
   assert.deepEqual(Array.from(replay(file), copy), [s1, s2])
-  assert.deepEqual([...summaryForks(file)], [fork])
+  assert.deepEqual([...forks(file)], [fork, unread, { ...older, kind: 'summary' }])
 })
 
 test('a resent request counts as a request, with its usage, and leaves the rest of the stats', () => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { history, latest, record, recordBare, recordResent, recordSummaryFork } from '../src/journal.ts'
+import { history, latest, record, recordBare, recordFork, recordResent } from '../src/journal.ts'
 import { cost, spent } from '../src/cost.ts'
 import { totals } from '../src/totals.ts'
 import type { ApiMsg } from '../src/items.ts'
@@ -33,8 +33,10 @@ test('all-time totals add up what each conversation info shows', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'shaver-totals-'))
   const a = conversation(dir, 'claude-aaaa', 'claude-opus-5-5', 6)
   const b = conversation(dir, 'codex-bbbb', 'gpt-6-luna', 4)
-  const fork = { time: '2026-10-11T10:30:00Z', model: 'claude-opus-5-5', usage: { input_tokens: 100, cache_read_input_tokens: 5000, cache_creation_input_tokens: 0, output_tokens: 800 } }
-  recordSummaryFork(a, fork)
+  const fork = { time: '2026-10-11T10:30:00Z', kind: 'summary' as const, model: 'claude-opus-5-5', usage: { input_tokens: 100, cache_read_input_tokens: 5000, cache_creation_input_tokens: 0, output_tokens: 800 } }
+  recordFork(a, fork)
+  // A fork answered with nothing to read costs nothing.
+  recordFork(a, { time: '2026-10-11T10:30:30Z', kind: 'summary', model: 'claude-opus-5-5', why: 'no usage' })
   // A request refused changed and resent as it came.
   const resent = { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 6000, output_tokens: 30 }
   recordResent(a, latest(a)!, '2026-10-11T10:31:00Z', resent)
