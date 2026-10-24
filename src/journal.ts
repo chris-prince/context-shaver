@@ -35,12 +35,15 @@ import type { Usage } from './cost.ts'
 import { withWrites } from './responses.ts'
 import type { Stats } from './stats.ts'
 
-const PLAIN = ['first', 'requests', 'turns', 'time', 'model', 'provider', 'ttl', 'suggestion', 'inputTokens', 'removedTokens', 'defs', 'ends'] as const
+// Every other field is plain, set whole when it changes: listing them let a
+// new one go unjournaled (Stats.compacted, until 2026-10-24).
 const RECORDS = ['tokens', 'bound', 'answers', 'seen'] as const
+type Plain = Exclude<keyof Stats, (typeof RECORDS)[number] | 'parts'>
+const plainOf = (s: Stats | undefined) => Object.keys(s ?? {}).filter((f) => f !== 'parts' && !(RECORDS as readonly string[]).includes(f)) as Plain[]
 
 type Part = Stats['parts'][number]
 export type Delta = {
-  set?: Partial<Pick<Stats, (typeof PLAIN)[number]>>
+  set?: Partial<Pick<Stats, Plain>>
   records?: Partial<Record<(typeof RECORDS)[number], { set?: Record<string, unknown>; del?: string[] }>>
   parts?: Array<[number, number] | Part>
   usage?: Usage
@@ -64,7 +67,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 export function diff(prev: Stats | undefined, next: Stats): Delta {
   const d: Delta = {}
-  for (const f of PLAIN) if (!prev || !same(prev[f], next[f])) (d.set ??= {})[f] = (next[f] ?? null) as never
+  for (const f of [...new Set([...plainOf(prev), ...plainOf(next)])].sort()) if (!prev || !same(prev[f], next[f])) (d.set ??= {})[f] = (next[f] ?? null) as never
   for (const f of RECORDS) {
     const a: Record<string, unknown> = prev?.[f] ?? {}
     const b: Record<string, unknown> = next[f]

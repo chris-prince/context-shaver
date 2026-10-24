@@ -132,6 +132,14 @@ test('an advance removes what the earlier parts cost less what they cost now', (
   s = observe(s, describe(body([a, stub, c, d]), ends, '2026-10-11T10:01:00Z', true), 900, 0)
   const kept = s.parts.slice(0, 3).reduce((n, p) => n + s.tokens[p.key], 0)
   assert.equal(s.removedTokens, before - kept)
+
+  // The client's compaction leaves nothing taken out, on an advance too, and
+  // says so for that request alone.
+  for (const advanced of [false, true]) {
+    const after = observe(s, { ...describe(body([a, { role: 'user', content: 'summary' }]), ends, '2026-10-11T10:02:00Z', advanced), compacted: true }, 300, 0)
+    assert.deepEqual([after.removedTokens, after.compacted], [0, true])
+    assert.equal(observe(after, describe(body([a, { role: 'user', content: 'summary' }, d]), ends, '2026-10-11T10:03:00Z'), 320, 0).compacted, undefined)
+  }
 })
 
 test('a prompt suggestion counts its trim but not itself as a request or turn', () => {

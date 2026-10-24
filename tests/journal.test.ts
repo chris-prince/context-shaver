@@ -76,6 +76,18 @@ test('a field that goes away stays gone on replay', () => {
   assert.deepEqual(Array.from(replay(file), copy), [s1, s2])
 })
 
+test('every field of the stats is journaled, one no list names included', () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
+  const s1 = observe(undefined, describe(body([user('a')]), ends, '2026-10-11T10:00:00Z'), 1000, 30)
+  const s2 = { ...observe(s1, { ...describe(body([user('c')]), ends, '2026-10-11T10:01:00Z'), compacted: true }, 1100, 30), unheardOf: [1] } as Stats
+  const { unheardOf: _, ...s3 } = observe(s2, describe(body([user('c'), reply('d'), user('e')]), ends, '2026-10-11T10:02:00Z'), 1200, 30) as Stats & { unheardOf?: unknown }
+  record(file, undefined, s1)
+  record(file, s1, s2)
+  record(file, s2, s3)
+  assert.equal(s2.compacted, true)
+  assert.deepEqual(Array.from(replay(file), copy), [s1, s2, s3])
+})
+
 test('a bare line has its usage and leaves the stats alone', () => {
   const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'k.journal.jsonl')
   const s1 = observe(undefined, describe(body([user('a')]), ends, '2026-10-11T10:00:00Z'), 1000, 30)

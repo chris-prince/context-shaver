@@ -16,6 +16,7 @@ import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Serv
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
+import { zstdDecompressSync } from 'node:zlib'
 import { hash, kinds, LOG_DIR, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
 import { blocks, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
@@ -221,6 +222,9 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   if (deferred) described.defs.deferred = deferred
   if (skills) described.defs.skills = skills
   if (marked) described.ttl = marked
+  const last = latestOf(key)
+  const lastPart = (last?.suggestion ? last.parts.at(-2) : last?.parts.at(-1))?.key
+  if (h?.resends && lastPart && !described.parts.some((q) => q.key === lastPart)) described.compacted = true
   // Each record is dated by the first message it covers.
   const starts = startsOf(msgs, chain.slice(0, records))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
@@ -323,8 +327,6 @@ function billedThinking(msgs: readonly ApiMsg[], billed: ReadonlyMap<string, num
   return out
 }
 
-// Upgrade too: a WebSocket the client tries first (OpenCode's OpenAI provider)
-// goes up as plain HTTP, and the client falls back when it's refused.
 const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive', 'upgrade'])
 // The account's usage limits from the latest answer each protocol's API sent,
 // which Claude Code shows in the status line. Answers made here carry them
@@ -349,7 +351,10 @@ const protocolOf = (url: string) => [MESSAGES, CHAT, RESPONSES].find((p) => p.se
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const arrived = Date.now()
-  const original = await readBody(req)
+  // Codex's OpenAI provider compresses what it sends with zstd; it's read here
+  // and sent on as it reads.
+  const zstd = req.headers['content-encoding'] === 'zstd'
+  const original = zstd ? zstdDecompressSync(await readBody(req)) : await readBody(req)
   let raw = original
   const r = route(req.url ?? '/', a.upstream)
   const proto = protocolOf('error' in r ? '/' : r.url)
@@ -370,6 +375,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === 'GET' && url === '/shaver/procinfo' && req.headers['x-shaver'] === 'procinfo') {
     return void res.end(`shaver repo: ${path.resolve(import.meta.dirname, '..')}\nshaver logging: ${a['log-step-events'] ? 'on' : 'off'}\n`)
   }
+  // A WebSocket a client tries first (Codex's and OpenCode's OpenAI providers)
+  // is refused with 426, which sends it straight to HTTP: Codex retried a
+  // refused one for ~8s first. Codex over WebSockets sends only what's new.
+  if (req.headers.upgrade) return void res.writeHead(426).end()
   let p: Prepared | undefined
   // Why a request the API answers would be journaled bare, if it's sent as it came.
   let why: Why = 'side'
@@ -410,7 +419,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
   const headers: Record<string, string> = {}
-  for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && v !== undefined) headers[k] = Array.isArray(v) ? v.join(', ') : v
+  for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && !(zstd && k === 'content-encoding') && v !== undefined) headers[k] = Array.isArray(v) ? v.join(', ') : v
   const abort = new AbortController()
   const usage = proto.usageReader()
   // A client that leaves once its answer is complete hasn't interrupted it:

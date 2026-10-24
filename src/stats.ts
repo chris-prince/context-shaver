@@ -42,6 +42,10 @@ export type Sent = {
   ttl?: number
   // Whether it is Claude Code's prompt suggestion (isSuggestion).
   suggestion?: boolean
+  // Whether the client compacted its conversation since the request before
+  // (harness.ts, resends). What it keeps, the base, the user's messages and a
+  // summary, is nothing the policy trims, so all the trims took out is gone.
+  compacted?: boolean
 }
 
 export type Stats = {
@@ -56,6 +60,8 @@ export type Stats = {
   // Whether the latest request was a prompt suggestion, which counts as no
   // request or turn; none before 2026-10-23, when suggestions weren't journaled.
   suggestion?: boolean
+  // Whether the client compacted before the latest request (Sent.compacted).
+  compacted?: boolean
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
@@ -216,10 +222,10 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   // they cost now: the parts through the last one it also sent, counting
   // repeats, since Claude Code sends the same reminder again. What follows
   // that is the turn's new parts. A suggestion's last message, which nothing
-  // sends again, is no part of it.
-  let removedTokens = prev?.removedTokens ?? 0
+  // sends again, is no part of it. A compaction leaves nothing taken out.
+  let removedTokens = r.compacted ? 0 : prev?.removedTokens ?? 0
   const was = prev?.suggestion ? prev.parts.slice(0, -1) : prev?.parts ?? []
-  if (prev && r.advanced) removedTokens += was.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - r.parts.slice(0, keptOf(was, r.parts)).reduce((n, p) => n + known[p.key], 0)
+  if (prev && r.advanced && !r.compacted) removedTokens += was.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - r.parts.slice(0, keptOf(was, r.parts)).reduce((n, p) => n + known[p.key], 0)
 
   const seen = { ...prev?.seen }
   for (const p of r.parts) {
@@ -236,6 +242,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     ...(r.provider && { provider: r.provider }),
     ...(r.ttl && { ttl: r.ttl }),
     suggestion: !!r.suggestion,
+    ...(r.compacted && { compacted: true }),
     inputTokens,
     removedTokens,
     tokens: known,
@@ -293,6 +300,9 @@ export function baseOf(s: Stats): number {
   for (const p of s.parts) for (const [kind, share] of sharesOf(p, s.tokens)) if (kind === 'system' || kind.startsWith('system:')) n += share
   return n
 }
+
+// The user's messages' tokens.
+export const promptsOf = (s: Stats): number => s.parts.reduce((n, p) => n + sharesOf(p, s.tokens).reduce((m, [kind, share]) => m + (kind === 'user' ? share : 0), 0), 0)
 
 // The kinds the frontier holds back, each with the frontier that trims it.
 const FRONTIER: Record<string, 'tools' | 'reasoning'> = { reasoning: 'reasoning', toolCalls: 'tools', toolResults: 'tools' }

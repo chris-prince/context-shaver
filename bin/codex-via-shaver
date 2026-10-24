@@ -2,9 +2,10 @@
 # Runs Codex through the context-shaver proxy, starting the proxy first if nothing
 # is listening on its port (bin/run-proxy). Arguments are passed to Codex.
 #
-# The proxy is a provider set with -c flags, so Codex's config is left alone.
-# It speaks Responses to ChatGPT's Codex backend with the ChatGPT login, with
-# WebSockets off: Codex tries one first otherwise, which the proxy refuses.
+# Codex's own OpenAI provider is kept, given the proxy's address with a -c
+# flag, so Codex's config is left alone and Codex runs as it does without the
+# proxy, its remote compaction included. The proxy sends it on to ChatGPT's
+# Codex backend, and refuses the WebSocket Codex tries first.
 #
 # A provider already chosen in the arguments, as a wrapper does for a company
 # gateway, is kept instead: its base_url becomes the proxy's, with the gateway
@@ -119,12 +120,7 @@ value() {
 j=$(last model_provider)
 if [[ -z $j ]]; then
   exec "${real[@]}" \
-    -c model_provider=shaver \
-    -c model_providers.shaver.name=shaver \
-    -c "model_providers.shaver.base_url=\"http://127.0.0.1:$port/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex\"" \
-    -c model_providers.shaver.wire_api=responses \
-    -c model_providers.shaver.requires_openai_auth=true \
-    -c model_providers.shaver.supports_websockets=false \
+    -c "openai_base_url=\"http://127.0.0.1:$port/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex\"" \
     "$@"
 fi
 

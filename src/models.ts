@@ -20,27 +20,43 @@ export type Model = {
   // Tokens of earlier turns that start a summary fork, in place of the policy's
   // summary_threshold_tokens; the policy still decides whether there are any.
   summaryThreshold?: number
-  // The prompt's tokens past which the client compacts the conversation by
-  // itself, which the cost without the shaver counts (cost.ts).
-  compactAt?: number
+  // How the client compacts the conversation by itself, which the cost
+  // without the shaver counts (cost.ts): past `at` tokens of prompt, a request
+  // reads it all and answers with `summary` tokens, taking `ms`. The prompt
+  // then keeps its base and `kept` of the rest, or with 'prompts' the user's
+  // messages, up to PROMPTS_KEPT tokens, and the summary.
+  compaction?: Compaction
   // The later requests a trim's savings are counted over (trim.ts, decide),
   // given the requests before this one.
   horizon: (n: number) => number
 }
 type Settings = Partial<Model>
+export type Compaction = { at: number; kept: number | 'prompts'; summary: number; ms: number }
+
+// Codex keeps the newest user messages up to 64K tokens (compact_remote_v2.rs,
+// RETAINED_MESSAGE_TOKEN_BUDGET, by osolmaz's reading of its source; local/notes.md).
+export const PROMPTS_KEPT = 64_000
 
 // Claude Code compacts on a 200K window at about 165K: five compactions
-// logged here fired at 144-167K.
-const CLAUDE_CODE = { compactAt: 165_000 }
+// logged here fired at 144-167K. What came after the base kept 11-29% of its
+// tokens (a median of 18%, rounded to 20%), the summary ran 6.6-8.9K tokens,
+// and the next request came about a minute later.
+const CLAUDE_CODE = { compaction: { at: 165_000, kept: 0.2, summary: 7600, ms: 65_000 } }
 
 // Backtests of logged sessions (local/notes.md, "A trim's horizon"): Codex and
 // OpenCode sessions did best counting a trim over 5 requests.
 const SHORT = () => 5
 
-// compactAt: Codex caps its auto-compact limit at 90% of the context window,
-// and luna's is 272K (~/.codex/models_cache.json; local/notes.md, "Make
-// Codex's cost and savings figures accurate").
-const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 1800, horizon: SHORT, compactAt: 244_800 } // 90% of 272K
+// Codex caps its auto-compact limit at 90% of the context window, and luna's
+// is 272K (~/.codex/models_cache.json; local/notes.md, "Make Codex's cost and
+// savings figures accurate"). It compacts remotely (v2): the answer is one
+// encrypted item, the summary, which the prompt keeps after the user's
+// messages. Two logged here (2026-10-24) counted 150-200 tokens, at about 20
+// of its characters a token, and their requests answered with about as many; over
+// 1,087 compactions osolmaz measured a median item of 15,820 characters, so
+// about 800 tokens, and 34s for one of a 174K prompt.
+const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 800, ms: 34_000 } // at: 90% of 272K
+const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
 
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },

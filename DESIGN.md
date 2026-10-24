@@ -219,22 +219,18 @@ URL (OpenRouter's is `/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`; OpenAI's
 and Anthropic's are set the same way), in `OPENCODE_CONFIG_CONTENT`, which
 OpenCode merges over its config. Its background service doesn't read that, so
 the TUI, `run` and `mini` get `--standalone`. Through OpenAI it uses Responses
-and tries a WebSocket first, which the proxy refuses by not passing the
-upgrade on; through Anthropic it uses Messages. Codex reaches it with ChatGPT's backend, through a provider of
-its own set with `-c` flags. Pointing the built-in provider elsewhere
-(`openai_base_url`) isn't enough: it tries a WebSocket first on every request,
-which the proxy doesn't take. To send every Codex session through the proxy,
-put the provider in `~/.codex/config.toml` instead:
+and tries a WebSocket first, which the proxy refuses with 426; through
+Anthropic it uses Messages. Codex keeps its own OpenAI provider, given the
+proxy's address with `-c openai_base_url=...`, so it runs as it does without
+the proxy: a provider of the proxy's own would get a custom provider's
+defaults, which compact locally where Codex's compacts remotely. The proxy
+answers its first WebSocket with 426, so it goes straight to HTTP (a refusal
+passed on as the backend's 405 cost ~8s of retries), and reads the bodies it
+compresses with zstd, sending them on uncompressed. To send every Codex
+session through the proxy, put the address in `~/.codex/config.toml` instead:
 
 ```toml
-model_provider = "shaver"
-
-[model_providers.shaver]
-name = "shaver"
-base_url = "http://127.0.0.1:8787/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
-wire_api = "responses"
-requires_openai_auth = true
-supports_websockets = false
+openai_base_url = "http://127.0.0.1:8787/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
 ```
 
 ## Policy
@@ -585,12 +581,19 @@ Scripts:
   deferred (`defs.deferred`) and the skill list it shortened (`defs.skills`),
   in bytes, at the base's tokens a byte (before 2026-10-21, `defs.deferred`
   held both), until
-  the client compacts it itself: past the model's `compactAt` (165K for
-  Claude Code), the shaverless prompt keeps its base and 20% of the rest,
-  then grows as the client's prompt grows. Each compaction adds a request
-  reading the whole prompt and writing a 7.6K-token summary, and about 65
-  seconds of waiting, which the stats show as avoided; the figures come
-  from five logged compactions. The split is estimated from the gap
+  the client compacts it itself: past the model's `compaction.at`, the
+  shaverless prompt keeps its base and what that client's compaction keeps,
+  then grows as the client's prompt grows. Claude Code's, at 165K, keeps 20%
+  of the rest; each adds a request reading the whole prompt and writing a
+  7.6K-token summary, and about 65 seconds of waiting, which the stats show
+  as avoided; the figures come from five logged compactions. Codex's (v2,
+  remote), at 90% of the window, keeps the user's messages, up to 64K
+  tokens, and an ~800-token summary, and takes ~34 seconds (the figures in
+  `models.ts`). Where the client compacts with the proxy, which for Codex
+  shows as a request without the last message of the one before
+  (`compacted`), the shaverless prompt compacts then too, to the client's
+  size if it held more, and nothing taken out is left: both are cold past
+  the base. The split is estimated from the gap
   since the previous request and whether the trim advanced. After a gap
   longer than the cache TTL (the request's, as the journal records it), both read only the shared prefix and write the
   rest. On a warm advance, which rewrites the cache, the shaverless prompt
@@ -610,7 +613,7 @@ Scripts:
   its rewrite with it, shared by what it took out. Every other request is
   shared by what each type has taken out so far. When the request without
   the shaver compacts, what was taken out until then is cut to the share a
-  compaction keeps. That rule, and the byte split of a part's
+  compaction keeps, none for Codex's. That rule, and the byte split of a part's
   tokens where the API gives no count by kind, make the split an estimate. Command replies
   are left out, as the journal leaves them out.
 - `bin/node-wrapper scripts/stats-from-logs.ts <conversation dir> [--request N]

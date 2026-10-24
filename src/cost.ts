@@ -6,12 +6,16 @@
 //
 // Without the proxy the prompt would also hold the tool definitions it
 // deferred, in the base, and where the client compacts by itself (Model's
-// compactAt), the conversation would not have grown past that: the
+// compaction), the conversation would not have grown past that: the
 // counterfactual keeps its own size, growing as the client's conversation
-// grows, and once the prompt passes compactAt the client compacts it, as a
-// request reading the whole prompt and answering with a summary, and the
-// conversation after the base keeps KEPT of its size. That request, and the
-// wait for it, are what the proxy saved.
+// grows, and once the prompt passes the compaction's limit the client
+// compacts it, as a request reading the whole prompt and answering with a
+// summary, and the conversation after the base keeps what that compaction
+// keeps. That request, and the wait for it, are what the proxy saved.
+//
+// Where the client compacts with the proxy (Stats.compacted), the prompt
+// without it compacts then too, unless it already holds less, and both are
+// as cold past the base.
 //
 // Each request, against the journal's previous one:
 // - Cold (none, or the cache's TTL has passed since): it reads what this one
@@ -29,8 +33,8 @@
 // on a request that trims, by what it takes out, since its rewriting is that
 // trim's cost.
 
-import { lifetimeMs, modelOf, type Price } from './models.ts'
-import { BASE, baseOf, removedByType, type Stats } from './stats.ts'
+import { lifetimeMs, modelOf, PROMPTS_KEPT, type Compaction, type Price } from './models.ts'
+import { BASE, baseOf, promptsOf, removedByType, type Stats } from './stats.ts'
 
 export type Usage = {
   input_tokens: number
@@ -40,13 +44,6 @@ export type Usage = {
   output_tokens?: number
 }
 
-
-// Five Claude Code compactions logged on 2026-10-08 to 10-10: what came after
-// the base kept 11-29% of its tokens (a median of 18%, rounded to 20%), the
-// summary ran 6.6-8.9K tokens, and the next request came about a minute later.
-const KEPT = 0.2
-const SUMMARY_TOKENS = 7600
-const COMPACTION_MS = 65_000
 
 export type Tokens = { uncached: number; reads: number; writes: number; output: number }
 // The prompt without the proxy, after a request: its tokens past the base,
@@ -78,21 +75,25 @@ const contextOf = (s: Stats): Context => ({ rest: clientRest(s), client: clientR
 // What the request would have sent without the proxy, and the prompt then,
 // whether the client compacts after it. Without the prompt before it, that
 // is the previous request's as the client sent it.
-export function without(prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number, ctx = prev && contextOf(prev), compactAt?: number): { tokens: Tokens; context: Context; compacted: boolean } {
+export function without(prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number, ctx = prev && contextOf(prev), compaction?: Compaction): { tokens: Tokens; context: Context; compacted: boolean } {
   const reads = u.cache_read_input_tokens ?? 0
   const base = baseWithout(s)
   const client = clientRest(s)
-  const rest = ctx ? Math.min(ctx.rest + client - ctx.client, client) : client
+  const rest = ctx ? Math.min(s.compacted ? ctx.rest : ctx.rest + client - ctx.client, client) : client
   const all = base + rest
   const uncached = u.input_tokens
-  const warm = prev && ctx && Date.parse(s.time) - Date.parse(prev.time) <= ttlMs
+  const warm = prev && ctx && !s.compacted && Date.parse(s.time) - Date.parse(prev.time) <= ttlMs
   const advanced = warm && (s.removedTokens ?? 0) !== (prev.removedTokens ?? 0)
   const read = warm && !advanced && reads >= s.inputTokens / 2
   const r = Math.min(all - uncached, advanced ? ctx.cached : read ? Math.min(ctx.cached, reads + all - s.inputTokens) : reads && reads + base - (s.defs ? baseOf(s) : 0))
   const tokens = { uncached, reads: r, writes: all - uncached - r, output: u.output_tokens ?? 0 }
-  if (compactAt && all > compactAt) return { tokens, context: { rest: rest * KEPT, client, cached: base }, compacted: true }
+  if (compaction && all > compaction.at) return { tokens, context: { rest: keptOf(compaction, s, rest), client, cached: base }, compacted: true }
   return { tokens, context: { rest, client, cached: all }, compacted: false }
 }
+
+// What a compaction keeps of the prompt past the base, the client's user
+// messages being what the shaverless prompt's are: the policy trims none.
+const keptOf = (c: Compaction, s: Stats, rest: number) => (c.kept === 'prompts' ? Math.min(rest, Math.min(promptsOf(s), PROMPTS_KEPT) + c.summary) : rest * c.kept)
 
 // A request's tokens in dollars; writes at the hour's price but for the share
 // written for 5 minutes, or at the model's own write price.
@@ -120,9 +121,9 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   const ttl = lifetimeMs(s.ttl ?? m.ttl, ttlMs)
   const actual: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
   const short = (t: Tokens) => (ttl > 300_000 ? 0 : t.writes)
-  const wo = without(prev, s, u, ttl, c.context, m.compactAt)
+  const wo = without(prev, s, u, ttl, c.context, m.compaction)
   const all = wo.tokens.uncached + wo.tokens.reads + wo.tokens.writes
-  const compaction: Tokens = { uncached: 0, reads: all, writes: 0, output: SUMMARY_TOKENS }
+  const compaction: Tokens = { uncached: 0, reads: all, writes: 0, output: m.compaction?.summary ?? 0 }
   // The base shaves sit at the front, so they were read with the base or
   // written with it. A compaction's reading them counts with the conversation,
   // whose growth it comes from.
@@ -137,9 +138,9 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   const actualRequest = dollars(p, actual, u.cache_creation?.ephemeral_5m_input_tokens ?? 0)
 
   // A journal begun after the stats holds what was taken out before it with
-  // no type.
-  const before = { ...c.removed, ...(!prev && s.removedTokens && { other: s.removedTokens }) }
-  const trimmed = prev && (s.removedTokens ?? 0) !== (prev.removedTokens ?? 0) ? removedByType(prev, s) : {}
+  // no type. The client's compaction leaves none of it.
+  const before = s.compacted ? {} : { ...c.removed, ...(!prev && s.removedTokens && { other: s.removedTokens }) }
+  const trimmed = prev && !s.compacted && (s.removedTokens ?? 0) !== (prev.removedTokens ?? 0) ? removedByType(prev, s) : {}
   const removed = { ...before }
   for (const [t, n] of Object.entries(trimmed)) removed[t] = (removed[t] ?? 0) + n
   const positive = (r: Record<string, number>) => Object.entries(r).filter(([, n]) => n > 0)
@@ -162,15 +163,16 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   const weight = by.reduce((n, [, w]) => n + w, 0)
   for (const [t, w] of by) credit(t, (rest * w) / weight)
   // Once the prompt without the shaver compacts, what was taken out before
-  // would have been summarised away but for KEPT of it, so it weighs that
-  // much against what's taken out after.
-  if (wo.compacted) for (const t in removed) removed[t] *= KEPT
+  // would have been summarised away but for what the compaction keeps of it,
+  // so it weighs that much against what's taken out after. Keeping the user's
+  // messages keeps none of it.
+  if (wo.compacted) for (const t in removed) removed[t] *= m.compaction!.kept === 'prompts' ? 0 : m.compaction!.kept
   return {
     without: c.without + withoutAll,
     actual: c.actual + actualRequest,
     saved,
     compactions: c.compactions + (wo.compacted ? 1 : 0),
-    waitMs: c.waitMs + (wo.compacted ? COMPACTION_MS : 0),
+    waitMs: c.waitMs + (wo.compacted ? m.compaction!.ms : 0),
     context: wo.context,
     removed,
   }

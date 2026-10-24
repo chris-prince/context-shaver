@@ -19,6 +19,10 @@ export type Harness = {
   // Whether it has a tool that loads deferred tools, so the proxy can defer
   // others where the protocol can (defer.ts).
   defers: boolean
+  // Whether it sends again all it sent before, but after compacting, so a
+  // request without the last message of the one before follows a compaction
+  // (stats.ts, Sent.compacted).
+  resends: boolean
   // Its session's ID, part of each conversation's (conversationId).
   session(c: Canonical, headers: IncomingHttpHeaders): unknown
 }
@@ -30,6 +34,8 @@ const CLAUDE: Harness = {
   headers: 'x-claude-code-',
   conventions: CLAUDE_CODE,
   defers: true,
+  // It rewrites its last message's reminders on the next request.
+  resends: false,
   session(c, headers) {
     try {
       const session = JSON.parse((c.metadata as { user_id?: string } | undefined)?.user_id ?? '{}').session_id
@@ -61,6 +67,9 @@ const CODEX: Harness = {
     ],
   },
   defers: false,
+  // In 265 journaled requests to 2026-10-24, the 3 that left out the last
+  // message before were those after its 3 compactions.
+  resends: true,
   session: (c, headers) => c.prompt_cache_key ?? headers['session-id'],
 }
 
@@ -87,6 +96,8 @@ const OPENCODE: Harness = {
     ],
   },
   defers: false,
+  // Unchecked: no logged OpenCode session has compacted.
+  resends: false,
   session: (_, headers) => headers['x-opencode-session-id'],
 }
 
