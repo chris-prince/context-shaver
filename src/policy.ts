@@ -14,9 +14,11 @@ type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 // that way; the proxy defers the rest (defer.ts). `summary_threshold_tokens` is
 // how many tokens of completed turns a record leaves uncovered before the
 // proxy asks for the next (summary.ts); without it, none is made or applied.
+// `memoir_threshold_tokens` is how many tokens the records can hold before the
+// oldest are merged into the memoir (summary.ts); without it, none are.
 // `skill_list` shortens the skills Claude Code lists to the model, first
 // matching rule winning (skills.ts).
-export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[]; summary_threshold_tokens?: number; skill_list?: SkillRule[] }
+export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[]; summary_threshold_tokens?: number; memoir_threshold_tokens?: number; skill_list?: SkillRule[] }
 
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
@@ -28,8 +30,8 @@ export function parsePolicy(v: unknown): Policy {
       if (!Array.isArray(rules) || !rules.every((n) => typeof n === 'string')) throw new Error('policy: tools_not_deferred is not a list of tool names')
       continue
     }
-    if (kind === 'summary_threshold_tokens') {
-      if (!Number.isInteger(rules) || (rules as number) <= 0) throw new Error('policy: summary_threshold_tokens is not a positive token count')
+    if (kind === 'summary_threshold_tokens' || kind === 'memoir_threshold_tokens') {
+      if (!Number.isInteger(rules) || (rules as number) <= 0) throw new Error(`policy: ${kind} is not a positive token count`)
       continue
     }
     if (kind === 'skill_list') {

@@ -35,7 +35,7 @@ import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
-import { summaryForkOf, instructions, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
+import { summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -64,10 +64,10 @@ mkdirSync(stateDir, { recursive: true })
 // A conversation's applied clock; the cache entries its answered requests
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
 // tokens each thinking block it was answered with bills, by the signature's
-// hash (trim.ts, sizeOf); how many of its records it sends (summary.ts), and
-// the turn the last summary fork was offered at. Its stats, for `:shaver info`,
-// are in its journal.
-type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; offered?: number }
+// hash (trim.ts, sizeOf); how many of its records it sends (summary.ts), how
+// many of those as the memoir, and the turn the last summary fork was offered
+// at. Its stats, for `:shaver info`, are in its journal.
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; merged?: number; offered?: number }
 
 // A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
@@ -90,10 +90,11 @@ function save(key: string, s: State): void {
   writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify({ ...s, entries, thinking: { ...was?.thinking, ...s.thinking } }))
 }
 
-// A conversation's records (summary.ts), and the dollars its summary forks have
-// cost. They are kept apart from its state, which a request answered after a
-// summary fork began, and prepared before it ended, would save over.
-type Summaries = { chain: Summary[]; spent: number; requests: number }
+// A conversation's records (summary.ts), how many of the oldest the memoir
+// holds, and the dollars its summary forks have cost. They are kept apart from
+// its state, which a request answered after a summary fork began, and prepared
+// before it ended, would save over.
+type Summaries = { chain: Summary[]; merged?: number; spent: number; requests: number }
 const summariesOf = (key: string) => path.join(stateDir, `${key}.summaries.json`)
 function loadSummaries(key: string): Summaries {
   try {
@@ -141,7 +142,7 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; offered?: number; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
 // are trimmed: those are the main loop and subagents. Side requests (Claude
@@ -170,19 +171,25 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const live = new Set(Object.keys(entries))
   const seed = seedOf(body.model, body.tools, body.system)
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
-  // The records it sends: those sent before, and on a cold cache, all there are.
-  const chain = policy.summary_threshold_tokens ? validChain(loadSummaries(key).chain, msgs) : []
+  // The records it sends, and how many of them as the memoir: as sent before,
+  // and on a cold cache, all there are.
+  const file = policy.summary_threshold_tokens ? loadSummaries(key) : undefined
+  const chain = file ? validChain(file.chain, msgs) : []
   const before = Math.min(s?.summarized ?? 0, chain.length)
+  const mergedBefore = Math.min(s?.merged ?? 0, before)
   let records = before
-  let keep = summarized(apply(msgs, policy, held, conv), msgs, chain.slice(0, records))
+  let merged = mergedBefore
+  let keep = summarized(apply(msgs, policy, held, conv), msgs, chain.slice(0, records), merged)
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
-  if (records < chain.length && cold(positionsOf(keep.msgs, seed, thinking, auto))) {
+  const allMerged = Math.min(file?.merged ?? 0, chain.length)
+  if ((records < chain.length || merged < allMerged) && cold(positionsOf(keep.msgs, seed, thinking, auto))) {
     records = chain.length
-    keep = summarized(apply(msgs, policy, held, conv), msgs, chain)
+    merged = allMerged
+    keep = summarized(apply(msgs, policy, held, conv), msgs, chain, merged)
   }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
-  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, policy, conv), msgs, chain.slice(0, records)).msgs, seed, thinking)
+  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, policy, conv), msgs, chain.slice(0, records), merged).msgs, seed, thinking)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
   const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
   const freed = spare > 0 ? undefined : freedSystem(body.system)
@@ -201,7 +208,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   let d: Decision | undefined
   const horizon = model.horizon(latestOf(key)?.requests ?? 0)
   if (clock.steps > held.steps || clock.turns > held.turns) {
-    next = summarized(apply(msgs, policy, clock, conv), msgs, chain.slice(0, records))
+    next = summarized(apply(msgs, policy, clock, conv), msgs, chain.slice(0, records), merged)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
   }
@@ -218,21 +225,22 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
   // A record takes its turns' prompts out of the messages; the stats count them still.
-  const described = { ...describe(body, trimmed, time, d?.advanced || records > before, conv), turns: msgs.filter(isPrompt).length }
+  const described = { ...describe(body, trimmed, time, d?.advanced || records > before || merged > mergedBefore, conv), turns: msgs.filter(isPrompt).length }
   if (deferred) described.defs.deferred = deferred
   if (skills) described.defs.skills = skills
   if (marked) described.ttl = marked
   const last = latestOf(key)
   const lastPart = (last?.suggestion ? last.parts.at(-2) : last?.parts.at(-1))?.key
   if (h?.resends && lastPart && !described.parts.some((q) => q.key === lastPart)) described.compacted = true
-  // Each record is dated by the first message it covers.
+  // Each record is dated by the first message it covers, the memoir by its first record's.
   const starts = startsOf(msgs, chain.slice(0, records))
-  described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[k]])))
+  described.parts.filter((q) => q.kinds.memoir).forEach((q) => (q.born = bornOf(latestOf(key), msgs[starts[0]])))
+  described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[merged + k]])))
   if (suggestion) described.suggestion = true
   const after = policy.summary_threshold_tokens && (model.summaryThreshold ?? policy.summary_threshold_tokens)
   // Whether to send a summary fork is known once the response's counts are in.
-  const summaryFork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens) : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, offered: s?.offered, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
+  const summaryFork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m)) : undefined
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
@@ -509,7 +517,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   record(journalOf(p.key), was.stats, next, u)
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
   const due = p.summaryFork && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, summarized: p.summarized, offered: due?.current ?? p.offered })
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered })
   if (due) void summarize(p, due, target, headers)
   if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }) })
 }
@@ -578,7 +586,8 @@ async function forked(p: Prepared, kind: ForkKind, body: Canonical, target: stri
 // (summary.ts): the request as sent, with the instructions asked after it, in
 // its protocol's form, not streamed. Its cost goes to the conversation's
 // records whatever it answers. Its record follows the ones the summary fork
-// started after; any later ones no longer fit the messages.
+// started after; any later ones no longer fit the messages. Then the oldest
+// go into the memoir, if the records hold too many tokens.
 async function summarize(p: Prepared, f: SummaryFork, target: string, headers: Record<string, string>): Promise<void> {
   const { key, logDir } = p
   summaryForking.add(key)
@@ -595,12 +604,15 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     }
     const out = p.proto.summaryForkAnswer(text)
     const time = new Date().toISOString()
-    const record = recordOf(out.content, f, time)
+    const record = recordOf(out.content, f, time, usage?.output_tokens)
+    let merged: number | undefined
     if (record) {
       const s = loadSummaries(key)
-      writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain: [...s.chain.filter((r) => r.endsBefore <= f.start), record] }))
+      const chain = [...s.chain.filter((r) => r.endsBefore <= f.start), record]
+      merged = policy.memoir_threshold_tokens ? mergedOf(chain, s.merged ?? 0, policy.memoir_threshold_tokens) : 0
+      writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain, merged }))
     }
-    if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, usage })
+    if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record?.arcs?.length, merged, usage })
   } catch (err) {
     console.error('shaver: summary fork failed:', err)
     if (logDir) writeLine(logDir, { event: 'summary', time: new Date().toISOString(), ...asked, ms: Date.now() - began, error: String(err).slice(0, 500) })

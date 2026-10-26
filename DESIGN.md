@@ -301,6 +301,10 @@ before the frontier. The default is 20000; a model can set its own
 (`summaryThreshold` in `models.ts`, 7000 for DeepSeek at DeepInfra). Without the
 key no record is made or sent.
 
+`memoir_threshold_tokens` turns on the memoir (below): once the records hold
+more than that many tokens, the oldest are merged into it. It is 15000 in the
+default policy. Without the key no record is merged.
+
 The proxy reads the file when it starts; restart it after editing.
 
 ## What it trims
@@ -441,7 +445,13 @@ record is kept apart from sending it.
   sees it, and only one runs at a time per conversation.
 - **Made in parts.** The instructions list the uncovered turns by number, each
   with its prompt quoted, and ask for complete arcs only, ending with the turn
-  the record stops before. A record ending where a turn starts leaves no tool
+  the record stops before. Each arc starts with a heading, `## [<turn>] <title>`,
+  giving the turn it starts at and a one-sentence title that stands on its own.
+  The model sees no times (neither protocol puts one on a part), so the proxy
+  dates each arc itself when it keeps the record: by when its first turn's
+  prompt was sent, and its minutes by its turns' own, from each prompt to its
+  last request, leaving out the time between turns. The record also keeps the
+  summary fork's output tokens. A record ending where a turn starts leaves no tool
   call without its result. The next summary fork asks from that turn on. A
   summary fork that finds no complete arc, or calls a tool, makes no record.
 - **Kept** in `proxy-data/state/<key>.summaries.json`, apart from the state,
@@ -458,6 +468,16 @@ record is kept apart from sending it.
   Every request after sends the same records, so the cache keeps reading them.
   In `:shaver info` each record counts as `summary` and is dated by the first
   message it replaced, so several records can fall in several age rows.
+- **Merged into the memoir once they hold too much.** Each time a record is
+  kept, if the records hold more than `memoir_threshold_tokens` by their output
+  tokens, the oldest are merged until the rest fit. The memoir is one assistant
+  message before the records left: a line saying it is an overview of the work
+  leading up to this point, then each merged arc's title and minutes under the
+  date it started, each date once, then a line saying the details are in the
+  session transcripts and what follows is the active work. Like a new record,
+  it is sent once the cache is cold. A record without arc headings (made before
+  they were asked for) stops the merge, along with every record after it. In
+  `:shaver info` the memoir counts as `memoir`.
 
 A summary fork's cost is in the session's actual cost in `:shaver info`, which
 also shows how many summary forks have been sent, answered or not, and what

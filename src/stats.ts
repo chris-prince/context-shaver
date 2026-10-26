@@ -317,7 +317,7 @@ export function settled(s: Sent, tokens: Record<string, number>): number[] {
   })
 }
 const LABELS: Record<string, string> = { harness: 'system-message' }
-const REST_TYPES = ['toolsLoaded', 'user', 'harness', 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'summary', 'other']
+const REST_TYPES = ['toolsLoaded', 'user', 'harness', 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'memoir', 'summary', 'other']
 
 // A kind as the output shows it: renamed, if at all, then hyphen-cased.
 const label = (k: string) => LABELS[k] ?? k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
+import { MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { apply } from '../src/trim.ts'
-import { summaryForkMessages, summaryForkOf, instructions, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -80,4 +80,48 @@ test('records replace the turns they cover, after the base, and go when their pr
   // Rewound to turn 2 with a new prompt: the second record goes.
   const rewound = [...msgs.slice(0, 10), { role: 'user', content: 'turn three, again' }, ...msgs.slice(11)] as ApiMsg[]
   assert.deepEqual(validChain([r1, r2], rewound), [r1])
+})
+
+test("a record's arcs are read from its headings and dated by their turns' prompts", () => {
+  const msgs = session()
+  // Message i was first sent at minute i.
+  const born = (m: ApiMsg) => new Date(Date.UTC(2026, 9, 25, 12, msgs.indexOf(m))).toISOString()
+  const f = summaryForkOf(none(msgs), msgs, [], 0, 1000, new Map(), counts(msgs), born)!
+  const r = recordOf([{ type: 'text', text: '## [1] Did one.\n- a\n\n## [2] Did two.\n- b\n\nEnds before: [3]' }], f, 'now', 900)!
+  assert.equal(r.tokens, 900)
+  // Turn 1's prompt is message 1, turn 2's message 6 and turn 3's message 10;
+  // an arc's last request sent the message before its last, so arc 1 runs from
+  // minute 1 to 4 and arc 2 from 6 to 8.
+  assert.deepEqual(r.arcs, [
+    { turn: 1, title: 'Did one.', time: born(msgs[1]), minutes: 3 },
+    { turn: 2, title: 'Did two.', time: born(msgs[6]), minutes: 2 },
+  ])
+  // An arc over both turns counts their own minutes, not the gap between them.
+  const both = recordOf([{ type: 'text', text: '## [1] Did both.\n- a\n\nEnds before: [3]' }], f, 'now')!
+  assert.deepEqual(both.arcs, [{ turn: 1, title: 'Did both.', time: born(msgs[1]), minutes: 5 }])
+  // No arcs without headings that start the record and rise within its turns.
+  for (const text of ['- a\n\n## [1] Did one.', '## [2] Two.\n## [1] One.', '## [1] One.\n## [3] Three.', '## Arc\n- a'])
+    assert.equal(recordOf([{ type: 'text', text: `${text}\n\nEnds before: [3]` }], f, 'now')!.arcs, undefined)
+})
+
+test('the oldest records merge into the memoir until the rest fit under the threshold', () => {
+  const rec = (tokens: number, arcs = true): Summary => ({ endsBefore: 2, prompt: '', text: '', time: '', tokens, ...(arcs && { arcs: [] }) })
+  const chain = [rec(6000), rec(6000), rec(6000), rec(6000)]
+  assert.equal(mergedOf(chain, 0, 15000), 2)
+  assert.equal(mergedOf(chain, 0, 24000), 0)
+  // Never fewer than before, and not past one without arcs.
+  assert.equal(mergedOf(chain, 3, 15000), 3)
+  assert.equal(mergedOf([rec(6000), rec(6000, false), rec(6000), rec(6000)], 0, 15000), 1)
+})
+
+test('the memoir lists arc titles under their dates, before the records left', () => {
+  const at = (d: number, h: number) => new Date(2026, 9, d, h).toISOString()
+  const r1: Summary = { endsBefore: 2, prompt: '', text: 'one', time: at(16, 23), arcs: [{ turn: 1, title: 'Built A.', time: at(15, 9), minutes: 40 }, { turn: 1, title: 'Fixed B.', time: at(16, 10) }] }
+  const r2: Summary = { endsBefore: 3, prompt: '', text: 'two', time: at(17, 9), arcs: [{ turn: 2, title: 'Tested C.', time: at(16, 20), minutes: 5 }] }
+  assert.equal(memoirOf([r1, r2]), `${MEMOIR_HEAD}\n\n2026-10-15\n- Built A. (~40 min)\n\n2026-10-16\n- Fixed B.\n- Tested C. (~5 min)\n\n${MEMOIR_FOOT}`)
+  const msgs = session()
+  const r3: Summary = { endsBefore: 4, prompt: '', text: 'three', time: '' }
+  const out = summarized(none(msgs), msgs, [r1, r2, r3], 2)
+  assert.deepEqual(out.msgs.slice(3, 5), [memoirOf([r1, r2]), `${SUMMARY_HEAD}\n\nthree`].map((text) => ({ role: 'assistant', content: [{ type: 'text', text }] })))
+  assert.deepEqual(out.origin.slice(3, 5), [3, 10])
 })

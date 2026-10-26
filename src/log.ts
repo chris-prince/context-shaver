@@ -10,7 +10,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { isSkillBody, isSummary, type ApiMsg, type Block } from './items.ts'
+import { isMemoir, isSkillBody, isSummary, type ApiMsg, type Block } from './items.ts'
 import { isStubbed, STUB } from './trim.ts'
 
 export const LOG_DIR = 'logs'
@@ -62,7 +62,7 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
     if (k === 'system' && b.type === 'text') for (const [s, n] of sections(b)) add(s, n)
     else add(k === 'system' && b.type === 'tool_addition' ? 'system:tools-deferred' : k, JSON.stringify(b).length)
   }
-  const envelope = m.role !== 'system' ? (out.summary ? 'summary' : m.role) : preamble ? (Object.keys(out)[0] ?? injected) : injected
+  const envelope = m.role !== 'system' ? (out.summary ? 'summary' : out.memoir ? 'memoir' : m.role) : preamble ? (Object.keys(out)[0] ?? injected) : injected
   add(envelope, json.length - Object.values(out).reduce((a, b) => a + b, 0))
   const first = content.find((b) => b.type === 'tool_use' || b.type === 'tool_result')
   const id = first?.type === 'tool_use' ? first.id : first?.tool_use_id
@@ -109,7 +109,7 @@ const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string'
 function kindOf(b: Block, role: string): string {
   switch (b.type) {
     case 'text':
-      return role === 'user' && isSkillBody(b) ? 'toolResultsSkill' : role === 'assistant' && isSummary(b) ? 'summary' : role
+      return role === 'user' && isSkillBody(b) ? 'toolResultsSkill' : role === 'assistant' && isSummary(b) ? 'summary' : role === 'assistant' && isMemoir(b) ? 'memoir' : role
     case 'thinking':
     case 'redacted_thinking':
       return 'reasoning'

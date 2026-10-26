@@ -17,5 +17,6 @@
   "skill_list": [
     { "match": "*", "action": "keep" }
   ],
-  "summary_threshold_tokens": 20000
+  "summary_threshold_tokens": 20000,
+  "memoir_threshold_tokens": 15000
 }
