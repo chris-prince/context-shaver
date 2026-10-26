@@ -112,8 +112,8 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
   return { start, current, prompts: turns, chars: charsFrom(start) }
 }
 
-// The instructions a summary fork appends: local/prompts/arcs6.md, recast for a
-// model compacting its own context rather than a transcript it is shown.
+// The instructions a summary fork appends: local/prompts/arcs8.md, with its
+// placeholders filled in.
 export function instructions(f: SummaryFork): string {
   const list = f.prompts.map((p, k) => `[${f.start + k}] "${p.quote}"`)
   const current = list.pop()
