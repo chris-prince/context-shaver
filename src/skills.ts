@@ -1,4 +1,5 @@
-// Shortens the skill list Claude Code sends in its environment message, by the
+// Shortens the skill list Claude Code sends in its environment message, or
+// Codex in its developer message, by the
 // policy's `skill_list` (policy.ts): each listed skill takes the first rule
 // whose pattern matches its name, and is kept, stubbed, or dropped from the
 // list. With no rule matching it is kept. A stub is the first sentences of the
@@ -9,7 +10,15 @@
 
 import { hash } from './log.ts'
 
-const HEAD = 'The following skills are available for use with the Skill tool:\n\n'
+// The lists harnesses send, each after its heading. Claude Code's ends at a
+// blank line, an entry's description sometimes running on over more lines.
+// Codex's ends at the first line that isn't an entry, each entry one line
+// ending with where its SKILL.md is, which is kept as it is.
+type Format = { head: string; end: RegExp; tail: RegExp }
+const FORMATS: Format[] = [
+  { head: 'The following skills are available for use with the Skill tool:\n\n', end: /\n\n/g, tail: /$/ },
+  { head: '### Available skills\n', end: /\n(?!- )/g, tail: / \(file: [^()]*\)$/ },
+]
 
 export type SkillRule = { match: string; action: 'keep' | 'stub' | 'drop'; sentences?: number; text?: string; replaces?: string }
 export type Skill = { name: string; description: string }
@@ -18,7 +27,7 @@ export type Skill = { name: string; description: string }
 export const descriptionHash = (description: string) => hash(description).slice(0, 12)
 
 type Block = { type: string; text?: string }
-type Body = { messages?: { role: string; content: string | Block[] }[] }
+type Body = { messages?: { role: string; content: string | Block[] }[]; system?: unknown }
 
 // A pattern is a name, with `*` for any run of characters.
 const matches = (pattern: string, name: string) => new RegExp('^' + pattern.split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(name)
@@ -36,63 +45,74 @@ function stubOf(description: string, rule: SkillRule): string {
   return rule.replaces === descriptionHash(description) && rule.text.length < description.length ? rule.text : description
 }
 
-// Each entry is `- name: description`, its description sometimes running on
-// over more lines; the list ends at a blank line.
-function listAt(text: string): { from: number; end: number; entries: string[] } | undefined {
-  const at = text.indexOf(HEAD)
-  if (at < 0) return undefined
-  const from = at + HEAD.length
-  const end = text.indexOf('\n\n', from) < 0 ? text.length : text.indexOf('\n\n', from)
-  return { from, end, entries: text.slice(from, end).split(/\n(?=- [\w:.-]+: )/) }
+// Each entry is `- name: description`, then its format's tail.
+type List = { format: Format; at: number; from: number; end: number; entries: string[] }
+function listAt(text: string): List | undefined {
+  for (const format of FORMATS) {
+    const at = text.indexOf(format.head)
+    if (at < 0) continue
+    const from = at + format.head.length
+    format.end.lastIndex = from
+    const end = format.end.exec(text)?.index ?? text.length
+    return { format, at, from, end, entries: text.slice(from, end).split(/\n(?=- [\w:.-]+: )/) }
+  }
 }
 
-const skillOf = (entry: string): Skill | undefined => {
+const entryOf = (entry: string, format: Format): (Skill & { tail: string }) | undefined => {
   const name = /^- ([\w:.-]+): /.exec(entry)?.[1]
-  return name === undefined ? undefined : { name, description: entry.slice(name.length + 4) }
+  if (name === undefined) return undefined
+  const rest = entry.slice(name.length + 4)
+  const tail = format.tail.exec(rest)?.[0] ?? ''
+  return { name, description: rest.slice(0, rest.length - tail.length), tail }
+}
+const skillOf = (entry: string, format: Format): Skill | undefined => {
+  const e = entryOf(entry, format)
+  return e && { name: e.name, description: e.description }
 }
 
 function shave(text: string, rules: readonly SkillRule[]): string {
   const list = listAt(text)
   if (!list) return text
-  const { from, end } = list
-  const at = from - HEAD.length
+  const { at, from, end } = list
   const kept = list.entries.flatMap((entry) => {
-    const skill = skillOf(entry)
+    const skill = entryOf(entry, list.format)
     const rule = skill && rules.find((r) => matches(r.match, skill.name))
     if (rule?.action === 'drop') return []
-    if (rule?.action === 'stub') return [`- ${skill!.name}: ` + stubOf(skill!.description, rule)]
+    if (rule?.action === 'stub') return [`- ${skill!.name}: ` + stubOf(skill!.description, rule) + skill!.tail]
     return [entry]
   })
   if (!kept.length) return text.slice(0, at) + text.slice(end).replace(/^\n\n/, '')
   return text.slice(0, from) + kept.join('\n') + text.slice(end)
 }
 
+const textsOf = (content: unknown): string[] => (typeof content === 'string' ? [content] : Array.isArray(content) ? content.map((b: Block) => b.text ?? '') : [])
+
+// Only the system and system messages: a conversation that quotes the list
+// is not one.
 export function shaveSkills(body: Body, rules: readonly SkillRule[]): number {
   let out = 0
-  // Only system messages: a conversation that quotes the list is not one.
-  for (const m of body.messages ?? []) {
-    if (m.role !== 'system') continue
-    const one = (t: string) => {
-      const s = shave(t, rules)
-      out += t.length - s.length
-      return s
-    }
-    m.content = typeof m.content === 'string' ? one(m.content) : m.content.map((b) => (b.text?.includes(HEAD) ? { ...b, text: one(b.text) } : b))
+  const one = (t: string) => {
+    const s = shave(t, rules)
+    out += t.length - s.length
+    return s
   }
+  const each = (content: string | Block[]) => (typeof content === 'string' ? one(content) : content.map((b) => (b.text !== undefined && listAt(b.text) ? { ...b, text: one(b.text) } : b)))
+  if (typeof body.system === 'string' || Array.isArray(body.system)) body.system = each(body.system as string | Block[])
+  for (const m of body.messages ?? []) if (m.role === 'system') m.content = each(m.content)
   return out
 }
 
 // The message holding a request's skill list, the last in its system messages,
-// or -1 with none: where its base ends, for `:shaver optimize`'s fork.
-export const listMessage = (body: Body): number =>
-  (body.messages ?? []).findLastIndex((m) => m.role === 'system' && (typeof m.content === 'string' ? [m.content] : m.content.map((b) => b.text ?? '')).some((t) => t.includes(HEAD)))
+// or -1 with none, as when the list is in the system: where its base ends,
+// for `:shaver optimize`'s fork.
+export const listMessage = (body: Body): number => (body.messages ?? []).findLastIndex((m) => m.role === 'system' && textsOf(m.content).some((t) => listAt(t)))
 
-// The skills a request lists, as Claude Code sent them: the last list in its
-// system messages.
+// The skills a request lists, as its harness sent them: the last list in its
+// system and system messages.
 export function skillsOf(body: Body): Skill[] {
-  const texts = (body.messages ?? []).filter((m) => m.role === 'system').flatMap((m) => (typeof m.content === 'string' ? [m.content] : m.content.map((b) => b.text ?? '')))
+  const texts = [...textsOf(body.system), ...(body.messages ?? []).filter((m) => m.role === 'system').flatMap((m) => textsOf(m.content))]
   const list = texts.map(listAt).findLast((l) => l !== undefined)
-  return list?.entries.flatMap((e) => skillOf(e) ?? []) ?? []
+  return list?.entries.flatMap((e) => skillOf(e, list.format) ?? []) ?? []
 }
 
 // The skills the rules keep whole, which `:shaver optimize` writes lines for;

@@ -84,8 +84,13 @@ export function canonical(wire: Record<string, unknown>): Wire {
     i = j
   }
   const tools = toolsOf([...((wire.tools ?? []) as Tool[]), ...head.flatMap((it) => (it.type === 'additional_tools' ? ((it.tools ?? []) as Tool[]) : []))])
-  const system = head.flatMap((it) => (it.type === 'message' ? (it.content ?? []).map((p) => ({ type: 'text', text: p.text ?? '' })) : []))
-  if (typeof wire.instructions === 'string') system.unshift({ type: 'text', text: wire.instructions })
+  // Each system block with the head item and part it was, or none for the
+  // instructions, so one whose text the core changed (a skill list it
+  // shortened, skills.ts) is sent with its new text.
+  const sources: ({ item: Item; k: number } | undefined)[] = []
+  const system = head.flatMap((it) => (it.type === 'message' ? (it.content ?? []).map((p, k) => (sources.push({ item: it, k }), { type: 'text', text: p.text ?? '' })) : []))
+  if (typeof wire.instructions === 'string') system.unshift({ type: 'text', text: wire.instructions }), sources.unshift(undefined)
+  const said = system.map((b) => b.text)
   const body: Canonical = { model: String(wire.model ?? ''), messages, system, tools, stream: !!wire.stream, prompt_cache_key: wire.prompt_cache_key }
 
   // A message the core left is sent as it came. One it changed is its items
@@ -152,7 +157,28 @@ export function canonical(wire: Record<string, unknown>): Wire {
     }
     return { head: sum(head), messages: rendered.map(sum), kinds: rendered.map(kindsOf), reasoning }
   }
-  return { body, render: (c) => ({ ...wire, input: [...head, ...c.messages.flatMap(renderMsg)] }), ids: { head: idsOf(head), of: (m) => idsOf(renderMsg(m)) }, counted }
+  // The head and instructions as they came, but for the parts whose text the
+  // core changed; every other item is sent as it came.
+  const headOf = (c: Canonical): { head: Item[]; instructions: unknown } => {
+    const now = c.system as { text?: string }[] | undefined
+    if (!Array.isArray(now) || now.length !== said.length) return { head, instructions: wire.instructions }
+    const parts = new Map<Item, Part[]>()
+    let instructions = wire.instructions
+    now.forEach((b, i) => {
+      if (b.text === said[i]) return
+      const s = sources[i]
+      if (!s) return void (instructions = b.text)
+      const ps = parts.get(s.item) ?? [...(s.item.content ?? [])]
+      ps[s.k] = { ...ps[s.k], text: b.text }
+      parts.set(s.item, ps)
+    })
+    return { head: head.map((it) => (parts.has(it) ? { ...it, content: parts.get(it) } : it)), instructions }
+  }
+  const render = (c: Canonical) => {
+    const h = headOf(c)
+    return { ...wire, ...(h.instructions !== undefined && { instructions: h.instructions }), input: [...h.head, ...c.messages.flatMap(renderMsg)] }
+  }
+  return { body, render, ids: { head: idsOf(head), of: (m) => idsOf(renderMsg(m)) }, counted }
 }
 
 type Response = { output?: Item[]; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; attribution?: unknown } }

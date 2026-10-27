@@ -27,6 +27,18 @@ test('a request the core leaves comes back as it came', () => {
   assert.equal(JSON.stringify(c.render(c.body)), JSON.stringify(wire))
 })
 
+test('a head part the core changed is sent with its new text, every other item as it came', () => {
+  const head = { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'keep' }, { type: 'input_text', text: 'old list' }] }
+  const w = { ...wire, instructions: 'be brief', input: [wire.input[0], head, ...wire.input.slice(1)] }
+  const c = canonical(w)
+  const system = c.body.system as { text: string }[]
+  system[system.findIndex((b) => b.text === 'old list')].text = 'new list'
+  const sent = c.render(c.body) as typeof w
+  assert.deepEqual(sent.input[1], { ...head, content: [head.content[0], { type: 'input_text', text: 'new list' }] })
+  assert.equal(JSON.stringify({ ...sent, input: sent.input.filter((_, i) => i !== 1) }), JSON.stringify({ ...w, input: w.input.filter((_, i) => i !== 1) }))
+  assert.equal(head.content[1].text, 'old list')
+})
+
 test('a request becomes the core shape', () => {
   const { body } = canonical(wire)
   assert.deepEqual(body.system, [

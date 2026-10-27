@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { descriptionHash, keptWhole, LINE_WORDS, linesOf, shaveSkills, skillsOf, withLines, type SkillRule } from '../src/skills.ts'
+import { descriptionHash, keptWhole, LINE_WORDS, linesOf, listMessage, shaveSkills, skillsOf, withLines, type SkillRule } from '../src/skills.ts'
 
 const HEAD = 'The following skills are available for use with the Skill tool:\n\n'
 const list = [
@@ -91,6 +91,31 @@ test("an answer's lines count only for skills asked about, each a string of at m
   const answer = '```json\n' + JSON.stringify({ init: ' Set up project memory ', 'claude-api': long, 'artifact-design': 3, other: 'Not asked' }) + '\n```'
   assert.deepEqual(linesOf(answer, skills), { init: 'Set up project memory' })
   assert.deepEqual(linesOf('no JSON here', skills), {})
+})
+
+// Shaped like Codex's skills part, in its system.
+const codex = () => ({
+  messages: [{ role: 'user', content: 'hi' }],
+  system: [
+    { type: 'text', text: 'You are Codex.' },
+    { type: 'text', text: '<skills_instructions>\n## Skills\nIntro.\n### Available skills\n- imagegen: Generate or edit images. (file: /s/imagegen/SKILL.md)\n- r2:update-pet: Update the pet (and its food). (file: r2/update-pet/SKILL.md)\n### How to use skills\n- Read the SKILL.md.\n</skills_instructions>' },
+  ],
+})
+
+test("Codex's list is read and shortened in the system, each entry keeping where its SKILL.md is", () => {
+  const b = codex()
+  const skills = skillsOf(b)
+  assert.deepEqual(skills, [
+    { name: 'imagegen', description: 'Generate or edit images.' },
+    { name: 'r2:update-pet', description: 'Update the pet (and its food).' },
+  ])
+  assert.equal(listMessage(b), -1)
+  shaveSkills(b, [
+    { match: 'imagegen', action: 'stub', text: 'Make images', replaces: descriptionHash(skills[0].description) },
+    { match: 'r2:*', action: 'drop' },
+  ])
+  assert.equal(b.system[0].text, 'You are Codex.')
+  assert.equal(b.system[1].text, '<skills_instructions>\n## Skills\nIntro.\n### Available skills\n- imagegen: Make images (file: /s/imagegen/SKILL.md)\n### How to use skills\n- Read the SKILL.md.\n</skills_instructions>')
 })
 
 test('written lines go ahead of the other rules, in place of lines written before', () => {

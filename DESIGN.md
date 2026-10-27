@@ -286,7 +286,10 @@ not. Without the key nothing is deferred, and with tool search off (no
 sessions once.
 
 `skill_list` shortens the list of skills Claude Code gives the model in its
-environment message. Each rule has a `match`, a skill name with `*` for any
+environment message, or Codex in its developer message (`### Available
+skills`, each entry ending with where its SKILL.md is, which stays). On
+Responses the core sees the head as the system, and a part it changed there is
+sent with its new text, every other item as it came. Each rule has a `match`, a skill name with `*` for any
 run of characters, and an `action`: `keep`, `drop`, or `stub` with `sentences`,
 which keeps that many sentences of the description. Each skill takes the first
 rule that matches it, so `keep` rules go before a broader `stub` or `drop`; a
@@ -303,7 +306,7 @@ these lines: for each skill the rules keep whole, or gave a line before, it asks
 the session's own model for one of at most 6 words that tells the skill from
 the others, asking once more for any it left out. The question is a fork of the
 request's base as the proxy sends it, through the message holding the skill
-list, so it reads the session's cache entry when there is one. It shows the
+list (on Codex, the head alone), so it reads the session's cache entry when there is one. It shows the
 lines and the tokens they save, as the API counts them (Messages only), and
 asks whether to apply them, giving what rewriting the warm sessions' caches
 would cost. A `y` or `n` as the next prompt is the answer, a command like the
