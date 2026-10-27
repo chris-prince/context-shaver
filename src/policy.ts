@@ -17,7 +17,7 @@ type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 // `memoir_threshold_tokens` is how many tokens the records can hold before the
 // oldest are merged into the memoir (summary.ts); without it, none are.
 // `skill_list` shortens the skills Claude Code lists to the model, first
-// matching rule winning (skills.ts).
+// matching rule winning (skills.ts); `:shaver optimize` writes stubs into it.
 export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[]; summary_threshold_tokens?: number; memoir_threshold_tokens?: number; skill_list?: SkillRule[] }
 
 // What each kind can be given. Only tool calls and skills have a stub.
@@ -36,8 +36,10 @@ export function parsePolicy(v: unknown): Policy {
     }
     if (kind === 'skill_list') {
       if (!Array.isArray(rules)) throw new Error('policy: skill_list is not a list of rules')
+      // A stub keeps some sentences, or is a written line with the hash of what it replaces.
+      const stub = (r: Record<string, unknown>) => (r.text === undefined ? Number.isInteger(r.sentences) && (r.sentences as number) >= 1 && r.replaces === undefined : typeof r.text === 'string' && typeof r.replaces === 'string' && r.sentences === undefined)
       for (const r of rules)
-        if (typeof r?.match !== 'string' || !['keep', 'stub', 'drop'].includes(r.action) || (r.action === 'stub' ? !Number.isInteger(r.sentences) || r.sentences < 1 : r.sentences !== undefined))
+        if (typeof r?.match !== 'string' || !['keep', 'stub', 'drop'].includes(r.action) || (r.action === 'stub' ? !stub(r) : r.sentences !== undefined || r.text !== undefined || r.replaces !== undefined))
           throw new Error(`policy: bad skill_list rule ${JSON.stringify(r)}`)
       continue
     }

@@ -13,7 +13,7 @@
 // conversation's requests left.
 
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
@@ -24,15 +24,15 @@ import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { forceDefer } from './defer.ts'
-import { shaveSkills } from './skills.ts'
+import { keptWhole, linesOf, linesPrompt, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
-import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
+import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, money, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
-import { loadPolicy, seedPolicy } from './policy.ts'
+import { loadPolicy, parsePolicy, seedPolicy, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { coveredBy, summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
@@ -66,8 +66,10 @@ mkdirSync(stateDir, { recursive: true })
 // tokens each thinking block it was answered with bills, by the signature's
 // hash (trim.ts, sizeOf); how many of its records it sends (summary.ts), how
 // many of those as the memoir, and the turn the last summary fork was offered
-// at. Its stats, for `:shaver info`, are in its journal.
-type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; merged?: number; offered?: number }
+// at; the skill rules its list was last shortened by, and when it took them.
+// Its stats, for `:shaver info`, are in its journal.
+type SkillList = { rules: SkillRule[]; at: number }
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList }
 
 // A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
@@ -142,7 +144,7 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
 // are trimmed: those are the main loop and subagents. Side requests (Claude
@@ -154,9 +156,6 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { render, ids, counted }: Wire, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
-  // What it takes out of the base: deferred tools, and skills off the list.
-  const deferred = proto.defers && h?.defers && policy.tools_not_deferred ? forceDefer(body, policy.tools_not_deferred) : 0
-  const skills = policy.skill_list ? shaveSkills(body, policy.skill_list) : 0
   const key = conversationId(h, proto.name, body, headers)
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
@@ -169,6 +168,12 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const model = { ...modelOf(body.model, body.provider), ...(marked && { ttl: marked }) }
   const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= lifetimeMs(model.ttl, ttlMs)))
   const live = new Set(Object.keys(entries))
+  // What it takes out of the base: deferred tools, and skills off the list.
+  // While its cache is warm a conversation keeps the skill rules it has, so
+  // new ones don't rewrite it, unless `:shaver optimize apply now` came since.
+  const deferred = proto.defers && h?.defers && policy.tools_not_deferred ? forceDefer(body, policy.tools_not_deferred) : 0
+  const skillList = s?.skillList && live.size && s.skillList.at > skillsForcedAt ? s.skillList : policy.skill_list && { rules: policy.skill_list, at: now }
+  const skills = skillList ? shaveSkills(body, skillList.rules) : 0
   const seed = seedOf(body.model, body.tools, body.system)
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
   // The records it sends, and how many of them as the memoir: as sent before,
@@ -243,7 +248,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const after = policy.summary_threshold_tokens && (model.summaryThreshold ?? policy.summary_threshold_tokens)
   // Whether to send a summary fork is known once the response's counts are in.
   const summaryFork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m)) : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (d?.savedChars) {
@@ -302,7 +307,9 @@ function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers
   const key = conversationId(h, proto.name, sent, headers)
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
-  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks } }
+  // `:shaver optimize` requests made here are charged to the skill list.
+  const lines = [...forks(journalOf(key))].reduce((n, f) => n + (f.kind === 'optimize' && f.usage ? spent(f.model, f.provider, f.usage) : 0), 0)
+  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks + lines, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks, 'skill-list': (c.saved['skill-list'] ?? 0) - lines } }
   // Each summary request is running, or left a record or none. A record no
   // longer fitting the messages is dropped, like one replaced or none at all.
   const valid = validChain(chain, sent.messages).length
@@ -343,6 +350,14 @@ const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding'
 // which Claude Code shows in the status line. Answers made here carry them
 // too, or the status line loses them for that turn.
 const limits = new Map<Protocol, Record<string, string>>()
+
+// The headers a request is sent on with: the client's, but for hop-by-hop
+// ones, and the encoding of a body the proxy decompressed.
+function forwarded(from: IncomingHttpHeaders, zstd: boolean): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const [k, v] of Object.entries(from)) if (!HOP.has(k) && !(zstd && k === 'content-encoding') && v !== undefined) headers[k] = Array.isArray(v) ? v.join(', ') : v
+  return headers
+}
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = []
@@ -409,9 +424,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const msgs = stripCommands(body.messages)
         const command = body.tools?.length && pendingCommand(msgs)
         if (command) {
-          const text = command === ':shaver policy' ? policyText() : command === ':shaver info all' ? '```\n' + totals(stateDir, ttlMs) + '\n```' : stats(proto, h, { ...body, messages: msgs }, req.headers)
+          const key = () => conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers)
+          const text = command.startsWith(':shaver optimize') ? await optimize(command, key(), body, upstream + url, forwarded(req.headers, zstd)) : command === ':shaver policy' ? policyText() : command === ':shaver info all' ? '```\n' + totals(stateDir, ttlMs) + '\n```' : stats(proto, h, { ...body, messages: msgs }, req.headers)
           res.writeHead(200, { ...limits.get(proto), 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
-          const context = latestOf(conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers))?.inputTokens ?? 0
+          const context = latestOf(key())?.inputTokens ?? 0
           return void res.end(proto.reply(text, body.model, !!body.stream, context))
         }
         if (msgs.length < body.messages.length) {
@@ -429,8 +445,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: request left untrimmed:', err)
     }
   }
-  const headers: Record<string, string> = {}
-  for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && !(zstd && k === 'content-encoding') && v !== undefined) headers[k] = Array.isArray(v) ? v.join(', ') : v
+  const headers = forwarded(req.headers, zstd)
   const abort = new AbortController()
   const usage = proto.usageReader()
   // A client that leaves once its answer is complete hasn't interrupted it:
@@ -520,7 +535,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   record(journalOf(p.key), was.stats, next, u)
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
   const due = p.summaryFork && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered })
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList })
   if (due) void summarize(p, due, target, headers)
   if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }) })
 }
@@ -568,7 +583,7 @@ const summaryForking = new Set<string>()
 // finish journals a client's: once the API answers 200, before the answer is
 // used, with the usage its protocol reads in it, or marked cut off or no usage.
 // Gives the answer and that usage; throws for any other status.
-async function forked(p: Prepared, kind: ForkKind, body: Canonical, target: string, headers: Record<string, string>): Promise<{ text: string; usage?: Usage }> {
+async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>, kind: ForkKind, body: Canonical, target: string, headers: Record<string, string>): Promise<{ text: string; usage?: Usage }> {
   const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
   if (r.status !== 200) throw new Error(`${r.status} ${(await r.text()).slice(0, 500)}`)
   let text: string | undefined
@@ -622,6 +637,107 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
   } finally {
     summaryForking.delete(key)
   }
+}
+
+// `:shaver optimize` writes each skill the policy keeps whole a line, asking
+// this model, and shows them; `:shaver optimize apply` puts them in the policy,
+// in memory and on disk, for every session the proxy serves.
+const LINES_MODEL = 'claude-haiku-5-5'
+
+// The lines shown last, waiting to be applied.
+let proposal: { skills: Skill[]; lines: Record<string, string> } | undefined
+
+// When `:shaver optimize apply now` last ran: a conversation that took its
+// skill rules before then takes the policy's on its next request, warm or not.
+let skillsForcedAt = 0
+
+// The tokens the API counts in a text, or none if it won't count them.
+async function tokensOf(text: string, target: string, headers: Record<string, string>): Promise<number | undefined> {
+  const u = new URL(target)
+  u.pathname = u.pathname.replace(/\/messages$/, '/messages/count_tokens')
+  try {
+    const r = await fetch(u, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify({ model: LINES_MODEL, messages: [{ role: 'user', content: text }] }), signal: AbortSignal.timeout(30_000) })
+    return r.ok ? ((await r.json()) as { input_tokens: number }).input_tokens : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// The conversations whose cache is warm with other skill rules than `rules`,
+// each with what rewriting its cache once costs beyond reading it.
+function warmWithOther(rules: readonly SkillRule[], now: number): number[] {
+  const out: number[] = []
+  for (const f of readdirSync(stateDir)) {
+    if (!f.endsWith('.json') || f.endsWith('.summaries.json')) continue
+    const key = f.slice(0, -'.json'.length)
+    const s = load(key)
+    const st = s?.skillList && JSON.stringify(s.skillList.rules) !== JSON.stringify(rules) ? latestOf(key) : undefined
+    if (!st || !Object.values(s!.entries ?? {}).some((t) => now - t <= lifetimeMs(modelOf(st.model, st.provider).ttl, ttlMs))) continue
+    const n = st.inputTokens
+    out.push(spent(st.model, st.provider, { input_tokens: 0, cache_creation_input_tokens: n, cache_creation: { ephemeral_5m_input_tokens: n } }) - spent(st.model, st.provider, { input_tokens: 0, cache_read_input_tokens: n }))
+  }
+  return out
+}
+
+// The policy file as `:shaver optimize apply` writes it: a key to a line, a
+// rule to a line.
+const policyJson = (p: Policy) => {
+  const one = (v: unknown): string => (v && typeof v === 'object' && !Array.isArray(v) ? `{ ${Object.entries(v).map(([k, w]) => `${JSON.stringify(k)}: ${one(w)}`).join(', ')} }` : Array.isArray(v) ? `[${v.map(one).join(', ')}]` : JSON.stringify(v))
+  const value = (v: unknown) => (Array.isArray(v) && v.some((r) => r && typeof r === 'object') ? `[\n${v.map((r) => '    ' + one(r)).join(',\n')}\n  ]` : one(v))
+  return `{\n${Object.entries(p).map(([k, v]) => `  ${JSON.stringify(k)}: ${value(v)}`).join(',\n')}\n}\n`
+}
+
+async function optimize(command: string, key: string, body: Canonical, target: string, headers: Record<string, string>): Promise<string> {
+  if (command !== ':shaver optimize') {
+    if (!proposal) return 'shaver: no lines to apply; `:shaver optimize` writes them.'
+    const rules = withLines(policy.skill_list ?? [], proposal.skills, proposal.lines)
+    const next = parsePolicy({ ...policy, skill_list: rules })
+    writeFileSync(a.policy, policyJson(next))
+    policy.skill_list = rules
+    const now = command === ':shaver optimize apply now'
+    if (now) skillsForcedAt = Date.now()
+    proposal = undefined
+    return [
+      `shaver: wrote ${countOf(rules.filter((r) => r.text !== undefined).length, 'skill line')} to \`${a.policy}\`.`,
+      `New sessions get them from their first request, and open ones ${now ? 'on their next' : 'once their cache is cold'}.`,
+      "To start a session's stats fresh, run /clear in it (this drops its context).",
+    ].join(' ')
+  }
+  const skills = keptWhole(skillsOf(body), policy.skill_list ?? [])
+  if (!skills.length) return 'shaver: this request lists no skills the policy keeps whole, so there are no lines to write.'
+  let lines: Record<string, string> = {}
+  // A model's answer can leave skills out, so those are asked for once more.
+  for (let tries = 0; tries < 2; tries++) {
+    const ask = skills.filter((s) => !lines[s.name])
+    if (!ask.length) break
+    try {
+      const { text } = await forked({ key, proto: MESSAGES, model: LINES_MODEL }, 'optimize', { model: LINES_MODEL, max_tokens: 4096, messages: [{ role: 'user', content: linesPrompt(ask) }] }, target, headers)
+      lines = { ...lines, ...linesOf(MESSAGES.summaryForkAnswer(text).content.map((b) => b.text ?? '').join(''), ask) }
+    } catch (err) {
+      return `shaver: asking ${LINES_MODEL} for skill lines failed: ${err instanceof Error ? err.message : err}`
+    }
+  }
+  const lined = skills.filter((s) => lines[s.name])
+  if (!lined.length) return 'shaver: the model wrote no usable lines; try `:shaver optimize` again.'
+  proposal = { skills, lines }
+  const listOf = (f: (s: Skill) => string) => lined.map((s) => `- ${s.name}: ${f(s)}`).join('\n')
+  const [before, after] = await Promise.all([tokensOf(listOf((s) => s.description), target, headers), tokensOf(listOf((s) => lines[s.name]), target, headers)])
+  const width = Math.max(...lined.map((s) => s.name.length))
+  const left = skills.filter((s) => !lines[s.name]).map((s) => s.name)
+  const warm = warmWithOther(withLines(policy.skill_list ?? [], skills, lines), Date.now())
+  return [
+    `shaver: lines for ${lined.length} of ${countOf(skills.length, 'skill')} (${LINES_MODEL}):`,
+    '',
+    '```',
+    ...lined.map((s) => `${s.name.padEnd(width)}  ${lines[s.name]}`),
+    '```',
+    ...(left.length ? ['', `No line, so kept whole: ${left.join(', ')}.`] : []),
+    '',
+    before !== undefined && after !== undefined ? `They take these skills' descriptions from ${before.toLocaleString('en-US')} tokens to ${after.toLocaleString('en-US')}, ${(before - after).toLocaleString('en-US')} fewer on every request.` : 'The API would not count their tokens.',
+    '',
+    '- `:shaver optimize apply`: open sessions switch once their cache is cold.',
+    `- \`:shaver optimize apply now\`: open sessions switch on their next request${warm.length ? `; ${countOf(warm.length, 'session')} with a warm cache would rewrite it, about ${money(warm.reduce((x, y) => x + y, 0))}` : ''}.`,
+  ].join('\n')
 }
 
 createServer((req, res) => {

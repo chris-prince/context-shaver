@@ -292,8 +292,25 @@ which keeps that many sentences of the description. Each skill takes the first
 rule that matches it, so `keep` rules go before a broader `stub` or `drop`; a
 skill no rule matches is kept. A dropped skill can still be run as `/name`, but
 the model won't invoke it. The bytes taken out count as a base saving of their
-own. Like `tools_not_deferred`, changing the rules rewrites the
-cache of open sessions once.
+own. A conversation keeps the rules it took while its cache is warm, so a
+changed policy reaches it once the cache is cold.
+
+A `stub` can instead carry `text`, a line written for the skill, and
+`replaces`, the hash of the description it was written from. The line stands in
+for that description only, and only when shorter, so a skill whose description
+changed shows it whole until a new line is written. `:shaver optimize` writes
+these lines: for each skill the rules keep whole, or gave a line before, it asks
+Haiku (`LINES_MODEL` in `server.ts`) for one of at most 6 words that tells the
+skill from the others, asking once more for any it left out. It shows the lines
+and the tokens they save, as the API counts them, and changes nothing.
+`:shaver optimize apply` puts them first in `skill_list`, in memory and in the
+policy file, for new sessions from their first request and open ones once their
+cache is cold; `apply now` switches open ones on their next request, at the
+cost of a cache rewrite each, which the proposal gives. Probes found 6-word
+lines made the model pick the right skill more often than the full
+descriptions, at about a tenth of their tokens. The request's cost counts
+against the skill list's saving. A session's stats start again only with a new
+conversation, so `apply` suggests `/clear`.
 
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens

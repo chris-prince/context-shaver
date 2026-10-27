@@ -70,8 +70,9 @@ test('a rule is due once its unit is completed, past the wait', () => {
 
 test('a policy file is checked', () => {
   assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'tool_search', 'reasoning', 'tools_not_deferred', 'skill_list', 'summary_threshold_tokens', 'memoir_threshold_tokens'])
-  for (const bad of [[], { tools: [] }, { tool: {} }, { tools_not_deferred: [1] }, { summary_threshold_tokens: 0 }, { summary_threshold_tokens: '20k' }, { memoir_threshold_tokens: 0 }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }, { skill_list: {} }, { skill_list: [{ match: 'x', action: 'stub' }] }, { skill_list: [{ match: 'x', action: 'drop', sentences: 1 }] }, { skill_list: [{ action: 'keep' }] }])
+  for (const bad of [[], { tools: [] }, { tool: {} }, { tools_not_deferred: [1] }, { summary_threshold_tokens: 0 }, { summary_threshold_tokens: '20k' }, { memoir_threshold_tokens: 0 }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }, { skill_list: {} }, { skill_list: [{ match: 'x', action: 'stub' }] }, { skill_list: [{ match: 'x', action: 'drop', sentences: 1 }] }, { skill_list: [{ action: 'keep' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line', replaces: 'h', sentences: 1 }] }, { skill_list: [{ match: 'x', action: 'drop', text: 'a line', replaces: 'h' }] }])
     assert.throws(() => parsePolicy(bad))
+  assert.doesNotThrow(() => parsePolicy({ skill_list: [{ match: 'x', action: 'stub', text: 'a line', replaces: 'h' }] }))
 })
 
 test('a missing policy file is made from the default, and an edited one is kept', () => {

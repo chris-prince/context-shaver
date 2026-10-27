@@ -4,7 +4,8 @@
 // The cost is summed request by request, so it can be cut by environment:
 // harness (the key's first part) and model together. A summary fork counts for the model its journal
 // line gives; spend from before forks were journaled, for the conversation's
-// last model. Either is charged to the summaries' saving.
+// last model. Either is charged to the summaries' saving; a `:shaver optimize`
+// request, to the skill list's.
 //
 // Not counted: requests that weren't journaled (side requests without tools,
 // and requests cut off, before 2026-10-24; Claude Code's suggestion-mode
@@ -60,8 +61,8 @@ export function totals(stateDir: string, ttlMs: number): string {
       }
       for (const k of forksOf(file)) {
         const v = k.usage ? spent(k.model, k.provider, k.usage) : 0
-        count(key, k.model, { actual: v, saved: { [SUMMARIES]: -v } })
-        forks += v
+        count(key, k.model, { actual: v, saved: { [k.kind === 'optimize' ? 'skill-list' : SUMMARIES]: -v } })
+        if (k.kind === 'summary') forks += v
       }
       for (const b of bareLines(file)) {
         const v = b.usage ? spent(b.model, b.provider, b.usage) : 0

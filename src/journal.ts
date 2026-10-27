@@ -50,7 +50,8 @@ export type Delta = {
   resent?: true
 }
 // why is set when the answer gave no usage, as on a bare line.
-export type ForkKind = 'summary'
+// A summary fork, or the request `:shaver optimize` makes for skill lines.
+export type ForkKind = 'summary' | 'optimize'
 export type ForkLine = { time: string; kind: ForkKind; model: string; provider?: string; usage?: Usage; why?: Why }
 export type Why = 'side' | 'unread' | 'untrimmed' | 'cut off' | 'no usage' | 'resent'
 export type BareLine = { time: string; model: string; provider?: string; usage?: Usage; why: Why }
