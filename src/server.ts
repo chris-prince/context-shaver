@@ -32,7 +32,7 @@ import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, mo
 import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
-import { loadPolicy, parsePolicy, seedPolicy, type Policy } from './policy.ts'
+import { loadPolicy, parsePolicy, seedPolicy, withSkillList, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { coveredBy, summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
@@ -72,8 +72,8 @@ type SkillList = { rules: SkillRule[]; at: number }
 type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList }
 
 // The skill rules a conversation's list is shortened by: while its cache is
-// warm the ones it has, so new ones don't rewrite it, unless `:shaver optimize
-// apply now` came since; else the policy's.
+// warm the ones it has, so new ones don't rewrite it, unless lines from
+// `:shaver optimize` were applied since; else the policy's.
 const skillListOf = (s: State | undefined, warm: boolean, now: number): SkillList | undefined =>
   s?.skillList && warm && s.skillList.at > skillsForcedAt ? s.skillList : policy.skill_list && { rules: policy.skill_list, at: now }
 
@@ -426,7 +426,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       if (c && body && Array.isArray(body.messages) && body.messages.length) {
         const msgs = stripCommands(body.messages)
-        const command = body.tools?.length && pendingCommand(msgs)
+        // Read before stripping: an answer to `:shaver optimize` is one only after its reply.
+        const command = body.tools?.length && pendingCommand(body.messages)
         if (command) {
           const key = () => conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers)
           const text = command.startsWith(':shaver optimize') ? await optimize(command, proto, h, key(), body, c.render, upstream + url, forwarded(req.headers, zstd)) : command === ':shaver policy' ? policyText() : command === ':shaver info all' ? '```\n' + totals(stateDir, ttlMs) + '\n```' : stats(proto, h, { ...body, messages: msgs }, req.headers)
@@ -644,14 +645,16 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
 }
 
 // `:shaver optimize` writes each skill the policy keeps whole a line, asking
-// the session's own model, and shows them; `:shaver optimize apply` puts them
-// in the policy, in memory and on disk, for every session the proxy serves.
+// the session's own model, shows them and asks to apply them; `y` puts them in
+// the policy, in memory and on disk, for every session the proxy serves, at
+// once.
 
-// The lines shown last, waiting to be applied.
-let proposal: { skills: Skill[]; lines: Record<string, string> } | undefined
+// The lines shown last, waiting for an answer in the conversation they were
+// shown in.
+let proposal: { key: string; skills: Skill[]; lines: Record<string, string> } | undefined
 
-// When `:shaver optimize apply now` last ran: a conversation that took its
-// skill rules before then takes the policy's on its next request, warm or not.
+// When lines were last applied: a conversation that took its skill rules
+// before then takes the policy's on its next request, warm or not.
 let skillsForcedAt = 0
 
 // The tokens the API counts in a text for a model, or none if it won't count
@@ -684,14 +687,6 @@ function warmWithOther(rules: readonly SkillRule[], now: number): number[] {
   return out
 }
 
-// The policy file as `:shaver optimize apply` writes it: a key to a line, a
-// rule to a line.
-const policyJson = (p: Policy) => {
-  const one = (v: unknown): string => (v && typeof v === 'object' && !Array.isArray(v) ? `{ ${Object.entries(v).map(([k, w]) => `${JSON.stringify(k)}: ${one(w)}`).join(', ')} }` : Array.isArray(v) ? `[${v.map(one).join(', ')}]` : JSON.stringify(v))
-  const value = (v: unknown) => (Array.isArray(v) && v.some((r) => r && typeof r === 'object') ? `[\n${v.map((r) => '    ' + one(r)).join(',\n')}\n  ]` : one(v))
-  return `{\n${Object.entries(p).map(([k, v]) => `  ${JSON.stringify(k)}: ${value(v)}`).join(',\n')}\n}\n`
-}
-
 // The fork asking for lines: the request's base as the proxy sends it, so it
 // reads the session's cache entry, through the message holding the skill
 // list, then the question.
@@ -708,17 +703,26 @@ function linesFork(proto: Protocol, h: Harness | undefined, key: string, body: C
 
 async function optimize(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>): Promise<string> {
   if (command !== ':shaver optimize') {
-    if (!proposal) return 'shaver: no lines to apply; `:shaver optimize` writes them.'
-    const rules = withLines(policy.skill_list ?? [], proposal.skills, proposal.lines)
-    const next = parsePolicy({ ...policy, skill_list: rules })
-    writeFileSync(a.policy, policyJson(next))
-    policy.skill_list = rules
-    const now = command === ':shaver optimize apply now'
-    if (now) skillsForcedAt = Date.now()
+    const shown = proposal?.key === key ? proposal : undefined
     proposal = undefined
+    if (!shown) return 'shaver: no lines are waiting; `:shaver optimize` writes them.'
+    if (command === ':shaver optimize no') return 'shaver: left the policy as it is.'
+    // From the file as it is now, so edits by hand since the proxy started stay.
+    let text: string
+    try {
+      text = readFileSync(a.policy, 'utf8')
+    } catch {
+      text = '{}\n'
+    }
+    const rules = withLines(parsePolicy(JSON.parse(text)).skill_list ?? [], shown.skills, shown.lines)
+    const written = withSkillList(text, rules)
+    parsePolicy(JSON.parse(written))
+    writeFileSync(a.policy, written)
+    policy.skill_list = rules
+    skillsForcedAt = Date.now()
     return [
       `shaver: wrote ${countOf(rules.filter((r) => r.text !== undefined).length, 'skill line')} to \`${a.policy}\`.`,
-      `New sessions get them from their first request, and open ones ${now ? 'on their next' : 'once their cache is cold'}.`,
+      'Every session gets them from its next request, new ones from their first.',
       "To start a session's stats fresh, run /clear in it (this drops its context).",
     ].join(' ')
   }
@@ -739,7 +743,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   }
   const lined = skills.filter((s) => lines[s.name])
   if (!lined.length) return 'shaver: the model wrote no usable lines; try `:shaver optimize` again.'
-  proposal = { skills, lines }
+  proposal = { key, skills, lines }
   const listOf = (f: (s: Skill) => string) => lined.map((s) => `- ${s.name}: ${f(s)}`).join('\n')
   const [before, after] = await Promise.all([tokensOf(proto, body.model, listOf((s) => s.description), target, headers), tokensOf(proto, body.model, listOf((s) => lines[s.name]), target, headers)])
   const width = Math.max(...lined.map((s) => s.name.length))
@@ -755,8 +759,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     '',
     before !== undefined && after !== undefined ? `They take these skills' descriptions from ${before.toLocaleString('en-US')} tokens to ${after.toLocaleString('en-US')}, ${(before - after).toLocaleString('en-US')} fewer on every request.` : 'The API would not count their tokens.',
     '',
-    '- `:shaver optimize apply`: open sessions switch once their cache is cold.',
-    `- \`:shaver optimize apply now\`: open sessions switch on their next request${warm.length ? `; ${countOf(warm.length, 'session')} with a warm cache would rewrite it, about ${money(warm.reduce((x, y) => x + y, 0))}` : ''}.`,
+    `Apply them to every session now? Answer y or n.${warm.length ? ` ${countOf(warm.length, 'session')} with a warm cache would rewrite it once, about ${money(warm.reduce((x, y) => x + y, 0))}.` : ''}`,
   ].join('\n')
 }
 

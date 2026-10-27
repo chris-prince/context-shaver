@@ -305,15 +305,16 @@ the others, asking once more for any it left out. The question is a fork of the
 request's base as the proxy sends it, through the message holding the skill
 list, so it reads the session's cache entry when there is one. It shows the
 lines and the tokens they save, as the API counts them (Messages only), and
-changes nothing.
-`:shaver optimize apply` puts them first in `skill_list`, in memory and in the
-policy file, for new sessions from their first request and open ones once their
-cache is cold; `apply now` switches open ones on their next request, at the
-cost of a cache rewrite each, which the proposal gives. Probes found 6-word
-lines made the model pick the right skill more often than the full
-descriptions, at about a tenth of their tokens. The request's cost counts
-against the skill list's saving. A session's stats start again only with a new
-conversation, so `apply` suggests `/clear`.
+asks whether to apply them, giving what rewriting the warm sessions' caches
+would cost. A `y` or `n` as the next prompt is the answer, a command like the
+others. `y` puts the lines first in `skill_list`, in memory and in the policy
+file, and every session gets them from its next request. The file is read
+again, and only its top-level `skill_list` value is rewritten, so edits by hand
+elsewhere in it stay as they were. Probes found 6-word lines made the model
+pick the right skill more often than the full descriptions, at about a tenth of
+their tokens. The request's cost counts against the skill list's saving. A
+session's stats start again only with a new conversation, so `y` suggests
+`/clear`.
 
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens

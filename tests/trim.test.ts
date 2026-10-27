@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
-import { parsePolicy, seedPolicy, treatment, type Policy } from '../src/policy.ts'
+import { parsePolicy, seedPolicy, treatment, withSkillList, type Policy } from '../src/policy.ts'
 import { anchored, apply, decide, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 
@@ -464,4 +464,18 @@ test("a request's breakpoints give its entries' lifetime", () => {
   assert.equal(markedTtl(body(five, five)), 300)
   assert.equal(markedTtl(body(hour, five)), 300)
   assert.equal(markedTtl({ messages: [{ role: 'user', content: 'u' }] }), undefined)
+})
+
+test("setting a policy file's skill list changes only that value's text", () => {
+  const rules = [{ match: 'init', action: 'stub' as const, text: 'Set "up" memory]', replaces: 'ab' }, { match: 'x-*', action: 'drop' as const }]
+  const head = '{\n  // not JSON, but kept as written\n  "tool":   [ { "on": "step", "wait": 4, "action": "drop" } ],\n  "note": "skill_list: [ }",\n  "nested": { "skill_list": [1] },\n  "skill_list": '
+  const tail = ',\n  "summary_threshold_tokens": 20000\n}\n'
+  const text = head + '[\n    { "match": "old", "action": "keep" }\n  ]' + tail
+  const out = withSkillList(text, rules)
+  assert.ok(out.startsWith(head) && out.endsWith(tail))
+  assert.deepEqual(JSON.parse(out.slice(head.length, out.length - tail.length)), rules)
+  for (const file of ['{\n  "tool": []\n}\n', '{}\n']) {
+    const added = JSON.parse(withSkillList(file, rules))
+    assert.deepEqual(added, { ...JSON.parse(file), skill_list: rules })
+  }
 })

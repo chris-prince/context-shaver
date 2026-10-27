@@ -97,3 +97,13 @@ test('a command the model answered with a tool call stays', () => {
   const msgs = [user('a'), assistant('A'), user(':shaver info'), call, result]
   assert.deepEqual(stripCommands(msgs), msgs)
 })
+
+test("y or n is a command only as the answer to `:shaver optimize`'s reply", () => {
+  const offered = [user('a'), assistant('A'), user(':shaver optimize'), system('note'), assistant('Apply? y or n')]
+  assert.equal(pendingCommand([...offered, user(' Y ')]), ':shaver optimize yes')
+  assert.equal(pendingCommand([...offered, user('no'), system('note')]), ':shaver optimize no')
+  assert.equal(pendingCommand([user(':shaver info'), assistant('stats'), user('y')]), undefined)
+  assert.equal(pendingCommand([user('a'), assistant('A'), user('y')]), undefined)
+  // Answered, the answer and its reply go with the command and its reply.
+  assert.deepEqual(stripCommands([...offered, user('y'), assistant('wrote'), user('next')]), [user('a'), assistant('A'), user('next'), system('note')])
+})

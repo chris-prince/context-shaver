@@ -1,6 +1,6 @@
-// `:shaver info`, `:shaver info all`, `:shaver policy` and `:shaver optimize`
-// (with `apply` or `apply now`), typed as a prompt, are answered by the proxy
-// and never reach the model. Claude Code keeps the command and the proxy's
+// `:shaver info`, `:shaver info all`, `:shaver policy` and `:shaver optimize`,
+// typed as a prompt, are answered by the proxy and never reach the model, nor
+// does the `y` or `n` answering `:shaver optimize`'s reply. Claude Code keeps the command and the proxy's
 // reply in its history and sends them again with every
 // later request, so the proxy strips each command, the system messages after
 // it and the reply from every request it forwards. Dropping them leaves what
@@ -15,7 +15,10 @@
 // Code's prompt suggestion puts one on the last reply, and when that is the
 // proxy's, the suggestion would otherwise read only the system prompt.
 
-export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize', ':shaver optimize apply', ':shaver optimize apply now']
+export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize']
+
+// The answers to `:shaver optimize`, as the commands they are.
+const ANSWERS: Record<string, string> = { y: ':shaver optimize yes', yes: ':shaver optimize yes', n: ':shaver optimize no', no: ':shaver optimize no' }
 
 type Block = { type: string; text?: string; cache_control?: unknown }
 type Msg = { role: string; content: string | Block[] }
@@ -34,19 +37,35 @@ function withControl<M extends Msg>(m: M, control: unknown): M {
 // Any tag, so ones Claude Code adds later need no change here.
 const isTagged = (b: Block) => b.type === 'text' && /^<[A-Za-z][\w-]*>/.test((b.text ?? '').trimStart())
 
-// The command a message is, if any: a user message whose only text, besides
-// tagged blocks, is one. `: shaver` counts as `:shaver`.
-export function commandOf(m: Msg): string | undefined {
+// A user message's only text besides tagged blocks, trimmed, if it has one.
+function promptOf(m: Msg): string | undefined {
   if (m.role !== 'user') return undefined
   const texts = typeof m.content === 'string' ? [m.content] : m.content.filter((b) => b.type === 'text' && !isTagged(b)).map((b) => b.text ?? '')
-  return texts.length === 1 ? COMMANDS.find((c) => c === texts[0].trim().replace(/^: shaver/, ':shaver')) : undefined
+  return texts.length === 1 ? texts[0].trim() : undefined
+}
+
+// The command a message is, if any: a user message whose only text, besides
+// tagged blocks, is one. `: shaver` counts as `:shaver`. After `:shaver
+// optimize`'s reply (`offered`), `y`, `yes`, `n` or `no` is one too.
+export function commandOf(m: Msg, offered = false): string | undefined {
+  const text = promptOf(m)
+  if (text === undefined) return undefined
+  return COMMANDS.find((c) => c === text.replace(/^: shaver/, ':shaver')) ?? (offered ? ANSWERS[text.toLowerCase()] : undefined)
+}
+
+// Whether `msgs[i]` comes right after `:shaver optimize` and its reply, the
+// system messages aside.
+function offeredAt(msgs: Msg[], i: number): boolean {
+  const r = msgs.findLastIndex((m, j) => j < i && m.role !== 'system')
+  const c = msgs.findLastIndex((m, j) => j < r && m.role !== 'system')
+  return r >= 0 && msgs[r].role === 'assistant' && c >= 0 && commandOf(msgs[c]) === ':shaver optimize'
 }
 
 // The command a request asks for: its last message but for the system messages
 // after it, which Claude Code sends after a session's first prompt.
 export function pendingCommand(msgs: Msg[]): string | undefined {
-  const last = msgs.findLast((m) => m.role !== 'system')
-  return last && commandOf(last)
+  const i = msgs.findLastIndex((m) => m.role !== 'system')
+  return i >= 0 ? commandOf(msgs[i], offeredAt(msgs, i)) : undefined
 }
 
 // The messages with the pending command left out but for its tagged blocks, as
@@ -70,7 +89,7 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
       out.push(...moved)
       moved = []
     }
-    if (!commandOf(msgs[i])) {
+    if (!commandOf(msgs[i], offeredAt(msgs, i))) {
       out.push(msgs[i])
       continue
     }

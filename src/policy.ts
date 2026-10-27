@@ -58,6 +58,46 @@ export function seedPolicy(file: string, from: string): void {
   if (!existsSync(file) && existsSync(from)) copyFileSync(from, file)
 }
 
+// A policy file's text with its top-level `skill_list` set to `rules`, a rule
+// to a line, the rest of the text as it was, so edits by hand are kept. A file
+// with no `skill_list` gets one added last.
+export function withSkillList(text: string, rules: readonly SkillRule[]): string {
+  const one = (r: SkillRule) => `{ ${Object.entries(r).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ')} }`
+  const list = rules.length ? `[\n${rules.map((r) => '    ' + one(r)).join(',\n')}\n  ]` : '[]'
+  // The top-level key's value: where it starts and ends, read past strings.
+  let depth = 0
+  let key: string | undefined
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '"') {
+      const end = /"(?:[^"\\]|\\.)*"/y
+      end.lastIndex = i
+      const s = end.exec(text)![0]
+      key = depth === 1 ? JSON.parse(s) : undefined
+      i += s.length - 1
+    } else if (ch === ':' && depth === 1 && key === 'skill_list') {
+      const start = i + 1 + (text.slice(i + 1).length - text.slice(i + 1).trimStart().length)
+      let d = 0
+      for (let j = start; j < text.length; j++) {
+        if (text[j] === '"') {
+          const end = /"(?:[^"\\]|\\.)*"/y
+          end.lastIndex = j
+          j += end.exec(text)![0].length - 1
+        } else if (text[j] === '[' || text[j] === '{') d++
+        else if (text[j] === ']' || text[j] === '}') {
+          if (--d === 0) return text.slice(0, start) + list + text.slice(j + 1)
+        }
+      }
+      throw new Error('policy: skill_list is not closed')
+    } else if (ch === '{' || ch === '[') depth++
+    else if (ch === '}' || ch === ']') depth--
+    else if (ch === ',') key = undefined
+  }
+  const close = text.lastIndexOf('}')
+  const body = text.slice(0, close).trimEnd()
+  return `${body}${body.endsWith('{') ? '' : ','}\n  "skill_list": ${list}\n${text.slice(close)}`
+}
+
 // The policy in a file, or none if there is no file.
 export function loadPolicy(file: string): Policy | undefined {
   if (!existsSync(file)) return undefined
