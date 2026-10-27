@@ -185,6 +185,49 @@ test('a trim is charged its rewrite, and later savings are shared by what each t
   assert.ok(Math.abs(d.without - d.actual - (c.without - c.actual) - (d.saved.tools - c.saved.tools) - (d.saved.reasoning - c.saved.reasoning) - (d.saved.messages ?? 0)) < 1e-12)
 })
 
+test('a base shave is saved at the price the estimate paid for it', () => {
+  // A 2k base, 1k of it the deferred tools' share; without the shaver the
+  // base is 3k. Cold, the shaverless prompt reads what was read and the
+  // shave in front of it, 1.5k, though the rest of the base is written.
+  const s = { ...at(0, 5000, 0), tokens: { d: 2000 }, defs: { key: 'd', systemPrompt: 1000, tools: 1000, deferred: 1000 } } as Stats
+  const zero = { without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 }
+  const c = add(zero, undefined, s, usage(0, 500, 4500), HOUR)!
+  const price = modelOf('claude-opus-5-5').price!
+  assert.ok(Math.abs(c.saved['deferred-tools'] - (1000 * price.read) / 1e6) < 1e-12)
+  assert.ok(Math.abs(c.without - c.actual - Object.values(c.saved).reduce((a, b) => a + b, 0)) < 1e-12)
+})
+
+test("a summary's saving is the turns it replaced net of carrying it", () => {
+  const part = (key: string, kinds: Record<string, number>) => ({ key, kinds })
+  const stats = (minute: number, inputTokens: number, removedTokens: number, parts: Stats['parts'], tokens: Record<string, number>, covers?: string[]) => ({ ...at(minute, inputTokens, removedTokens), parts, tokens, ...(covers && { covers }) }) as Stats
+  const [p, n, u] = [part('p', { user: 1 }), part('n', { user: 1 }), part('u', { user: 1 })]
+  const [r, a, r2] = [part('r', { toolResults: 1 }), part('a', { assistant: 1 }), part('r2', { toolResultsStubbed: 1 })]
+  const summary = part('s', { summary: 1 })
+  const tokens = { p: 500, r: 6000, a: 4000, n: 500, r2: 100, s: 1000, u: 100 }
+  const lines = [
+    { stats: stats(0, 11_000, 0, [p, r, a, n], tokens), usage: usage(0, 0, 11_000) },
+    // A trim stubs the result.
+    { stats: stats(1, 5100, 5900, [p, r2, a, n], tokens), usage: usage(0, 0, 5100) },
+    // Cold, the 1k record replaces the stub and the reply.
+    { stats: stats(70, 2000, 9000, [p, summary, n], tokens, ['r2', 'a']), usage: usage(0, 0, 2000) },
+    { stats: stats(71, 2100, 9000, [p, summary, n, u], tokens), usage: usage(0, 2000, 100) },
+  ]
+  const c = cost(lines, HOUR)!
+  // The stub stays the trim's; the record takes what it replaced, less itself.
+  assert.deepEqual([c.removed!.tools, c.removed!['summary+memoir'], c.removed!.messages ?? 0], [5900, 3100, 0])
+  const price = modelOf('claude-opus-5-5').price!
+  // Cold, both write: the record's request saves 9k of writes, the stub's
+  // 5.9k it still holds out and the record's own 3.1k.
+  const b = cost(lines.slice(0, 2), HOUR)!
+  const d = cost(lines.slice(0, 3), HOUR)!
+  assert.ok(Math.abs(d.saved['summary+memoir'] - (3100 * 2 * price.input) / 1e6) < 1e-12)
+  assert.ok(Math.abs(d.saved.tools - b.saved.tools - (5900 * 2 * price.input) / 1e6) < 1e-12)
+  // Then the 9k it keeps out are read, shared 5.9k to 3.1k.
+  const later = (9000 * price.read) / 1e6
+  assert.ok(Math.abs(c.saved['summary+memoir'] - d.saved['summary+memoir'] - (later * 3100) / 9000) < 1e-12)
+  assert.ok(Math.abs(c.without - c.actual - Object.values(c.saved).reduce((x, y) => x + y, 0)) < 1e-12)
+})
+
 test('what was taken out before a compaction weighs what it keeps against what is taken out after', () => {
   const part = (key: string, kinds: Record<string, number>) => ({ key, kinds })
   const stats = (minute: number, inputTokens: number, removedTokens: number, parts: Stats['parts'], tokens: Record<string, number>) => ({ ...at(minute, inputTokens, removedTokens), parts, tokens }) as Stats

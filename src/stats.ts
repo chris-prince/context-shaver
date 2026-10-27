@@ -46,6 +46,9 @@ export type Sent = {
   // (harness.ts, resends). What it keeps, the base, the user's messages and a
   // summary, is nothing the policy trims, so all the trims took out is gone.
   compacted?: boolean
+  // The keys of the parts the request before sent that the records it adds
+  // replace (summary.ts, coveredBy); none before 2026-10-27.
+  covers?: string[]
 }
 
 export type Stats = {
@@ -62,6 +65,8 @@ export type Stats = {
   suggestion?: boolean
   // Whether the client compacted before the latest request (Sent.compacted).
   compacted?: boolean
+  // The latest request's Sent.covers.
+  covers?: string[]
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
@@ -83,8 +88,8 @@ export type Stats = {
 
 // A message as JSON without breakpoints. Claude Code sends a lone text block
 // carrying one as an array, and as a string once the breakpoint moves on, so
-// that becomes the string.
-function plain(m: ApiMsg): string {
+// that becomes the string. A part's key.
+export function keyOf(m: ApiMsg): string {
   let c: unknown = m.content
   if (Array.isArray(c)) {
     const bs = c.map(({ cache_control, ...b }: Block) => b)
@@ -96,7 +101,7 @@ function plain(m: ApiMsg): string {
 // When a message was first sent, by the stats so far.
 export function bornOf(s: Stats | undefined, m: ApiMsg): string | undefined {
   const { lineage } = kindsOf(JSON.stringify(m), m)
-  return (lineage && s?.seen['lineage:' + lineage]) || s?.seen[plain(m)]
+  return (lineage && s?.seen['lineage:' + lineage]) || s?.seen[keyOf(m)]
 }
 
 // The tools a message's tool results load by tool_reference.
@@ -119,7 +124,7 @@ export function describe(body: { model: string; provider?: string; messages: Api
     const thinking = m.role === 'assistant' ? blocks(m).filter((b) => b.type === 'thinking') : []
     const loaded = referenced(m).reduce((n, t) => n + (size.get(t) ?? 0), 0)
     const kinds = loaded ? { ...k.kinds, toolsLoaded: loaded } : k.kinds
-    return { key: plain(m), bytes: json.length + loaded, kinds, lineage: k.lineage, role: m.role, thinking: thinking.length ? JSON.stringify(thinking).length : 0 }
+    return { key: keyOf(m), bytes: json.length + loaded, kinds, lineage: k.lineage, role: m.role, thinking: thinking.length ? JSON.stringify(thinking).length : 0 }
   })
   const system: unknown[] = typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : Array.isArray(body.system) ? body.system : []
   const full = tools.filter((t) => !t.defer_loading).map((t) => JSON.stringify(t))
@@ -243,6 +248,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     ...(r.ttl && { ttl: r.ttl }),
     suggestion: !!r.suggestion,
     ...(r.compacted && { compacted: true }),
+    ...(r.covers && { covers: r.covers }),
     inputTokens,
     removedTokens,
     tokens: known,
@@ -280,8 +286,11 @@ function sharesOf(p: Stats['parts'][number], tokens: Record<string, number>): Ar
 
 // The types of trim a saving is told by: the base's shaves (cost.ts), and in
 // the conversation each kind's (log.ts, kinds), with `other` for the rest.
+// The summaries' type holds the records and memoir, and the parts records
+// replace (Sent.covers), so its saving is net of what carrying them costs.
 export const BASE = ['deferred-tools', 'skill-list']
-const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages' }
+export const SUMMARIES = 'summary+memoir'
+const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages', summary: SUMMARIES, memoir: SUMMARIES }
 
 // What a request took out of the conversation, by type of trim: what
 // removedTokens added, a kind at a time. Given the stats before, as cost.ts
@@ -289,7 +298,13 @@ const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 't
 export function removedByType(prev: Stats, s: Stats): Record<string, number> {
   const out: Record<string, number> = {}
   const add = (k: string, n: number) => (out[TYPES[k] ?? 'other'] = (out[TYPES[k] ?? 'other'] ?? 0) + n)
-  for (const p of prev.parts) for (const [k, n] of sharesOf(p, prev.tokens)) add(k, n)
+  // Counted with repeats, as keptOf counts them.
+  const covered: Record<string, number> = {}
+  for (const k of s.covers ?? []) covered[k] = (covered[k] ?? 0) + 1
+  for (const p of prev.parts) {
+    const replaced = covered[p.key] > 0 && covered[p.key]--
+    for (const [k, n] of sharesOf(p, prev.tokens)) add(replaced ? 'summary' : k, n)
+  }
   for (const p of s.parts.slice(0, keptOf(prev.parts, s.parts))) for (const [k, n] of sharesOf(p, s.tokens)) add(k, -n)
   return out
 }
@@ -388,7 +403,7 @@ export const costLines = (c: Cost, heading = 'Costs (session)') => [
   `    ${counted(Math.round(c.waitMs / 60_000), 'minute')} saved (by avoiding ${c.compactions} /autocompact)`,
 ]
 
-const SAVED = [...BASE, 'tools', 'reasoning', 'messages', 'other']
+const SAVED = [...BASE, 'tools', 'reasoning', 'messages', SUMMARIES, 'other']
 
 // Each type named for its half, shares padded to 2 digits as in line(). A
 // type that rounds to nothing is left out.

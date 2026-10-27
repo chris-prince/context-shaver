@@ -623,8 +623,16 @@ Scripts:
   Dollars use a per-model price table; for an
   unknown model the costs are left out.
   The saving is shown by type of trim. Each base shave's is what the request
-  would cost without that shave alone. The rest is the conversation's: tool
-  calls and results, reasoning, messages, or other. A replay works out what
+  would cost without that shave alone, at the price the request without the
+  shaver paid for it: read as far as its reads reach, from the front, and
+  written past that. The rest is the conversation's: tool
+  calls and results, reasoning, messages, summaries, or other. The summaries'
+  type is net: what the parts their records replaced would have cost, less
+  what sending the records and memoir costs and what the summary requests
+  cost, so it starts negative and gains as later requests leave out what the
+  records replaced. A request records the parts the records it adds replace;
+  journals from before 2026-10-27 don't, so their summaries show only their
+  cost. A replay works out what
   each request's trim took out of each, from the parts it dropped or changed
   and their tokens by kind. A request that trims still gains from the trims
   before it: they're credited what the request without the shaver paid for

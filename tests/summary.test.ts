@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { apply } from '../src/trim.ts'
-import { summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -80,6 +80,17 @@ test('records replace the turns they cover, after the base, and go when their pr
   // Rewound to turn 2 with a new prompt: the second record goes.
   const rewound = [...msgs.slice(0, 10), { role: 'user', content: 'turn three, again' }, ...msgs.slice(11)] as ApiMsg[]
   assert.deepEqual(validChain([r1, r2], rewound), [r1])
+})
+
+test('the records added replace what was sent, past the records before them', () => {
+  const msgs = session()
+  const f = summaryForkAt(msgs)!
+  const r1 = recordOf([{ type: 'text', text: 'one\nEnds before: [2]' }], f, 'now')!
+  const r2 = recordOf([{ type: 'text', text: 'two\nEnds before: [3]' }], { ...f, start: 2 }, 'now')!
+  const sent = summarized(none(msgs), msgs, [r1])
+  // With r1 sent, r2 replaces turn 2: its prompt, call, result and reply.
+  assert.deepEqual(coveredBy(sent, msgs, [r1, r2], 1), msgs.slice(6, 10))
+  assert.deepEqual(coveredBy(none(msgs), msgs, [r1, r2], 0), msgs.slice(3, 10))
 })
 
 test("a record's arcs are read from its headings and dated by their turns' prompts", () => {

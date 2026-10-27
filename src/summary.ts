@@ -78,6 +78,14 @@ export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly 
   return out
 }
 
+// The messages of `a`, with the chain's first `from` records applied, that the
+// records after them replace.
+export function coveredBy(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], from: number): ApiMsg[] {
+  const start = startsOf(msgs, chain)[from]
+  const to = promptsOf(msgs)[chain.at(-1)!.endsBefore - 1]
+  return a.msgs.filter((_, j) => a.origin[j] >= start && a.origin[j] < to)
+}
+
 // What a summary fork asks about: the turns from `start` (the last record's
 // end, or the first) to the current one, each prompt quoted and hashed, with
 // when it was sent and when its turn's last request was, and their characters

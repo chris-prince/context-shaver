@@ -28,14 +28,14 @@ import { shaveSkills } from './skills.ts'
 import { pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornOf, counted as countOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, seedPolicy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
-import { summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
+import { coveredBy, summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -182,7 +182,9 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   let keep = summarized(apply(msgs, policy, held, conv), msgs, chain.slice(0, records), merged)
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   const allMerged = Math.min(file?.merged ?? 0, chain.length)
+  let covers: string[] | undefined
   if ((records < chain.length || merged < allMerged) && cold(positionsOf(keep.msgs, seed, thinking, auto))) {
+    if (records < chain.length) covers = coveredBy(keep, msgs, chain, records).map(keyOf)
     records = chain.length
     merged = allMerged
     keep = summarized(apply(msgs, policy, held, conv), msgs, chain, merged)
@@ -229,6 +231,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   if (deferred) described.defs.deferred = deferred
   if (skills) described.defs.skills = skills
   if (marked) described.ttl = marked
+  if (covers) described.covers = covers
   const last = latestOf(key)
   const lastPart = (last?.suggestion ? last.parts.at(-2) : last?.parts.at(-1))?.key
   if (h?.resends && lastPart && !described.parts.some((q) => q.key === lastPart)) described.compacted = true
@@ -299,7 +302,7 @@ function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers
   const key = conversationId(h, proto.name, sent, headers)
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
-  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks }
+  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks } }
   // Each summary request is running, or left a record or none. A record no
   // longer fitting the messages is dropped, like one replaced or none at all.
   const valid = validChain(chain, sent.messages).length

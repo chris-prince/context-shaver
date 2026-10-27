@@ -124,16 +124,19 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   const wo = without(prev, s, u, ttl, c.context, m.compaction)
   const all = wo.tokens.uncached + wo.tokens.reads + wo.tokens.writes
   const compaction: Tokens = { uncached: 0, reads: all, writes: 0, output: m.compaction?.summary ?? 0 }
-  // The base shaves sit at the front, so they were read with the base or
-  // written with it. A compaction's reading them counts with the conversation,
-  // whose growth it comes from.
-  const read = wo.tokens.reads >= baseWithout(s)
+  // What the request without the shaver paid for n tokens `at` tokens in: the
+  // prompt was read from the front, so as many as reads reach past `at` were
+  // read and the rest written. The base shaves sit at the front, the tokens
+  // the conversation's trims took out past the base. A compaction's reading
+  // them counts with the conversation, whose growth it comes from.
   const withoutRequest = dollars(p, wo.tokens, short(wo.tokens))
-  const saving = (n: number) => {
-    const less: Tokens = { ...wo.tokens, reads: wo.tokens.reads - (read ? n : 0), writes: wo.tokens.writes - (read ? 0 : n) }
+  const saving = (n: number, at: number) => {
+    const read = Math.min(n, Math.max(0, wo.tokens.reads - at))
+    const less: Tokens = { ...wo.tokens, reads: wo.tokens.reads - read, writes: wo.tokens.writes - (n - read) }
     return withoutRequest - dollars(p, less, short(less))
   }
-  const base = [saving(shaved(s, s.defs?.deferred)), saving(shaved(s, s.defs?.skills))]
+  const [deferred, skills] = [shaved(s, s.defs?.deferred), shaved(s, s.defs?.skills)]
+  const base = [saving(deferred, 0), saving(skills, deferred)]
   const withoutAll = withoutRequest + (wo.compacted ? dollars(p, compaction, 0) : 0)
   const actualRequest = dollars(p, actual, u.cache_creation?.ephemeral_5m_input_tokens ?? 0)
 
@@ -154,8 +157,8 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   // trim's own types take what's left, its rewrite with it.
   if (positive(trimmed).length) {
     const sum = (r: Array<[string, number]>) => r.reduce((n, [, w]) => n + w, 0)
-    const held = Math.max(0, all - s.inputTokens - shaved(s, s.defs?.deferred) - shaved(s, s.defs?.skills) - sum(positive(trimmed)))
-    const earlier = saving(held)
+    const held = Math.max(0, all - s.inputTokens - deferred - skills - sum(positive(trimmed)))
+    const earlier = saving(held, baseWithout(s))
     for (const [t, n] of positive(before)) credit(t, (earlier * n) / sum(positive(before)))
     if (positive(before).length) rest -= earlier
   }

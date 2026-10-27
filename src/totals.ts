@@ -4,7 +4,7 @@
 // The cost is summed request by request, so it can be cut by environment:
 // harness (the key's first part) and model together. A summary fork counts for the model its journal
 // line gives; spend from before forks were journaled, for the conversation's
-// last model.
+// last model. Either is charged to the summaries' saving.
 //
 // Not counted: requests that weren't journaled (side requests without tools,
 // and requests cut off, before 2026-10-24; Claude Code's suggestion-mode
@@ -16,7 +16,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { add, addResent, before, spent, type Cost } from './cost.ts'
 import { bareLines, forks as forksOf, history } from './journal.ts'
-import { costLines, counted, money, type Stats } from './stats.ts'
+import { costLines, counted, money, SUMMARIES, type Stats } from './stats.ts'
 
 type Sum = { conversations: Set<string>; requests: number; without: number; actual: number; saved: Record<string, number>; compactions: number; waitMs: number }
 const blank = (): Sum => ({ conversations: new Set(), requests: 0, without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 })
@@ -60,7 +60,7 @@ export function totals(stateDir: string, ttlMs: number): string {
       }
       for (const k of forksOf(file)) {
         const v = k.usage ? spent(k.model, k.provider, k.usage) : 0
-        count(key, k.model, { actual: v })
+        count(key, k.model, { actual: v, saved: { [SUMMARIES]: -v } })
         forks += v
       }
       for (const b of bareLines(file)) {
@@ -72,7 +72,7 @@ export function totals(stateDir: string, ttlMs: number): string {
       continue
     }
     const rest = spentOf(stateDir, key) - forks
-    if (last && rest > 0) count(key, last, { actual: rest })
+    if (last && rest > 0) count(key, last, { actual: rest, saved: { [SUMMARIES]: -rest } })
   }
 
   const all = at('all')
