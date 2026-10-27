@@ -88,7 +88,7 @@ test('render prints the stats from the state alone', () => {
   assert.match(out, /^Session: session\nModel: m\n/)
   assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Details\n\n  1,000 tokens, actual\n  1,000 tokens, if no shaver\n\n  0 summary creation requests\n\n  Base/)
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. If over 10k, shrink big items\./)
-  assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by age:\n      today .*\n    by type:\n      user /)
+  assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by type:\n      user .*\n    by age:\n      today /)
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
 })
 
@@ -175,8 +175,7 @@ test('records show as their own type, each dated by the first message it covers'
   const out = render(s, 'k', false)
   assert.match(out, /^ +summary /m)
   assert.doesNotMatch(out, /^ +assistant /m)
-  assert.match(out, /^ +5 days ago /m)
-  assert.match(out, /^ +2 days ago /m)
+  assert.match(out, /^ +2 days ago .*\n +5 days ago /m)
 })
 
 test('settled leaves out what the frontier holds, and only that', () => {

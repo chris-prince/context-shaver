@@ -524,7 +524,7 @@ Scripts:
 
 - Typing `:shaver info` as a prompt shows the session's latest request,
   logged or not, in three sections: the base, the conversation before the
-  frontier (by age, then by type), and the frontier. Every percentage is of
+  frontier (by type, then by age, newest first), and the frontier. Every percentage is of
   the whole request. After each request the proxy counts its parts' tokens
   (`src/stats.ts`) and answers from those counts. Where the API counts each
   input item, as the Responses API does, the base and each part it counted

@@ -463,11 +463,11 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   // side.
   const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections)]
   for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))
-  out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by age:')
-  for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => b - a)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))
-  if (byDay[0]) out.push(row('today', byDay[0], total, 2))
-  out.push('    by type:')
+  out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by type:')
   for (const k of [...REST_TYPES].sort(byLabel)) if (by[k]) out.push(row(label(k), by[k], total, 2))
+  out.push('    by age:')
+  if (byDay[0]) out.push(row('today', byDay[0], total, 2))
+  for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => a - b)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))
   out.push('', head('Frontier', frontier, total), '  Recent turns, not yet eligible to trim. Okay if large.')
   return out.join('\n')
 }
