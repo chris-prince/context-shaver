@@ -62,6 +62,11 @@ test('a summary fork appends its instructions after the breakpoint, so it reads 
   assert.deepEqual(out.at(-1)!.content, [{ type: 'tool_result', tool_use_id: 't4', content: long }, { type: 'text', text: 'compact' }])
 })
 
+test("a fork ending in a message not the user's asks in one of its own, leaving the rest as sent", () => {
+  const msgs: ApiMsg[] = [{ role: 'system', content: 'base' }]
+  assert.deepEqual(summaryForkMessages(msgs, 'ask'), [...msgs, { role: 'user', content: [{ type: 'text', text: 'ask' }] }])
+})
+
 test('records replace the turns they cover, after the base, and go when their prompt does', () => {
   const msgs = session()
   const f = summaryForkAt(msgs)!

@@ -300,9 +300,12 @@ A `stub` can instead carry `text`, a line written for the skill, and
 for that description only, and only when shorter, so a skill whose description
 changed shows it whole until a new line is written. `:shaver optimize` writes
 these lines: for each skill the rules keep whole, or gave a line before, it asks
-Haiku (`LINES_MODEL` in `server.ts`) for one of at most 6 words that tells the
-skill from the others, asking once more for any it left out. It shows the lines
-and the tokens they save, as the API counts them, and changes nothing.
+the session's own model for one of at most 6 words that tells the skill from
+the others, asking once more for any it left out. The question is a fork of the
+request's base as the proxy sends it, through the message holding the skill
+list, so it reads the session's cache entry when there is one. It shows the
+lines and the tokens they save, as the API counts them (Messages only), and
+changes nothing.
 `:shaver optimize apply` puts them first in `skill_list`, in memory and in the
 policy file, for new sessions from their first request and open ones once their
 cache is cold; `apply now` switches open ones on their next request, at the

@@ -162,12 +162,13 @@ Your record must be at most a tenth the length of the turns it covers; the turns
 Keep exact identifiers you may need: paths, hashes, names, numbers, commands. Drop narration and tool output. Start directly with the first arc.`
 }
 
-// A summary fork's messages: the request's, with the instructions appended to
-// the last message, which is the user's. They go after its blocks, so the
-// prefix through its last breakpoint is the same and the summary fork reads its
-// cache entry.
+// A fork's messages: the request's, with the instructions appended to the last
+// message if it's the user's, as a summary fork's is, else in one of their own.
+// They go after its blocks, so the prefix through its last breakpoint is the
+// same and the fork reads its cache entry.
 export function summaryForkMessages(msgs: readonly ApiMsg[], text: string): ApiMsg[] {
   const last = msgs.at(-1)!
+  if (last.role !== 'user') return [...msgs, { role: 'user', content: [{ type: 'text', text }] }]
   return [...msgs.slice(0, -1), { ...last, content: [...blocks(last), { type: 'text', text }] }]
 }
 

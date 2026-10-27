@@ -82,6 +82,11 @@ export function shaveSkills(body: Body, rules: readonly SkillRule[]): number {
   return out
 }
 
+// The message holding a request's skill list, the last in its system messages,
+// or -1 with none: where its base ends, for `:shaver optimize`'s fork.
+export const listMessage = (body: Body): number =>
+  (body.messages ?? []).findLastIndex((m) => m.role === 'system' && (typeof m.content === 'string' ? [m.content] : m.content.map((b) => b.text ?? '')).some((t) => t.includes(HEAD)))
+
 // The skills a request lists, as Claude Code sent them: the last list in its
 // system messages.
 export function skillsOf(body: Body): Skill[] {
