@@ -306,16 +306,19 @@ these lines: for each skill the rules keep whole, or gave a line before, it asks
 the session's own model for one of at most 6 words that tells the skill from
 the others, asking once more for any it left out. The question is a fork of the
 request's base as the proxy sends it, through the message holding the skill
-list (on Codex, the head alone), so it reads the session's cache entry when there is one. It shows the
-lines and the tokens they save, as the API counts them (Messages only), and
-asks whether to apply them, giving what rewriting the warm sessions' caches
-would cost. A `y` or `n` as the next prompt is the answer, a command like the
+list (on Codex, the head alone), so it reads what the session has cached of
+it: on Claude Code past a conversation's first request, the tools and system
+prompt, since only that request marks the base's end. It shows the lines and
+the tokens they save: the base is sent with the old lines and with the new,
+each with a short question after it, and the difference of their prompt
+tokens, as the API's usage reports them, is the saving. Then it asks whether
+to apply them, giving what rewriting the warm sessions' caches would cost. A `y` or `n` as the next prompt is the answer, a command like the
 others. `y` puts the lines first in `skill_list`, in memory and in the policy
 file, and every session gets them from its next request. The file is read
 again, and only its top-level `skill_list` value is rewritten, so edits by hand
 elsewhere in it stay as they were. Probes found 6-word lines made the model
 pick the right skill more often than the full descriptions, at about a tenth of
-their tokens. The request's cost counts against the skill list's saving. A
+their tokens. Its requests' cost counts against the skill list's saving. A
 session's stats start again only with a new conversation, so `y` suggests
 `/clear`.
 

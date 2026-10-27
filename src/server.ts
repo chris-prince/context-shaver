@@ -657,20 +657,6 @@ let proposal: { key: string; skills: Skill[]; lines: Record<string, string> } | 
 // before then takes the policy's on its next request, warm or not.
 let skillsForcedAt = 0
 
-// The tokens the API counts in a text for a model, or none if it won't count
-// them: only Messages has an endpoint for it.
-async function tokensOf(proto: Protocol, model: string, text: string, target: string, headers: Record<string, string>): Promise<number | undefined> {
-  if (proto !== MESSAGES) return undefined
-  const u = new URL(target)
-  u.pathname = u.pathname.replace(/\/messages$/, '/messages/count_tokens')
-  try {
-    const r = await fetch(u, { method: 'POST', headers: { ...headers, accept: 'application/json' }, body: JSON.stringify({ model, messages: [{ role: 'user', content: text }] }), signal: AbortSignal.timeout(30_000) })
-    return r.ok ? ((await r.json()) as { input_tokens: number }).input_tokens : undefined
-  } catch {
-    return undefined
-  }
-}
-
 // The conversations whose cache is warm with other skill rules than `rules`,
 // each with what rewriting its cache once costs beyond reading it.
 function warmWithOther(rules: readonly SkillRule[], now: number): number[] {
@@ -687,18 +673,32 @@ function warmWithOther(rules: readonly SkillRule[], now: number): number[] {
   return out
 }
 
-// The fork asking for lines: the request's base as the proxy sends it, so it
-// reads the session's cache entry, through the message holding the skill
-// list, then the question.
-function linesFork(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], ask: readonly Skill[]): Record<string, unknown> {
+// The request's base as the proxy sends it, through the message holding the
+// skill list, with the skill rules the session sends it with, or `rules`.
+// Forks start from it, so they read what the session has cached of it.
+function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules?: readonly SkillRule[]): Record<string, unknown> {
   const now = Date.now()
   const ttl = modelOf(body.model, body.provider).ttl
   const s = load(key)
   const fork: Canonical = structuredClone({ ...body, messages: body.messages.slice(0, listMessage(body) + 1) })
   if (proto.defers && h?.defers && policy.tools_not_deferred) forceDefer(fork, policy.tools_not_deferred)
-  const rules = skillListOf(s, Object.values(s?.entries ?? {}).some((t) => now - t <= lifetimeMs(ttl, ttlMs)), now)?.rules
+  rules ??= skillListOf(s, Object.values(s?.entries ?? {}).some((t) => now - t <= lifetimeMs(ttl, ttlMs)), now)?.rules
   if (rules) shaveSkills(fork, rules)
-  return proto.summaryFork(render(fork) as Record<string, unknown>, linesPrompt(ask))
+  return render(fork) as Record<string, unknown>
+}
+
+// The tokens a base holds, as its protocol's usage reports them: it is sent
+// with a short question after it, so its answer costs little, and the
+// question after the old and new bases alike drops out of their difference.
+// No breakpoint is added at the base's end: Claude Code marks it only in a
+// conversation's first request, and the next request after the lines change
+// has none there to read an entry written at it.
+async function promptOf(proto: Protocol, key: string, body: Canonical, base: Record<string, unknown>, target: string, headers: Record<string, string>): Promise<{ tokens: number; usage: Usage }> {
+  const ask = proto.summaryFork(base, 'Reply with only: OK')
+  if (proto === MESSAGES) ask.max_tokens = 16
+  const { usage } = await forked({ key, proto, model: body.model, provider: body.provider }, 'optimize', ask, target, headers)
+  if (!usage) throw new Error('no usage in the answer')
+  return { tokens: usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0), usage }
 }
 
 async function optimize(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>): Promise<string> {
@@ -734,7 +734,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     const ask = skills.filter((s) => !lines[s.name])
     if (!ask.length) break
     try {
-      const { text } = await forked({ key, proto, model: body.model, provider: body.provider }, 'optimize', linesFork(proto, h, key, body, render, ask), target, headers)
+      const { text } = await forked({ key, proto, model: body.model, provider: body.provider }, 'optimize', proto.summaryFork(baseOf(proto, h, key, body, render), linesPrompt(ask)), target, headers)
       const answer = proto.summaryForkAnswer(text).content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
       lines = { ...lines, ...linesOf(answer, ask) }
     } catch (err) {
@@ -744,11 +744,12 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   const lined = skills.filter((s) => lines[s.name])
   if (!lined.length) return 'shaver: the model wrote no usable lines; try `:shaver optimize` again.'
   proposal = { key, skills, lines }
-  const listOf = (f: (s: Skill) => string) => lined.map((s) => `- ${s.name}: ${f(s)}`).join('\n')
-  const [before, after] = await Promise.all([tokensOf(proto, body.model, listOf((s) => s.description), target, headers), tokensOf(proto, body.model, listOf((s) => lines[s.name]), target, headers)])
+  const rules = withLines(policy.skill_list ?? [], skills, lines)
+  const measured = await Promise.all([baseOf(proto, h, key, body, render), baseOf(proto, h, key, body, render, rules)].map((b) => promptOf(proto, key, body, b, target, headers))).catch((err) => err as Error)
   const width = Math.max(...lined.map((s) => s.name.length))
   const left = skills.filter((s) => !lines[s.name]).map((s) => s.name)
-  const warm = warmWithOther(withLines(policy.skill_list ?? [], skills, lines), Date.now())
+  const warm = warmWithOther(rules, Date.now())
+  const n = (x: number) => x.toLocaleString('en-US')
   return [
     `shaver: lines for ${lined.length} of ${countOf(skills.length, 'skill')} (${body.model}):`,
     '',
@@ -757,7 +758,9 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     '```',
     ...(left.length ? ['', `No line, so kept whole: ${left.join(', ')}.`] : []),
     '',
-    before !== undefined && after !== undefined ? `They take these skills' descriptions from ${before.toLocaleString('en-US')} tokens to ${after.toLocaleString('en-US')}, ${(before - after).toLocaleString('en-US')} fewer on every request.` : 'The API would not count their tokens.',
+    measured instanceof Error
+      ? `Sending the bases to measure them failed: ${measured.message}`
+      : `They take this session's base from ${n(measured[0].tokens)} tokens to ${n(measured[1].tokens)}, ${n(measured[0].tokens - measured[1].tokens)} fewer on every request, as the API counted them sending both.`,
     '',
     `Apply them to every session now? Answer y or n.${warm.length ? ` ${countOf(warm.length, 'session')} with a warm cache would rewrite it once, about ${money(warm.reduce((x, y) => x + y, 0))}.` : ''}`,
   ].join('\n')

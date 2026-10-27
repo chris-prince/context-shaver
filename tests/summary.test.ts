@@ -62,9 +62,11 @@ test('a summary fork appends its instructions after the breakpoint, so it reads 
   assert.deepEqual(out.at(-1)!.content, [{ type: 'tool_result', tool_use_id: 't4', content: long }, { type: 'text', text: 'compact' }])
 })
 
-test("a fork ending in a message not the user's asks in one of its own, leaving the rest as sent", () => {
-  const msgs: ApiMsg[] = [{ role: 'system', content: 'base' }]
-  assert.deepEqual(summaryForkMessages(msgs, 'ask'), [...msgs, { role: 'user', content: [{ type: 'text', text: 'ask' }] }])
+test("a fork asks after the last message's blocks, or in a user message after an assistant's, leaving the rest as sent", () => {
+  const base: ApiMsg[] = [{ role: 'user', content: 'hi' }, { role: 'system', content: [{ type: 'text', text: 'base', cache_control: { type: 'ephemeral' } }] }]
+  assert.deepEqual(summaryForkMessages(base, 'ask'), [base[0], { role: 'system', content: [{ type: 'text', text: 'base', cache_control: { type: 'ephemeral' } }, { type: 'text', text: 'ask' }] }])
+  const answered: ApiMsg[] = [...base, { role: 'assistant', content: 'ok' }]
+  assert.deepEqual(summaryForkMessages(answered, 'ask'), [...answered, { role: 'user', content: [{ type: 'text', text: 'ask' }] }])
 })
 
 test('records replace the turns they cover, after the base, and go when their prompt does', () => {
