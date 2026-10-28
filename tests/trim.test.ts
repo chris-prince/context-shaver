@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
-import { parsePolicy, seedPolicy, treatment, withSkillList, type Policy } from '../src/policy.ts'
+import { parsePolicy, seedPolicy, treatment, withList, type Policy } from '../src/policy.ts'
 import { anchored, apply, decide, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 
@@ -69,8 +69,8 @@ test('a rule is due once its unit is completed, past the wait', () => {
 })
 
 test('a policy file is checked', () => {
-  assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'tool_search', 'reasoning', 'tools_not_deferred', 'skill_list', 'summary_threshold_tokens', 'memoir_threshold_tokens'])
-  for (const bad of [[], { tools: [] }, { tool: {} }, { tools_not_deferred: [1] }, { summary_threshold_tokens: 0 }, { summary_threshold_tokens: '20k' }, { memoir_threshold_tokens: 0 }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }, { skill_list: {} }, { skill_list: [{ match: 'x', action: 'stub' }] }, { skill_list: [{ match: 'x', action: 'drop', sentences: 1 }] }, { skill_list: [{ action: 'keep' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line', replaces: 'h', sentences: 1 }] }, { skill_list: [{ match: 'x', action: 'drop', text: 'a line', replaces: 'h' }] }])
+  assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'tool_search', 'reasoning', 'tool_list', 'skill_list', 'summary_threshold_tokens', 'memoir_threshold_tokens'])
+  for (const bad of [[], { tools: [] }, { tool: {} }, { tools_not_deferred: [1] }, { tool_list: {} }, { tool_list: [{ name: 'x' }] }, { tool_list: [{ name: 'x', defer: 'yes' }] }, { tool_list: [{ name: 'x', defer: true, match: 'x' }] },{ summary_threshold_tokens: 0 }, { summary_threshold_tokens: '20k' }, { memoir_threshold_tokens: 0 }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }, { skill_list: {} }, { skill_list: [{ match: 'x', action: 'stub' }] }, { skill_list: [{ match: 'x', action: 'drop', sentences: 1 }] }, { skill_list: [{ action: 'keep' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line', replaces: 'h', sentences: 1 }] }, { skill_list: [{ match: 'x', action: 'drop', text: 'a line', replaces: 'h' }] }])
     assert.throws(() => parsePolicy(bad))
   assert.doesNotThrow(() => parsePolicy({ skill_list: [{ match: 'x', action: 'stub', text: 'a line', replaces: 'h' }] }))
 })
@@ -471,11 +471,19 @@ test("setting a policy file's skill list changes only that value's text", () => 
   const head = '{\n  // not JSON, but kept as written\n  "tool":   [ { "on": "step", "wait": 4, "action": "drop" } ],\n  "note": "skill_list: [ }",\n  "nested": { "skill_list": [1] },\n  "skill_list": '
   const tail = ',\n  "summary_threshold_tokens": 20000\n}\n'
   const text = head + '[\n    { "match": "old", "action": "keep" }\n  ]' + tail
-  const out = withSkillList(text, rules)
+  const out = withList(text, 'skill_list', rules)
   assert.ok(out.startsWith(head) && out.endsWith(tail))
   assert.deepEqual(JSON.parse(out.slice(head.length, out.length - tail.length)), rules)
   for (const file of ['{\n  "tool": []\n}\n', '{}\n']) {
-    const added = JSON.parse(withSkillList(file, rules))
+    const added = JSON.parse(withList(file, 'skill_list', rules))
     assert.deepEqual(added, { ...JSON.parse(file), skill_list: rules })
   }
+})
+
+test("a policy file's tool list takes the place of its tools_not_deferred, and is set in place once it has one", () => {
+  const rules = [{ name: 'Bash', defer: false }, { name: '*', defer: true }]
+  const file = '{\n  "tool": [],\n  "tools_not_deferred": ["Bash", "Read"],\n  "skill_list": []\n}\n'
+  const once = withList(file, 'tool_list', rules, 'tools_not_deferred')
+  assert.deepEqual(Object.entries(JSON.parse(once)), [['tool', []], ['tool_list', rules], ['skill_list', []]])
+  assert.deepEqual(JSON.parse(withList(once, 'tool_list', rules.slice(1), 'tools_not_deferred')).tool_list, rules.slice(1))
 })

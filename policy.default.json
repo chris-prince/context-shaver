@@ -13,7 +13,13 @@
   "reasoning": [
     { "on": "turn", "wait": 0, "action": "drop" }
   ],
-  "tools_not_deferred": ["ToolSearch", "Bash", "Edit", "Read", "Write"],
+  "tool_list": [
+    { "name": "Bash", "defer": false },
+    { "name": "Edit", "defer": false },
+    { "name": "Read", "defer": false },
+    { "name": "Write", "defer": false },
+    { "name": "*", "defer": true }
+  ],
   "skill_list": [
     { "match": "*", "action": "keep" }
   ],

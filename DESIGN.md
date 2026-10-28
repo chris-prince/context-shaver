@@ -293,13 +293,26 @@ A stub replaces the lines, a drop the whole Read; the rest of the message (the
 skills list, the environment block) stays. In the base, before the first
 response, it is left alone.
 
-`tools_not_deferred` lists the tools Claude Code sends in full that should stay
-that way. Every other one is marked `defer_loading` and added to the deferred
-tools Claude Code lists in its environment message, so the model loads it with
-`ToolSearch` when it needs it. `ToolSearch` itself is never deferred, listed or
-not. Without the key nothing is deferred, and with tool search off (no
-`ENABLE_TOOL_SEARCH`, so no list) neither. Changing the list rewrites the cache of open
-sessions once.
+`tool_list` says which of the tools Claude Code sends in full to defer. Each
+rule has a `name`, a tool name or `*` for any, and `defer`, true or false; the
+first matching rule wins, and a tool no rule matches stays. A deferred tool is
+marked `defer_loading` and added to the deferred tools Claude Code lists in its
+environment message, so the model loads it with `ToolSearch` when it needs it.
+`ToolSearch` itself is never deferred, whatever the rules say. The older
+`tools_not_deferred`, a list of tools to keep with every other deferred, is
+still read as those rules plus `*`, when there's no `tool_list`. Without either
+key nothing is deferred, and with tool search off (no `ENABLE_TOOL_SEARCH`, so
+no list) neither. Changing the rules rewrites the cache of open sessions once.
+
+`:shaver optimize` offers tool rules after the skill lines: the policy's own
+rules first, then the core tools (Bash, Edit, Read, Write) kept and `*`
+deferring the rest. A policy that already has a `*` rule is left as it is, so
+nothing is offered. It names the tools that would newly
+be deferred and the tokens deferring them saves, measured as for the skill
+lines: the base sent with the old rules and with the new. One `y` applies both
+the lines and the rules, writing `tool_list` in place of `tools_not_deferred`.
+With tool search off it says how to turn it on. On Codex it says shaver can't
+defer tools there yet; `toolOffer` in `src/server.ts` is where that goes.
 
 `skill_list` shortens the list of skills Claude Code gives the model in its
 environment message, or Codex in its developer message (`### Available

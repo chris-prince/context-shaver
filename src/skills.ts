@@ -30,7 +30,7 @@ type Block = { type: string; text?: string }
 type Body = { messages?: { role: string; content: string | Block[] }[]; system?: unknown }
 
 // A pattern is a name, with `*` for any run of characters.
-const matches = (pattern: string, name: string) => new RegExp('^' + pattern.split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(name)
+export const matches = (pattern: string, name: string) => new RegExp('^' + pattern.split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(name)
 
 // The text up to the end of its nth sentence, or all of it if it has fewer.
 function firstSentences(text: string, n: number): string {

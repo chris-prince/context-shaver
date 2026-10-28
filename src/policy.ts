@@ -4,21 +4,24 @@
 
 import { copyFileSync, existsSync, readFileSync } from 'node:fs'
 import type { Clock, Item, Kind } from './items.ts'
+import type { ToolRule } from './defer.ts'
 import type { SkillRule } from './skills.ts'
 
 export type Action = 'stub' | 'drop'
 // Due once the item's step (or turn) is among the completed ones, leaving out
 // the latest `wait`.
 type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
-// `tools_not_deferred` names the tools Claude Code sends in full that stay
-// that way; the proxy defers the rest (defer.ts). `summary_threshold_tokens` is
+// `tool_list` says which tools Claude Code sends in full the proxy defers,
+// first matching rule winning (defer.ts); `:shaver optimize` writes it. The
+// older `tools_not_deferred` names the tools kept, every other deferred, and
+// is read only without a `tool_list` (toolRulesOf). `summary_threshold_tokens` is
 // how many tokens of completed turns a record leaves uncovered before the
 // proxy asks for the next (summary.ts); without it, none is made or applied.
 // `memoir_threshold_tokens` is how many tokens the records can hold before the
 // oldest are merged into the memoir (summary.ts); without it, none are.
 // `skill_list` shortens the skills Claude Code lists to the model, first
 // matching rule winning (skills.ts); `:shaver optimize` writes stubs into it.
-export type Policy = Partial<Record<Kind, Rule[]>> & { tools_not_deferred?: string[]; summary_threshold_tokens?: number; memoir_threshold_tokens?: number; skill_list?: SkillRule[] }
+export type Policy = Partial<Record<Kind, Rule[]>> & { tool_list?: ToolRule[]; tools_not_deferred?: string[]; summary_threshold_tokens?: number; memoir_threshold_tokens?: number; skill_list?: SkillRule[] }
 
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
@@ -28,6 +31,12 @@ export function parsePolicy(v: unknown): Policy {
   for (const [kind, rules] of Object.entries(v)) {
     if (kind === 'tools_not_deferred') {
       if (!Array.isArray(rules) || !rules.every((n) => typeof n === 'string')) throw new Error('policy: tools_not_deferred is not a list of tool names')
+      continue
+    }
+    if (kind === 'tool_list') {
+      if (!Array.isArray(rules)) throw new Error('policy: tool_list is not a list of rules')
+      for (const r of rules)
+        if (typeof r?.name !== 'string' || typeof r.defer !== 'boolean' || Object.keys(r).length !== 2) throw new Error(`policy: bad tool_list rule ${JSON.stringify(r)}`)
       continue
     }
     if (kind === 'summary_threshold_tokens' || kind === 'memoir_threshold_tokens') {
@@ -58,44 +67,59 @@ export function seedPolicy(file: string, from: string): void {
   if (!existsSync(file) && existsSync(from)) copyFileSync(from, file)
 }
 
-// A policy file's text with its top-level `skill_list` set to `rules`, a rule
-// to a line, the rest of the text as it was, so edits by hand are kept. A file
-// with no `skill_list` gets one added last.
-export function withSkillList(text: string, rules: readonly SkillRule[]): string {
-  const one = (r: SkillRule) => `{ ${Object.entries(r).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ')} }`
+// The tool rules a policy gives: its `tool_list`, or its `tools_not_deferred`
+// as rules keeping those and deferring the rest; none without either.
+export const toolRulesOf = (p: Policy): ToolRule[] | undefined =>
+  p.tool_list ?? (p.tools_not_deferred && [...p.tools_not_deferred.map((name) => ({ name, defer: false })), { name: '*', defer: true }])
+
+// A policy file's text with its top-level `name` set to `rules`, a rule to a
+// line, the rest of the text as it was, so edits by hand are kept. Without
+// `name`, a top-level `replacing` has its key and value replaced by `name`'s;
+// a file with neither gets `name` added last.
+export function withList(text: string, name: 'skill_list' | 'tool_list', rules: readonly object[], replacing?: string): string {
+  const one = (r: object) => `{ ${Object.entries(r).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ')} }`
   const list = rules.length ? `[\n${rules.map((r) => '    ' + one(r)).join(',\n')}\n  ]` : '[]'
-  // The top-level key's value: where it starts and ends, read past strings.
+  const at = spanOf(text, name)
+  if (at) return text.slice(0, at.value) + list + text.slice(at.end)
+  const old = replacing === undefined ? undefined : spanOf(text, replacing)
+  if (old) return text.slice(0, old.key) + `${JSON.stringify(name)}: ${list}` + text.slice(old.end)
+  const close = text.lastIndexOf('}')
+  const body = text.slice(0, close).trimEnd()
+  return `${body}${body.endsWith('{') ? '' : ','}\n  ${JSON.stringify(name)}: ${list}\n${text.slice(close)}`
+}
+
+// Where a top-level key starts, and where its value starts and ends, read past
+// strings; none if the text has no such key.
+function spanOf(text: string, name: string): { key: number; value: number; end: number } | undefined {
+  const string = (i: number) => {
+    const end = /"(?:[^"\\]|\\.)*"/y
+    end.lastIndex = i
+    return end.exec(text)![0]
+  }
   let depth = 0
-  let key: string | undefined
+  let key: { name: string; at: number } | undefined
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (ch === '"') {
-      const end = /"(?:[^"\\]|\\.)*"/y
-      end.lastIndex = i
-      const s = end.exec(text)![0]
-      key = depth === 1 ? JSON.parse(s) : undefined
+      const s = string(i)
+      key = depth === 1 ? { name: JSON.parse(s), at: i } : undefined
       i += s.length - 1
-    } else if (ch === ':' && depth === 1 && key === 'skill_list') {
+    } else if (ch === ':' && depth === 1 && key?.name === name) {
       const start = i + 1 + (text.slice(i + 1).length - text.slice(i + 1).trimStart().length)
       let d = 0
       for (let j = start; j < text.length; j++) {
-        if (text[j] === '"') {
-          const end = /"(?:[^"\\]|\\.)*"/y
-          end.lastIndex = j
-          j += end.exec(text)![0].length - 1
-        } else if (text[j] === '[' || text[j] === '{') d++
+        if (text[j] === '"') j += string(j).length - 1
+        else if (text[j] === '[' || text[j] === '{') d++
         else if (text[j] === ']' || text[j] === '}') {
-          if (--d === 0) return text.slice(0, start) + list + text.slice(j + 1)
+          if (--d === 0) return { key: key.at, value: start, end: j + 1 }
         }
       }
-      throw new Error('policy: skill_list is not closed')
+      throw new Error(`policy: ${name} is not closed`)
     } else if (ch === '{' || ch === '[') depth++
     else if (ch === '}' || ch === ']') depth--
     else if (ch === ',') key = undefined
   }
-  const close = text.lastIndexOf('}')
-  const body = text.slice(0, close).trimEnd()
-  return `${body}${body.endsWith('{') ? '' : ','}\n  "skill_list": ${list}\n${text.slice(close)}`
+  return undefined
 }
 
 // The policy in a file, or none if there is no file.
