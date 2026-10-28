@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
+import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
 import { coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
@@ -87,6 +88,23 @@ test('records replace the turns they cover, after the base, and go when their pr
   // Rewound to turn 2 with a new prompt: the second record goes.
   const rewound = [...msgs.slice(0, 10), { role: 'user', content: 'turn three, again' }, ...msgs.slice(11)] as ApiMsg[]
   assert.deepEqual(validChain([r1, r2], rewound), [r1])
+})
+
+test('after a /compact, records keep the preamble Claude Code puts after the exchange it kept', () => {
+  const kept: ApiMsg[] = [
+    { role: 'user', content: 'This session is being continued' },
+    { role: 'assistant', content: 'the last reply before the compact' },
+    { role: 'user', content: [{ type: 'text', text: '<system-reminder>\nCodebase and user instructions are shown below.\n</system-reminder>' }, { type: 'text', text: 'turn one' }] },
+    { role: 'system', content: 'Note: a file changed.\n\nThe following skills are available for use' },
+  ]
+  const msgs = [...kept, ...session().slice(3)]
+  assert.equal(preambleEnd(msgs), 4)
+  const f = summaryForkAt(msgs)!
+  const r = recordOf([{ type: 'text', text: 'one\nEnds before: [4]' }], f, 'now')!
+  assert.deepEqual(summarized(none(msgs), msgs, [r]).msgs.slice(0, 5), [...kept, { role: 'assistant', content: [{ type: 'text', text: `${SUMMARY_HEAD}\n\n${r.text}` }] }])
+  // With the preamble before the first response, or none, it ends there.
+  assert.equal(preambleEnd(session()), 3)
+  assert.equal(preambleEnd([kept[0], kept[1], { role: 'user', content: 'hi' }, { role: 'assistant', content: 'ok' }]), 1)
 })
 
 test('the records added replace what was sent, past the records before them', () => {

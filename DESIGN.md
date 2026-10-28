@@ -491,9 +491,12 @@ record is kept apart from sending it.
   it.
 - **Sent once the cache is cold.** A request that reads nothing from the cache
   writes everything anyway, so it takes all the records there are: everything
-  from the first response to the last record's end is replaced by the records,
-  one assistant message each, oldest first. The messages before the first
-  response (the preamble and the first prompt) stay. Assistant messages fit
+  from the preamble's end to the last record's end is replaced by the records,
+  one assistant message each, oldest first. The messages before it (the
+  preamble and the first prompt) stay. The preamble ends at the first
+  response, except after a `/compact`: Claude Code keeps the last exchange
+  before it and sends the preamble after that, so then it ends at the first
+  response after the preamble's headings. Assistant messages fit
   after them where a user one can't, since they can end with a system message.
   Every request after sends the same records, so the cache keeps reading them.
   In `:shaver info` each record counts as `summary` and is dated by the first

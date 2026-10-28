@@ -13,7 +13,7 @@
 
 import type { Usage } from './cost.ts'
 import { blocks, type ApiMsg, type Block } from './items.ts'
-import { kinds } from './log.ts'
+import { kinds, preambleEnd } from './log.ts'
 import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Held, type Protocol, type Replying, type Wire } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
@@ -143,7 +143,7 @@ export function canonical(wire: Record<string, unknown>): Wire {
     // one kind; one that mixes them, a prompt with a reminder say, is split by
     // bytes as log.ts splits a message, but with no envelope, the blocks'
     // JSON alone, since an item has none.
-    const responded = msgs.findIndex((m) => m.role === 'assistant')
+    const responded = preambleEnd(msgs)
     const kindsOf = (its: Item[], i: number) => {
       if (sum(its) === undefined) return
       const out: Record<string, number> = {}

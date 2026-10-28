@@ -10,7 +10,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { isMemoir, isSkillBody, isSummary, type ApiMsg, type Block } from './items.ts'
+import { isMemoir, isPrompt, isSkillBody, isSummary, type ApiMsg, type Block } from './items.ts'
 import { isStubbed, STUB } from './trim.ts'
 
 export const LOG_DIR = 'logs'
@@ -104,6 +104,24 @@ export function sections(b: Block, headings = HEADINGS): Array<[string, number]>
   return out
 }
 
+// The index of the message that ends the preamble: the first response. After a
+// /compact Claude Code keeps the last exchange before the compact and puts the
+// preamble after it, with the first prompt, so when no message before the
+// first response has a preamble heading and one up to the next prompt's
+// message after it does, the preamble runs to the first response after that,
+// or to the end if there's none yet.
+export function preambleEnd(msgs: readonly ApiMsg[]): number {
+  const first = msgs.findIndex((m) => m.role === 'assistant')
+  if (first < 0) return first
+  const headed = (m: ApiMsg) => (typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content).some((b) => (m.role === 'system' || isReminder(b)) && b.type === 'text' && HEADINGS.some(([h]) => new RegExp('^' + h, 'm').test(String(b.text))))
+  if (msgs.slice(0, first).some(headed)) return first
+  const prompt = msgs.findIndex((m, i) => i > first && isPrompt(m))
+  const at = prompt < 0 ? -1 : msgs.findIndex((m, i) => i > first && i <= prompt + 1 && headed(m))
+  if (at < 0) return first
+  const end = msgs.findIndex((m, i) => i > at && m.role === 'assistant')
+  return end < 0 ? msgs.length : end
+}
+
 const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('<system-reminder>')
 
 function kindOf(b: Block, role: string): string {
@@ -161,7 +179,7 @@ export function receivedOf(lines: ReadonlyArray<Record<string, any>>): string[][
 export function writeParts(dir: string, msgs: readonly ApiMsg[], idsOf?: (m: ApiMsg) => string[]): Array<{ part: string; hash: string; bytes: number; ids?: string[] }> {
   const parts = path.join(dir, 'parts')
   mkdirSync(parts, { recursive: true })
-  const responded = msgs.findIndex((m) => m.role === 'assistant')
+  const responded = preambleEnd(msgs)
   return msgs.map((m, i) => {
     const json = JSON.stringify(m)
     const h = hash(json)

@@ -15,7 +15,7 @@
 // thinking of the replies after it, so those are counted again, at their bytes
 // less the thinking.
 
-import { hash, kinds as kindsOf, sections as sectionsOf } from './log.ts'
+import { hash, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
 import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Conventions } from './items.ts'
 import type { Cost } from './cost.ts'
 
@@ -115,7 +115,7 @@ function referenced(m: ApiMsg): string[] {
 
 export function describe(body: { model: string; provider?: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[] }, ends: Sent['ends'], time: string, advanced = false, conv: Conventions = CLAUDE_CODE): Sent {
   const msgs = body.messages
-  const responded = msgs.findIndex((m) => m.role === 'assistant')
+  const responded = preambleEnd(msgs)
   const tools = body.tools ?? []
   const size = new Map(tools.map((t) => [t.name, JSON.stringify(t).length]))
   const parts = msgs.map((m, i) => {

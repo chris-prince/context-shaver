@@ -14,7 +14,7 @@
 // merged into the memoir: their arcs' titles by date, one line each.
 
 import { blocks, isPrompt, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg, type Block } from './items.ts'
-import { hash } from './log.ts'
+import { hash, preambleEnd } from './log.ts'
 import { sizeOf, type Applied, type Thinking } from './trim.ts'
 
 // An arc of a record: the turn it starts at and its title, as the summary fork
@@ -45,17 +45,16 @@ export function validChain(chain: readonly Summary[], msgs: readonly ApiMsg[]): 
   return n < 0 ? [...chain] : chain.slice(0, n)
 }
 
-// The index of the first message each record covers: the first response for
-// the first record, and the prompt its predecessor ends before for the rest.
+// The index of the first message each record covers: the preamble's end
+// (log.ts, preambleEnd) for the first record, and the prompt its predecessor ends before for the rest.
 export function startsOf(msgs: readonly ApiMsg[], chain: readonly Summary[]): number[] {
   const prompts = promptsOf(msgs)
-  return chain.map((_, k) => (k ? prompts[chain[k - 1].endsBefore - 1] : msgs.findIndex((m) => m.role === 'assistant')))
+  return chain.map((_, k) => (k ? prompts[chain[k - 1].endsBefore - 1] : preambleEnd(msgs)))
 }
 
-// The messages with everything from the first response up to the last
+// The messages with everything from the preamble's end up to the last
 // record's end replaced by the records, one assistant message each, oldest
-// first. The messages before the first response (the preamble and the first
-// prompt) stay. Assistant messages fit after them where a user one can't:
+// first. The messages before it (the preamble and the first prompt) stay. Assistant messages fit after them where a user one can't:
 // they can end with a system message, which the API refuses before a user one.
 // The first `merged` records go as one message, the memoir, before the rest.
 export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], merged = 0): Applied {
@@ -102,7 +101,7 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
   const prompts = promptsOf(msgs)
   const current = prompts.length
   const start = chain.at(-1)?.endsBefore ?? 1
-  const at = (t: number) => (t <= 1 ? msgs.findIndex((m) => m.role === 'assistant') : prompts[t - 1])
+  const at = (t: number) => (t <= 1 ? preambleEnd(msgs) : prompts[t - 1])
   const covered = (t: number, j: number) => a.origin[j] >= at(t) && a.origin[j] < prompts[current - 1]
   const charsFrom = (t: number) => a.msgs.reduce((n, m, j) => (covered(t, j) ? n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking), 0) : n), 0)
   const from = Math.max(start, Math.min(offered, current))
