@@ -724,15 +724,18 @@ function warmWithOther(rules: readonly SkillRule[], now: number): number[] {
 // The request's base as the proxy sends it, through the message holding the
 // skill list, with the skill rules the session sends it with, or `rules`.
 // Forks start from it, so they read what the session has cached of it.
-function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules?: readonly SkillRule[]): Record<string, unknown> {
-  const now = Date.now()
-  const ttl = modelOf(body.model, body.provider).ttl
-  const s = load(key)
+function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules = sessionRules(key, body)): Record<string, unknown> {
   const fork: Canonical = structuredClone({ ...body, messages: body.messages.slice(0, listMessage(body) + 1) })
   if (proto.defers && h?.defers && policy.tools_not_deferred) forceDefer(fork, policy.tools_not_deferred)
-  rules ??= skillListOf(s, Object.values(s?.entries ?? {}).some((t) => now - t <= lifetimeMs(ttl, ttlMs)), now)?.rules
   if (rules) shaveSkills(fork, rules)
   return render(fork) as Record<string, unknown>
+}
+
+function sessionRules(key: string, body: Canonical): readonly SkillRule[] | undefined {
+  const now = Date.now()
+  const s = load(key)
+  const ttl = modelOf(body.model, body.provider).ttl
+  return skillListOf(s, Object.values(s?.entries ?? {}).some((t) => now - t <= lifetimeMs(ttl, ttlMs)), now)?.rules
 }
 
 // The tokens a base holds, as its protocol's usage reports them: it is sent
@@ -776,29 +779,40 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   }
   const skills = keptWhole(skillsOf(body), policy.skill_list ?? [])
   if (!skills.length) return 'shaver: this request lists no skills the policy keeps whole, so there are no lines to write.'
-  say(`shaver optimize: asking ${body.model} for a line of up to ${LINE_WORDS} words for each of ${countOf(skills.length, 'skill')}, to list in place of its description, then measuring the savings. This takes several seconds.\n\n`)
-  let lines: Record<string, string> = {}
-  // A model's answer can leave skills out, so those are asked for once more.
-  for (let tries = 0; tries < 2; tries++) {
-    const ask = skills.filter((s) => !lines[s.name])
-    if (!ask.length) break
-    try {
-      const { text } = await forked({ key, proto, model: body.model, provider: body.provider }, 'optimize', proto.summaryFork(baseOf(proto, h, key, body, render), linesPrompt(ask)), target, headers)
-      const answer = proto.summaryForkAnswer(text).content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
-      lines = { ...lines, ...linesOf(answer, ask) }
-    } catch (err) {
-      return `shaver: asking ${body.model} for skill lines failed: ${err instanceof Error ? err.message : err}`
+  // The lines are asked for while the skills' own tokens are measured: the
+  // base as sent, and without those skills' entries.
+  const measure = (rules?: readonly SkillRule[]) => promptOf(proto, key, body, baseOf(proto, h, key, body, render, rules), target, headers)
+  const old = measure()
+  const without = measure([...skills.map((s) => ({ match: s.name, action: 'drop' as const })), ...(sessionRules(key, body) ?? [])])
+  const asked = (async (): Promise<Record<string, string> | string> => {
+    let lines: Record<string, string> = {}
+    // A model's answer can leave skills out, so those are asked for once more.
+    for (let tries = 0; tries < 2; tries++) {
+      const ask = skills.filter((s) => !lines[s.name])
+      if (!ask.length) break
+      try {
+        const { text } = await forked({ key, proto, model: body.model, provider: body.provider }, 'optimize', proto.summaryFork(baseOf(proto, h, key, body, render), linesPrompt(ask)), target, headers)
+        const answer = proto.summaryForkAnswer(text).content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
+        lines = { ...lines, ...linesOf(answer, ask) }
+      } catch (err) {
+        return `shaver: asking ${body.model} for skill lines failed: ${err instanceof Error ? err.message : err}`
+      }
     }
-  }
+    return lines
+  })()
+  const n = (x: number) => x.toLocaleString('en-US')
+  const own = await Promise.all([old, without]).then(([o, w]) => o.tokens - w.tokens, () => undefined)
+  say(`Analyzing ${countOf(skills.length, 'skill')}${own === undefined ? '' : ` that use ${n(own)} tokens`}\n\n`)
+  const lines = await asked
+  if (typeof lines === 'string') return lines
   const lined = skills.filter((s) => lines[s.name])
   if (!lined.length) return 'shaver: the model wrote no usable lines; try `shaver optimize` again.'
   proposal = { key, skills, lines }
   const rules = withLines(policy.skill_list ?? [], skills, lines)
-  const measured = await Promise.all([baseOf(proto, h, key, body, render), baseOf(proto, h, key, body, render, rules)].map((b) => promptOf(proto, key, body, b, target, headers))).catch((err) => err as Error)
+  const measured = await Promise.all([old, measure(rules)]).catch((err) => err as Error)
   const width = Math.max(...lined.map((s) => s.name.length))
   const left = skills.filter((s) => !lines[s.name]).map((s) => s.name)
   const warm = warmWithOther(rules, Date.now())
-  const n = (x: number) => x.toLocaleString('en-US')
   return [
     measured instanceof Error
       ? `Couldn't measure the savings: sending the base failed: ${measured.message}`
