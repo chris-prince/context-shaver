@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answeredMidTurn, closeHeld, commandOf, midTurnCommands, pendingCommand, PICK, reply, stripCommands, textBlock, withoutPending, wordsOf } from '../src/command.ts'
+import { answeredMidTurn, closeHeld, commandOf, midTurnCommands, pendingCommand, reply, stripCommands, textBlock, withoutPending, wordsOf } from '../src/command.ts'
+import { PICK } from '../src/optimize.ts'
 import { CHAT } from '../src/chat.ts'
 import { MESSAGES } from '../src/messages.ts'
 import { wholeReply } from '../src/protocol.ts'

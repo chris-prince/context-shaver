@@ -348,9 +348,9 @@ table: the base is sent with the old lines and with the new, each with a short
 question after it, and the difference of their prompt tokens, as the API's
 usage reports them, is the saving. The skills and the tools are numbered, with
 a Trimmed or Deferred column saying which the policy changes now, and each list
-ends asking which to change: `all`, `none`, numbers like `1 3 5`, or `keep` as
-the next prompt is the answer, a command like the others, and a number out of
-range asks again. The answer sets every row: those picked are trimmed or
+ends asking which to change: `all`, `none`, numbers and ranges split by commas
+or spaces like `1,3-5 8`, or `keep` as the next prompt is the answer, a command
+like the others, and a number out of range asks again. The answer sets every row: those picked are trimmed or
 deferred, the rest are not, and `keep` leaves the policy as it is. Skills
 already trimmed keep their lines; the others get new ones. The policy changes
 in memory and in the policy file, and every session gets them from its next

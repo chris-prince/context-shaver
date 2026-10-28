@@ -26,17 +26,14 @@
 // text is taken out of every later request too.
 
 import { holding, wholeReply, type Held, type Replying } from './protocol.ts'
+import { PICK, pickWords } from './optimize.ts'
 
 export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize', ':shaver probe-codex-tool-search']
 
-// How `:shaver optimize`'s replies end when they ask which items to change.
-export const PICK = "Type 'all', 'none', a specific list (like '1 3 5'), or 'keep' to leave as-is."
-
-// An answer to PICK, as the command it is: `all`, `none`, `keep`, or item
-// numbers.
+// An answer to `:shaver optimize`'s question (PICK), as the command it is.
 function answerOf(text: string): string | undefined {
-  if (/^(?:all|none|keep)$/i.test(text)) return `:shaver optimize ${text.toLowerCase()}`
-  if (/^\d+(?:[\s,]+\d+)*$/.test(text)) return `:shaver optimize ${text.split(/[\s,]+/).map(Number).join(' ')}`
+  const words = pickWords(text)
+  return words === undefined ? undefined : `:shaver optimize ${words}`
 }
 
 type Block = { type: string; text?: string; content?: unknown; cache_control?: unknown }
