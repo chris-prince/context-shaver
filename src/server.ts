@@ -354,7 +354,6 @@ const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding'
 // which Claude Code shows in the status line. Answers made here carry them
 // too, or the status line loses them for that turn.
 const limits = new Map<Protocol, Record<string, string>>()
-
 // The headers a request is sent on with: the client's, but for hop-by-hop
 // ones, and the encoding of a body the proxy decompressed.
 function forwarded(from: IncomingHttpHeaders, zstd: boolean): Record<string, string> {
@@ -373,6 +372,69 @@ function refuse(res: ServerResponse, proto: Protocol, status: 400 | 403, message
   console.error(message)
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(proto.error(status, message))
+}
+
+// A tiny, standalone client-executed Responses tool-search round trip. The
+// latest Codex request supplies only route/auth/model; its prompt is not reused.
+async function probeCodexToolSearch(context: { target: string; headers: Record<string, string>; model: string }): Promise<Record<string, unknown>> {
+  const functionTool = {
+    type: 'function', name: 'shaver_probe_confirm', description: 'Confirms this tool-search probe.', defer_loading: true,
+    parameters: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'], additionalProperties: false },
+  }
+  const searchTool = {
+    type: 'tool_search', execution: 'client', description: 'Find a harmless probe function.',
+    parameters: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'], additionalProperties: false },
+  }
+  const usage: Record<string, Record<string, number>> = {}
+  const send = async (stage: string, body: Record<string, unknown>) => {
+    const response = await fetch(context.target, {
+      method: 'POST', headers: context.headers, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000),
+    })
+    const text = await response.text()
+    let data: any
+    try { data = JSON.parse(text) } catch {
+      // Codex's Responses backend requires streaming. Read its terminal event
+      // into the same shape as a non-streaming Responses object.
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+          if (event.type === 'response.completed' || event.type === 'response.failed' || event.type === 'response.incomplete') data = event.response
+          else if (event.type === 'error') data = { error: event.error }
+        } catch { /* ignore non-JSON SSE data */ }
+      }
+    }
+    if (data?.usage) {
+      const u = data.usage
+      usage[stage] = Object.fromEntries(['input_tokens', 'input_tokens_details', 'output_tokens', 'total_tokens'].flatMap((k) =>
+        typeof u[k] === 'number' ? [[k, u[k]]] : k === 'input_tokens_details' && typeof u[k]?.cached_tokens === 'number' ? [['cached_input_tokens', u[k].cached_tokens]] : []))
+    }
+    return { response, text, data }
+  }
+  try {
+    const first = await send('search', {
+      model: context.model, store: false, stream: true, parallel_tool_calls: false, max_output_tokens: 48, reasoning: { context: 'all_turns' },
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'Find the harmless probe function so I can confirm tool search works.' }] }],
+      tools: [searchTool, functionTool], tool_choice: 'required',
+    })
+    if (!first.response.ok) return { result: 'rejected', stage: 'search', status: first.response.status, error: first.data?.error?.message ?? first.text.slice(0, 1000), usage }
+    const searchCall = first.data?.output?.find((item: any) => item.type === 'tool_search_call' && item.execution === 'client')
+    if (!searchCall?.call_id) return { result: 'inconclusive', stage: 'search', detail: 'Response did not contain a client tool_search_call.', usage }
+    const second = await send('confirmation', {
+      model: context.model, store: false, stream: true, parallel_tool_calls: false, max_output_tokens: 48, reasoning: { context: 'all_turns' },
+      input: [
+        ...first.data.output,
+        { type: 'tool_search_output', execution: 'client', call_id: searchCall.call_id, status: 'completed', tools: [functionTool] },
+        { role: 'user', content: [{ type: 'input_text', text: 'Call shaver_probe_confirm now with marker set to probe.' }] },
+      ],
+      tool_choice: { type: 'function', name: 'shaver_probe_confirm' },
+    })
+    if (!second.response.ok) return { result: 'rejected', stage: 'confirmation', status: second.response.status, error: second.data?.error?.message ?? second.text.slice(0, 1000), usage }
+    const confirmed = second.data?.output?.some((item: any) => item.type === 'function_call' && item.name === 'shaver_probe_confirm')
+    return { result: confirmed ? 'supported' : 'inconclusive', detail: confirmed ? 'Client tool-search round trip returned the probe function call; it was not executed.' : 'Follow-up did not return the probe function call.', response_status: second.data?.status, incomplete_details: second.data?.incomplete_details, error: second.data?.error, output: second.data?.output?.map((item: any) => ({ type: item.type, name: item.name, status: item.status })), usage }
+  } catch (error) {
+    return { result: 'error', detail: error instanceof Error ? error.message : String(error), usage }
+  }
 }
 
 // The protocol a path is, after any /via/; Messages for any other path, which
@@ -563,6 +625,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 // command stripped; `say` gets any text ready before the rest, which follows it.
 async function answerOf(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, clientHeaders: IncomingHttpHeaders, say: (text: string) => void): Promise<string> {
   if (command.startsWith(':shaver optimize')) return optimize(command, proto, h, key, body, render, target, headers, say)
+  if (command === ':shaver probe-codex-tool-search') {
+    if (proto.name !== 'responses' || h?.name !== 'codex') return 'This probe is available only through a Codex Responses session.'
+    const probeHeaders = { ...headers }
+    for (const name of ['accept', 'accept-encoding', 'content-length', 'content-type', 'host', 'connection']) delete probeHeaders[name]
+    probeHeaders['content-type'] = 'application/json'
+    probeHeaders.accept = 'application/json'
+    const result = await probeCodexToolSearch({ target, headers: probeHeaders, model: body.model })
+    return 'Codex tool-search probe:\n```json\n' + JSON.stringify(result, null, 2) + '\n```'
+  }
   if (command === ':shaver policy') return policyText()
   if (command === ':shaver info all') return '```\n' + totals(stateDir, ttlMs) + '\n```'
   return stats(proto, h, body, clientHeaders)

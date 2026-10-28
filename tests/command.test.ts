@@ -15,6 +15,7 @@ test('a command is a user message whose only text is one', () => {
   assert.equal(commandOf({ role: 'user', content: ':shaver policy' }), ':shaver policy')
   assert.equal(commandOf(user(': shaver info')), ':shaver info')
   assert.equal(commandOf(user(':shaver info all')), ':shaver info all')
+  assert.equal(commandOf(user('shaver probe-codex-tool-search')), ':shaver probe-codex-tool-search')
   assert.equal(commandOf(user(':shaver info please')), undefined)
   assert.equal(commandOf(user(':shaver other')), undefined)
   assert.equal(commandOf(assistant(':shaver info')), undefined)

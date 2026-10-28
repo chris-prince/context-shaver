@@ -27,7 +27,7 @@
 
 import { holding, wholeReply, type Held, type Replying } from './protocol.ts'
 
-export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize']
+export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize', ':shaver probe-codex-tool-search']
 
 // The answers to `:shaver optimize`, as the commands they are.
 const ANSWERS: Record<string, string> = { y: ':shaver optimize yes', yes: ':shaver optimize yes', n: ':shaver optimize no', no: ':shaver optimize no' }
