@@ -38,9 +38,9 @@ own config untouched. `claude-via-shaver` works with both claude.ai logins and
 Claude API keys. If Codex or Claude Code calls are already proxied by a
 wrapper, context-shaver can be chained in front of that proxy (see DESIGN.md).
 
-When running against the proxy, the prompt `:shaver info` will return details
+When running against the proxy, the prompt `shaver info` will return details
 on how context-shaver is doing this session and where your context is being
-spent. `:shaver info all` will show your savings across all sessions the
+spent. `shaver info all` will show your savings across all sessions the
 proxy has seen.
 
 context-shaver requires only bash and Node 24 or newer. (`bin/run-proxy` will

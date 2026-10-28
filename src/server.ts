@@ -705,7 +705,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   if (command !== ':shaver optimize') {
     const shown = proposal?.key === key ? proposal : undefined
     proposal = undefined
-    if (!shown) return 'shaver: no lines are waiting; `:shaver optimize` writes them.'
+    if (!shown) return 'shaver: no lines are waiting; `shaver optimize` writes them.'
     if (command === ':shaver optimize no') return 'shaver: left the policy as it is.'
     // From the file as it is now, so edits by hand since the proxy started stay.
     let text: string
@@ -742,7 +742,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     }
   }
   const lined = skills.filter((s) => lines[s.name])
-  if (!lined.length) return 'shaver: the model wrote no usable lines; try `:shaver optimize` again.'
+  if (!lined.length) return 'shaver: the model wrote no usable lines; try `shaver optimize` again.'
   proposal = { key, skills, lines }
   const rules = withLines(policy.skill_list ?? [], skills, lines)
   const measured = await Promise.all([baseOf(proto, h, key, body, render), baseOf(proto, h, key, body, render, rules)].map((b) => promptOf(proto, key, body, b, target, headers))).catch((err) => err as Error)
