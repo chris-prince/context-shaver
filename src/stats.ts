@@ -176,6 +176,32 @@ export function isSuggestion(msgs: readonly ApiMsg[]): boolean {
 // task's notice. The next prompt ends it.
 export const withoutSuggestion = (msgs: ApiMsg[]): ApiMsg[] => (isSuggestion(msgs) ? msgs.slice(0, -1) : msgs)
 
+// Moves the bytes of the skills the proxy shortened (skills.ts) from the
+// skill list's section to `skills-trimmed`: in the preamble part holding it,
+// as Claude Code's always is and Codex's after a compaction, else in the
+// system's sections, as Codex's is before one. Claude Code's system has a
+// `skills` section of its own, its instructions for them, not the list.
+export function splitTrimmed(r: Sent, bytes: number): void {
+  const move = (from: Record<string, number>, k: string, to: string) => {
+    const n = Math.min(bytes, from[k])
+    from[k] -= n
+    from[to] = (from[to] ?? 0) + n
+  }
+  const p = r.parts.find((p) => p.kinds['system:skills'])
+  if (p) move(p.kinds, 'system:skills', 'system:skills-trimmed')
+  else if (r.defs.sections?.skills) move(r.defs.sections, 'skills', 'skills-trimmed')
+}
+
+// A part's counted tokens split as its bytes are: the API's counts by kind
+// come from the message again (responses.ts), so know nothing of
+// splitTrimmed's.
+function splitCounted(kinds: Record<string, number>, counted: Record<string, number>): Record<string, number> {
+  const t = kinds['system:skills-trimmed']
+  if (!t || !counted['system:skills']) return counted
+  const n = (counted['system:skills'] * t) / (t + (kinds['system:skills'] ?? 0))
+  return { ...counted, 'system:skills': counted['system:skills'] - n, 'system:skills-trimmed': n }
+}
+
 // The stats once a request is answered with these counts. Where the API
 // counted parts itself (protocol.ts, Counted), they take its counts, and only
 // the rest are estimated, from what is left.
@@ -266,7 +292,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     bound,
     answers,
     seen,
-    parts: r.parts.map((p, i) => ({ key: p.key, kinds: p.kinds, ...(apiCounts?.kinds?.[i] && { counted: rounded(apiCounts.kinds[i]) }), ...(p.lineage ? { lineage: p.lineage } : {}) })),
+    parts: r.parts.map((p, i) => ({ key: p.key, kinds: p.kinds, ...(apiCounts?.kinds?.[i] && { counted: rounded(splitCounted(p.kinds, apiCounts.kinds[i])) }), ...(p.lineage ? { lineage: p.lineage } : {}) })),
     defs: r.defs,
     ends: r.ends,
   }
@@ -299,7 +325,7 @@ function sharesOf(p: Stats['parts'][number], tokens: Record<string, number>): Ar
 // the conversation each kind's (log.ts, kinds), with `other` for the rest.
 // The summaries' type holds the records and memoir, and the parts records
 // replace (Sent.covers), so its saving is net of what carrying them costs.
-export const BASE = ['tools-deferred', 'skill-list']
+export const BASE = ['tools-deferred', 'skills-trimmed']
 export const SUMMARIES = 'summary+memoir'
 const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages', summary: SUMMARIES, memoir: SUMMARIES }
 

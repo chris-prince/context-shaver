@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornFrom, bornOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Stats } from '../src/stats.ts'
+import { bornFrom, bornOf, describe, estimate, isSuggestion, observe, render, settled, splitTrimmed, withoutSuggestion, type Stats } from '../src/stats.ts'
 import { clockOf, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -103,6 +103,29 @@ test('Base lists the system prompt, the tools and the preamble\'s sections, by n
   const s = observe(undefined, describe(body([preamble, { role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
   const base = render(s, 'session').split('\n\n').find((b) => b.startsWith('  Base'))!.split('\n').slice(2).map((l) => l.replace(/ +[\d,]+ +\( *\d+%\)$/, ''))
   assert.deepEqual(base, ['    other', '    skills', '    system-prompt', '    tools'])
+})
+
+test("Base shows the skills the proxy shortened as skills-trimmed, Claude Code's from the preamble and Codex's from the system", () => {
+  const baseOf = (s: Stats) => Object.fromEntries(render(s, 'session').split('\n\n').find((b) => b.startsWith('  Base'))!.split('\n').slice(2).map((l) => [l.trim().split(/ +/)[0], Number(l.match(/([\d,]+) +\(/)![1].replace(/,/g, ''))]))
+  // Claude Code's system has a skills section of its own, which stays.
+  const preamble: ApiMsg = { role: 'system', content: 'The following skills are available:\n' + '- skill: does things\n'.repeat(20) }
+  const claude = describe(body([preamble, { role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z')
+  claude.defs.sections = { 'system-prompt': 300, skills: 100 }
+  const listed = claude.parts[0].kinds['system:skills']
+  splitTrimmed(claude, 200)
+  assert.deepEqual(claude.defs.sections, { 'system-prompt': 300, skills: 100 })
+  assert.equal(claude.parts[0].kinds['system:skills'], listed - 200)
+  assert.equal(claude.parts[0].kinds['system:skills-trimmed'], 200)
+  // Counted by kind, the part's tokens split as its bytes do.
+  const s = observe(undefined, claude, 2000, 0, { parts: [listed, undefined], kinds: [{ 'system:skills': listed }, undefined] })
+  assert.equal(s.parts[0].counted!['system:skills-trimmed'], 200)
+  assert.ok(baseOf(s)['skills-trimmed'] > 0)
+  // Codex's list is in the system until a compaction.
+  const codex = describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z')
+  codex.defs.sections = { 'system-prompt': 300, skills: 500 }
+  splitTrimmed(codex, 200)
+  assert.deepEqual(codex.defs.sections, { 'system-prompt': 300, skills: 300, 'skills-trimmed': 200 })
+  assert.ok(baseOf(observe(undefined, codex, 2000, 0))['skills-trimmed'] > 0)
 })
 
 test('before any request is answered, the request is estimated from its bytes', () => {

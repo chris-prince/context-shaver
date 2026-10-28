@@ -29,7 +29,7 @@ import { keptWhole, LINE_WORDS, linesOf, linesPrompt, listMessage, shaveSkills, 
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitTrimmed, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
 import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -183,7 +183,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   // What it takes out of the base: deferred tools, and skills off the list.
   const deferred = proto.defers && h?.defers && policy.tools_not_deferred ? forceDefer(body, policy.tools_not_deferred) : 0
   const skillList = skillListOf(s, live.size > 0, now)
-  const skills = skillList ? shaveSkills(body, skillList.rules) : 0
+  const { cut: skills, trimmed: skillsTrimmed } = skillList ? shaveSkills(body, skillList.rules) : { cut: 0 }
   const seed = seedOf(body.model, body.tools, body.system)
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
   // The records it sends, and how many of them as the memoir: as sent before,
@@ -245,6 +245,7 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   const described = { ...describe(body, trimmed, time, d?.advanced || records > before || merged > mergedBefore, conv), turns: msgs.filter(isPrompt).length }
   if (deferred) described.defs.deferred = deferred
   if (skills) described.defs.skills = skills
+  if (skillsTrimmed) splitTrimmed(described, skillsTrimmed)
   if (marked) described.ttl = marked
   if (covers) described.covers = covers
   const last = latestOf(key)
@@ -313,20 +314,22 @@ function policyText(): string {
 function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers: IncomingHttpHeaders): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   if (proto.defers && h?.defers && policy.tools_not_deferred) forceDefer(sent, policy.tools_not_deferred)
-  if (policy.skill_list) shaveSkills(sent, policy.skill_list)
+  const trimmed = policy.skill_list ? shaveSkills(sent, policy.skill_list).trimmed : undefined
   const key = conversationId(h, proto.name, sent, headers)
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
   // `:shaver optimize` requests made here are charged to the skill list.
   const lines = [...forks(journalOf(key))].reduce((n, f) => n + (f.kind === 'optimize' && f.usage ? spent(f.model, f.provider, f.usage) : 0), 0)
-  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks + lines, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks, 'skill-list': (c.saved['skill-list'] ?? 0) - lines } }
+  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks + lines, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks, 'skills-trimmed': (c.saved['skills-trimmed'] ?? 0) - lines } }
   // Each summary request is running, or left a record or none. A record no
   // longer fitting the messages is dropped, like one replaced or none at all.
   const valid = validChain(chain, sent.messages).length
   const applied = Math.min(load(key)?.summarized ?? 0, valid)
   const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
   const summaryRequests = { applied, pending, dropped: requests - applied - pending }
-  const text = s ? render(s, key, false, withSummaryForks, summaryRequests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)), key, true, withSummaryForks, summaryRequests)
+  const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)
+  if (trimmed) splitTrimmed(described, trimmed)
+  const text = s ? render(s, key, false, withSummaryForks, summaryRequests) : render(estimate(described), key, true, withSummaryForks, summaryRequests)
   const warning = missed ? `\n\nshaver: since it started, the journal missed ${countOf(missed, 'request')}; see proxy.log` : ''
   return '```\n' + text + warning + '\n```'
 }

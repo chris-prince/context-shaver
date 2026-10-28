@@ -24,13 +24,16 @@ test('each skill takes the first rule matching its name; one matching none is ke
   const before = textOf(b).length
   const out = shaveSkills(b, rules)
   assert.equal(textOf(b), `env\n\n${HEAD}- init: Initialize a CLAUDE.md file.\n- claude-api: Reference for the Claude API. Covers models.\nTRIGGER — whenever the prompt names Claude.\nSKIP — when another provider is used.\n\nmore`)
-  assert.equal(out, before - textOf(b).length)
+  assert.deepEqual(out, { cut: before - textOf(b).length, trimmed: 0 })
 })
 
 test('a stub keeps the first sentences of a description, its later lines too', () => {
   const b = request()
-  shaveSkills(b, [{ match: '*', action: 'stub', sentences: 1 }])
+  const out = shaveSkills(b, [{ match: '*', action: 'stub', sentences: 1 }])
   assert.equal(textOf(b), `env\n\n${HEAD}- init: Initialize a CLAUDE.md file.\n- claude-api: Reference for the Claude API.\n- artifact-design: Design guidance.\n- anthropic-skills:docs: docs (editable docs).\n\nmore`)
+  // Every entry but init's, unchanged, as JSON counts them.
+  const shortened = ['- claude-api: Reference for the Claude API.', '- artifact-design: Design guidance.', '- anthropic-skills:docs: docs (editable docs).']
+  assert.equal(out.trimmed, shortened.reduce((n, e) => n + JSON.stringify(e).length - 2, 0))
 })
 
 test('with every skill dropped the heading goes too', () => {
@@ -42,7 +45,7 @@ test('with every skill dropped the heading goes too', () => {
 test('a list quoted outside a system message is left alone', () => {
   const b = request()
   b.messages[1].role = 'user'
-  assert.equal(shaveSkills(b, [{ match: '*', action: 'drop' }]), 0)
+  assert.equal(shaveSkills(b, [{ match: '*', action: 'drop' }]).cut, 0)
   assert.equal(textOf(b), textOf(request()))
 })
 
@@ -119,10 +122,11 @@ test("Codex's list is read and shortened in the system, each entry keeping where
     { name: 'r2:update-pet', description: 'Update the pet (and its food).' },
   ])
   assert.equal(listMessage(b), -1)
-  shaveSkills(b, [
+  const out = shaveSkills(b, [
     { match: 'imagegen', action: 'stub', text: 'Make images', replaces: descriptionHash(skills[0].description) },
     { match: 'r2:*', action: 'drop' },
   ])
+  assert.equal(out.trimmed, '- imagegen: Make images (file: /s/imagegen/SKILL.md)'.length)
   assert.equal(b.system[0].text, 'You are Codex.')
   assert.equal(b.system[1].text, '<skills_instructions>\n## Skills\nIntro.\n### Available skills\n- imagegen: Make images (file: /s/imagegen/SKILL.md)\n### How to use skills\n- Read the SKILL.md.\n</skills_instructions>')
 })

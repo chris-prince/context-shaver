@@ -70,31 +70,38 @@ const skillOf = (entry: string, format: Format): Skill | undefined => {
   return e && { name: e.name, description: e.description }
 }
 
-function shave(text: string, rules: readonly SkillRule[]): string {
+// The text with its list shortened, and the bytes, as JSON counts them, of the
+// entries it sent shortened.
+function shave(text: string, rules: readonly SkillRule[]): { text: string; trimmed?: number } {
   const list = listAt(text)
-  if (!list) return text
+  if (!list) return { text }
   const { at, from, end } = list
+  let trimmed = 0
   const kept = list.entries.flatMap((entry) => {
     const skill = entryOf(entry, list.format)
     const rule = skill && rules.find((r) => matches(r.match, skill.name))
     if (rule?.action === 'drop') return []
-    if (rule?.action === 'stub') return [`- ${skill!.name}: ` + stubOf(skill!.description, rule) + skill!.tail]
-    return [entry]
+    if (rule?.action !== 'stub') return [entry]
+    const stub = `- ${skill!.name}: ` + stubOf(skill!.description, rule) + skill!.tail
+    if (stub !== entry) trimmed += JSON.stringify(stub).length - 2
+    return [stub]
   })
-  if (!kept.length) return text.slice(0, at) + text.slice(end).replace(/^\n\n/, '')
-  return text.slice(0, from) + kept.join('\n') + text.slice(end)
+  if (!kept.length) return { text: text.slice(0, at) + text.slice(end).replace(/^\n\n/, ''), trimmed }
+  return { text: text.slice(0, from) + kept.join('\n') + text.slice(end), trimmed }
 }
 
 const textsOf = (content: unknown): string[] => (typeof content === 'string' ? [content] : Array.isArray(content) ? content.map((b: Block) => b.text ?? '') : [])
 
 // Only the system and system messages: a conversation that quotes the list
-// is not one.
-export function shaveSkills(body: Body, rules: readonly SkillRule[]): number {
-  let out = 0
+// is not one. Gives the bytes cut, and those of the entries shortened in the
+// first list, the base's (listMessage); a later one is history.
+export function shaveSkills(body: Body, rules: readonly SkillRule[]): { cut: number; trimmed?: number } {
+  const out: { cut: number; trimmed?: number } = { cut: 0 }
   const one = (t: string) => {
     const s = shave(t, rules)
-    out += t.length - s.length
-    return s
+    out.cut += t.length - s.text.length
+    out.trimmed ??= s.trimmed
+    return s.text
   }
   const each = (content: string | Block[]) => (typeof content === 'string' ? one(content) : content.map((b) => (b.text !== undefined && listAt(b.text) ? { ...b, text: one(b.text) } : b)))
   if (typeof body.system === 'string' || Array.isArray(body.system)) body.system = each(body.system as string | Block[])
