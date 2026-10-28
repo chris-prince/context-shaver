@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { commandOf, pendingCommand, reply, stripCommands, withoutPending, wordsOf } from '../src/command.ts'
+import { answeredMidTurn, closeHeld, commandOf, midTurnCommands, pendingCommand, reply, stripCommands, textBlock, withoutPending, wordsOf } from '../src/command.ts'
 
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] })
 const system = (text: string) => ({ role: 'system', content: text })
@@ -118,4 +118,70 @@ test("y or n is a command only as the answer to `:shaver optimize`'s reply", () 
   assert.equal(pendingCommand([user('a'), assistant('A'), user('y')]), undefined)
   // Answered, the answer and its reply go with the command and its reply.
   assert.deepEqual(stripCommands([...offered, user('y'), assistant('wrote'), user('next')]), [user('a'), assistant('A'), user('next'), system('note')])
+})
+
+// As Claude Code adds a message sent while the model works.
+const midTurn = (text: string, extra = {}) => ({
+  type: 'text',
+  text: `The user sent a new message while you were working:\n${text}\n\nThis is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.`,
+  ...extra,
+})
+const result = { type: 'tool_result', tool_use_id: 't1', content: 'ok' }
+const call = { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }
+
+test('a command sent mid-turn waits, and neither it nor its answer reaches the model', () => {
+  const control = { type: 'ephemeral' }
+  const sent = { role: 'user', content: [result, midTurn(': shaver info', { cache_control: control })] }
+  const asked = { role: 'user', content: [result, midTurn('also check the tests')] }
+  assert.deepEqual(midTurnCommands([user('a'), call, sent]), [':shaver info'])
+  assert.deepEqual(midTurnCommands([user('a'), call, asked]), [])
+  assert.deepEqual(midTurnCommands([user('a'), call, sent, assistant('done')]), [])
+  // The breakpoint moves to the block before; an ordinary message stays.
+  assert.deepEqual(stripCommands([user('a'), call, sent]), [user('a'), call, { role: 'user', content: [{ ...result, cache_control: control }] }])
+  assert.deepEqual(stripCommands([user('a'), call, asked]), [user('a'), call, asked])
+  const ended = { role: 'assistant', content: [{ type: 'text', text: 'done' }, { type: 'text', text: answeredMidTurn(':shaver info') + 'stats' }] }
+  assert.deepEqual(stripCommands([user('a'), call, sent, ended, user('b')]), [user('a'), call, { role: 'user', content: [{ ...result, cache_control: control }] }, assistant('done'), user('b')])
+})
+
+test('a command sent mid-turn as a system message waits, and the message goes', () => {
+  const control = { type: 'ephemeral' }
+  const tools = { role: 'user', content: [result] }
+  const sent = { role: 'system', content: [midTurn('shaver info', { cache_control: control })] }
+  const asked = { role: 'system', content: [midTurn('also check the tests')] }
+  assert.deepEqual(midTurnCommands([user('a'), call, tools, sent]), [':shaver info'])
+  assert.deepEqual(midTurnCommands([user('a'), call, tools, asked]), [])
+  // The breakpoint moves to the message before; an ordinary message stays.
+  assert.deepEqual(stripCommands([user('a'), call, tools, sent]), [user('a'), call, { role: 'user', content: [{ ...result, cache_control: control }] }])
+  assert.deepEqual(stripCommands([user('a'), call, tools, asked]), [user('a'), call, tools, asked])
+})
+
+test("y or n answers `:shaver optimize` sent mid-turn once the turn ends with its answer", () => {
+  const ended = { role: 'assistant', content: [{ type: 'text', text: 'done' }, { type: 'text', text: answeredMidTurn(':shaver optimize') + 'Apply? y or n' }] }
+  const before = [user('a'), call, { role: 'user', content: [result, midTurn('shaver optimize')] }, ended]
+  assert.equal(pendingCommand([...before, user('y')]), ':shaver optimize yes')
+  assert.deepEqual(stripCommands([...before, user('y'), assistant('wrote'), user('next')]), [user('a'), call, { role: 'user', content: [result] }, assistant('done'), user('next')])
+})
+
+test('a stream passes through but for its close, held so blocks can go before it', () => {
+  const events = [
+    { type: 'message_start', message: {} },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_stop', index: 1 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+    { type: 'message_stop' },
+  ]
+  const wire = events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('')
+  let out = ''
+  const held = closeHeld((s) => (out += s))
+  // Cut anywhere, even inside an event.
+  for (let i = 0; i < wire.length; i += 7) held.push(Buffer.from(wire.slice(i, i + 7)))
+  assert.equal(out, wire.slice(0, wire.indexOf('event: message_delta')))
+  assert.equal(held.ended, true)
+  assert.equal(held.next, 2)
+  assert.equal(out + textBlock('answer', held.next) + held.rest(), wire.replace('event: message_delta', textBlock('answer', 2) + 'event: message_delta'))
+  const calling = closeHeld(() => {})
+  calling.push(Buffer.from(wire.replace('end_turn', 'tool_use')))
+  assert.equal(calling.ended, false)
 })

@@ -25,7 +25,7 @@ import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { forceDefer } from './defer.ts'
 import { keptWhole, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
-import { pendingCommand, stripCommands, withoutPending } from './command.ts'
+import { answeredMidTurn, closeHeld, midTurnCommands, pendingCommand, stripCommands, textBlock, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, money, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
@@ -319,8 +319,8 @@ function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers
   const valid = validChain(chain, sent.messages).length
   const applied = Math.min(load(key)?.summarized ?? 0, valid)
   const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
-  const forks = { applied, pending, dropped: requests - applied - pending }
-  const text = s ? render(s, key, false, withSummaryForks, forks) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)), key, true, withSummaryForks, forks)
+  const summaryRequests = { applied, pending, dropped: requests - applied - pending }
+  const text = s ? render(s, key, false, withSummaryForks, summaryRequests) : render(estimate(describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)), key, true, withSummaryForks, summaryRequests)
   const warning = missed ? `\n\nshaver: since it started, the journal missed ${countOf(missed, 'request')}; see proxy.log` : ''
   return '```\n' + text + warning + '\n```'
 }
@@ -410,6 +410,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // refused one for ~8s first. Codex over WebSockets sends only what's new.
   if (req.headers.upgrade) return void res.writeHead(426).end()
   let p: Prepared | undefined
+  // The conversation whose waiting commands are answered if this request's
+  // response ends the turn, and the request as forwarded.
+  let turnEnd: { key: string; body: Canonical; render: Wire['render'] } | undefined
   // Why a request the API answers would be journaled bare, if it's sent as it came.
   let why: Why = 'side'
   let c: ReturnType<Protocol['canonical']> | undefined
@@ -430,12 +433,19 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const command = body.tools?.length && pendingCommand(body.messages)
         if (command) {
           const key = () => conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers)
-          const text = command.startsWith(':shaver optimize') ? await optimize(command, proto, h, key(), body, c.render, upstream + url, forwarded(req.headers, zstd)) : command === ':shaver policy' ? policyText() : command === ':shaver info all' ? '```\n' + totals(stateDir, ttlMs) + '\n```' : stats(proto, h, { ...body, messages: msgs }, req.headers)
+          const text = await answerOf(command, proto, h, key(), { ...body, messages: msgs }, c.render, upstream + url, forwarded(req.headers, zstd), req.headers)
           res.writeHead(200, { ...limits.get(proto), 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
           const context = latestOf(key())?.inputTokens ?? 0
           return void res.end(proto.reply(text, body.model, !!body.stream, context))
         }
-        if (msgs.length < body.messages.length) {
+        // Commands sent mid-turn wait for a response that ends the turn.
+        const mid = proto.name === 'messages' && body.tools?.length ? midTurnCommands(body.messages) : []
+        if (mid.length || waiting.size) {
+          const key = conversationId(h, proto.name, { ...body, messages: msgs }, req.headers)
+          if (mid.length) waiting.set(key, [...(waiting.get(key) ?? []), ...mid])
+          if (body.stream && waiting.has(key)) turnEnd = { key, body: structuredClone({ ...body, messages: msgs }), render: c.render }
+        }
+        if (msgs.length < body.messages.length || msgs.some((m, i) => m !== body.messages[i])) {
           body.messages = msgs
           raw = Buffer.from(JSON.stringify(c.render(body)))
         }
@@ -509,19 +519,46 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       }
     })
   }
+  // A response ending the turn gets the answers to the commands sent during
+  // it, after the request is journaled, so `:shaver info` counts it.
+  const write = (s: string | Uint8Array) => res.destroyed || res.write(s)
+  const held = turnEnd && closeHeld(write)
   try {
     if (up.body)
       for await (const chunk of up.body) {
         usage.push(chunk)
         if (usage.done) finish(false)
-        if (!res.destroyed) res.write(chunk)
+        if (held) held.push(chunk)
+        else write(chunk)
       }
   } catch (err) {
     finish(true)
     throw err
   }
+  if (held && turnEnd) {
+    finish(false)
+    const commands = waiting.get(turnEnd.key)
+    if (held.ended && commands && !res.destroyed) {
+      waiting.delete(turnEnd.key)
+      let index = held.next
+      for (const command of commands) {
+        const text = await answerOf(command, proto, h, turnEnd.key, turnEnd.body, turnEnd.render, upstream + url, headers, req.headers).catch((err) => `shaver: answering it failed: ${err instanceof Error ? err.message : err}`)
+        write(textBlock(answeredMidTurn(command) + text, index++))
+      }
+    }
+    write(held.rest())
+  }
   res.end()
   finish(false)
+}
+
+// What answers a command, for the request `body` of conversation `key`, the
+// command stripped.
+async function answerOf(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, clientHeaders: IncomingHttpHeaders): Promise<string> {
+  if (command.startsWith(':shaver optimize')) return optimize(command, proto, h, key, body, render, target, headers)
+  if (command === ':shaver policy') return policyText()
+  if (command === ':shaver info all') return '```\n' + totals(stateDir, ttlMs) + '\n```'
+  return stats(proto, h, body, clientHeaders)
 }
 
 // Records an answered request: its stats, cost and cache entries, the
@@ -652,6 +689,10 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
 // The lines shown last, waiting for an answer in the conversation they were
 // shown in.
 let proposal: { key: string; skills: Skill[]; lines: Record<string, string> } | undefined
+
+// Commands sent mid-turn, by conversation, waiting for a response that ends
+// the turn (command.ts). Kept in memory, so a restart drops them.
+const waiting = new Map<string, string[]>()
 
 // When lines were last applied: a conversation that took its skill rules
 // before then takes the policy's on its next request, warm or not.
