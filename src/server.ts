@@ -804,7 +804,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   const n = (x: number) => x.toLocaleString('en-US')
   const own = await Promise.all([old, without]).then(([o, w]) => o.tokens - w.tokens, () => undefined)
   const are = skills.length === 1 ? 'is' : 'are'
-  say(`${countOf(skills.length, 'skill')} ${own === undefined ? `${are} listed` : `${are} using ${n(own)} tokens`}. Optimizing...\n\n`)
+  say(`${countOf(skills.length, 'skill')} ${own === undefined ? `${are} listed` : `add ${n(own)} tokens on every request`}. Optimizing...\n\n`)
   const lines = await asked
   if (typeof lines === 'string') return lines
   const lined = skills.filter((s) => lines[s.name])
@@ -812,22 +812,21 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   proposal = { key, skills, lines }
   const rules = withLines(policy.skill_list ?? [], skills, lines)
   const measured = await Promise.all([old, measure(rules)]).catch((err) => err as Error)
-  const width = Math.max(...lined.map((s) => s.name.length))
+  const cell = (s: string) => s.replace(/\|/g, '\\|')
   const left = skills.filter((s) => !lines[s.name]).map((s) => s.name)
   const warm = warmWithOther(rules, Date.now())
   return [
     measured instanceof Error
-      ? `Couldn't measure the savings: sending the base failed: ${measured.message}`
-      : `Found ${n(measured[0].tokens - measured[1].tokens)} tokens of savings on every request: the lines take this session's base from ${n(measured[0].tokens)} tokens to ${n(measured[1].tokens)}, as the API counted them.`,
+      ? `Couldn't measure the savings (sending the base failed: ${measured.message}). Short skill descriptions:`
+      : `Can save ${n(measured[0].tokens - measured[1].tokens)} tokens using short skill descriptions:`,
     '',
-    `Lines for ${lined.length} of ${countOf(skills.length, 'skill')}:`,
+    '| Skill | Description |',
+    '| --- | --- |',
+    ...lined.map((s) => `| ${cell(s.name)} | ${cell(lines[s.name])} |`),
+    ...(left.length ? ['', `No short description, so kept whole: ${left.join(', ')}.`] : []),
+    ...(warm.length ? ['', `${countOf(warm.length, 'session')} with a warm cache would rewrite it once, about ${money(warm.reduce((x, y) => x + y, 0))}.`] : []),
     '',
-    '```',
-    ...lined.map((s) => `${s.name.padEnd(width)}  ${lines[s.name]}`),
-    '```',
-    ...(left.length ? ['', `No line, so kept whole: ${left.join(', ')}.`] : []),
-    '',
-    `Apply them to every session now? Answer y or n.${warm.length ? ` ${countOf(warm.length, 'session')} with a warm cache would rewrite it once, about ${money(warm.reduce((x, y) => x + y, 0))}.` : ''}`,
+    'Apply these changes? Answer y or n.',
   ].join('\n')
 }
 
