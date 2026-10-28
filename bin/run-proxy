@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Starts the context-shaver proxy if nothing is listening on its port, and leaves
 # it running; its output goes to proxy-data/proxy.log. A proxy already there that
-# runs from another repo, or is too old to say, is restarted from this one. With
+# runs from another repo is restarted from this one; anything else there that
+# doesn't say what it is is another program, and stops this with an error. With
 # --restart, asks the proxy there to stop first, so a new one picks up code and
 # policy changes.
 # Sessions running through it resume with their next request, once it is back
@@ -55,11 +56,15 @@ procinfo() {
 
 info=
 up && info=$(procinfo)
+# Something there that doesn't say what it is isn't a proxy, so it's left alone.
+if up && [[ -z $info ]]; then
+  echo "run-proxy: port $port is in use by another program. Set SHAVER_PORT=NNNN to an available port number." >&2
+  exit 1
+fi
 if [[ -z $action ]] && up; then
   other=$(sed -n 's/^repo: //p' <<<"$info")
   if [[ $other != "$repo" ]]; then
-    from=${other:-"an older checkout, or is not one"}
-    echo "run-proxy: the proxy on port $port runs from $from; restarting it from $repo" >&2
+    echo "run-proxy: the proxy on port $port runs from $other; restarting it from $repo" >&2
     action=--restart
   fi
 fi
@@ -68,11 +73,6 @@ fi
 if [[ -n $action ]] && up; then
   stop
   for _ in $(seq 50); do up || break; sleep 0.1; done
-  # Something there that didn't say it's a proxy, and didn't stop, isn't one.
-  if up && [[ -z $info ]]; then
-    echo "run-proxy: port $port is in use by another program. Set SHAVER_PORT=NNNN to an available port number." >&2
-    exit 1
-  fi
   ! up || { echo "run-proxy: the proxy on port $port did not stop" >&2; exit 1; }
 fi
 [[ $action == --stop ]] && exit 0

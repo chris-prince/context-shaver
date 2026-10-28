@@ -32,8 +32,8 @@ If the repo has local changes in the way or has diverged, it stops with git's
 error and leaves the proxy running.
 
 `bin/run-proxy`, and so each wrapper, asks a proxy already on the port which
-repo it runs from. One from another repo, or too old to say, is restarted from
-this one, keeping its logging in the same way. Whether or not requests are
+repo it runs from. One from another repo is restarted from this one, keeping
+its logging in the same way. Whether or not requests are
 logged, every 4xx or 5xx answer from the upstream goes to `proxy.log` with its
 body, so the upstream's own error text is on record.
 
@@ -42,8 +42,8 @@ The port is 18787, or `SHAVER_PORT` if set; `bin/run-proxy`, every wrapper and
 profile) to move them all. When another program already has the port, the
 proxy and `bin/run-proxy` stop with "port N is in use by another program. Set
 SHAVER_PORT=NNNN to an available port number." `bin/run-proxy` takes something
-on the port that doesn't say it's a proxy, and doesn't stop when asked, to be
-another program. A session started on the old port keeps using it, so moving
+on the port that doesn't answer the proxy's `procinfo` request to be another
+program, and leaves it alone. A session started on the old port keeps using it, so moving
 the port leaves running sessions on the old proxy until it stops.
 
 Claude Code cannot reach the API while the proxy is down, so a session started
