@@ -57,6 +57,8 @@ const SHORT = () => 5
 // about 800 tokens, and 34s for one of a 174K prompt.
 const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 800, ms: 34_000 } // at: 90% of 272K
 const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
+// Sol's window is 272K too (codex debug models, Codex 0.163.0).
+const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5 }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
 
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },
@@ -64,6 +66,15 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   'claude-mythos-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
   // Reads at 0.1, as billed through OpenRouter (scripts/check-prices.ts).
   'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.1 }, ...CLAUDE_CODE },
+  // Anthropic's pricing page, matching OpenRouter: reads at 0.1x input, not
+  // Sonnet 5.5's 0.05x, and no long-context surcharge across its 1M window.
+  // The lookback (20 blocks) and the TTL (5 minutes or an hour, as each
+  // request's breakpoints ask) are Anthropic's documented ones (DEFAULT, markedTtl).
+  // Claude Code 2.1.287 asks for 5 minutes. Probed on 2026-10-27, two sessions
+  // per gap: each session's own
+  // 11.4K tokens were all read after 1 and 4 minutes, and rewritten after 6
+  // and 10. The base before them, the same in every session, was read throughout.
+  'claude-sonnet-5': { price: { input: 2, output: 10, read: 0.2 }, ...CLAUDE_CODE },
   'claude-haiku-5-5': { price: { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } }, ...CLAUDE_CODE },
   // OpenAI's pricing page and prompt-caching guide (local/notes.md, "Check
   // Codex in use"): writes at 1.25x input, the latest 50 breakpoints looked
@@ -74,6 +85,14 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   // openai/gpt-6-luna.
   'gpt-6-luna': LUNA,
   'openai/gpt-6-luna': LUNA,
+  // Prices from OpenAI's model page, matching OpenRouter's: reads at 0.05x
+  // input, not luna's 0.1x, and writes at 1.25x. The TTL was probed on
+  // 2026-10-27 through Codex 0.163.0, two sessions per gap: all read after 28
+  // minutes, nothing after 32 or 60. So the 30 minutes is a hard edge, not a
+  // floor. The lookback, horizon and compaction summary are luna's, not yet
+  // measured on sol.
+  'gpt-6.1-sol': SOL,
+  'openai/gpt-6.1-sol': SOL,
   // Priced apart by each provider, so only per provider.
   'deepseek/deepseek-v4.1-flash': {
     providers: {

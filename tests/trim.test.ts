@@ -357,6 +357,11 @@ test('a model with cheaper reads makes a rewrite cost more of them', () => {
   // A 5-minute write is 1.25x input.
   assert.ok(Math.abs(writeCost({ ...modelOf('claude-haiku-5-5'), ttl: 300 }) - 11.5) < 1e-9)
   assert.ok(Math.abs(writeCost(modelOf('gpt-6-luna'), true) - 11.5) < 1e-9)
+  // Sol reads at 0.05x input, not luna's 0.1x, so a write costs twice the reads.
+  assert.ok(Math.abs(writeCost(modelOf('gpt-6.1-sol'), true) - 24) < 1e-9)
+  // Sonnet 5 reads at 0.1x, so a 5-minute write costs 11.5 reads and an hour's 19.
+  assert.ok(Math.abs(writeCost({ ...modelOf('claude-sonnet-5'), ttl: 300 }) - 11.5) < 1e-9)
+  assert.ok(Math.abs(writeCost(modelOf('claude-sonnet-5')) - 19) < 1e-9)
   assert.equal(gate(keep, drop, keep).advanced, true)
   assert.equal(gate(keep, drop, keep, 'claude-opus-5-5').advanced, false)
 })

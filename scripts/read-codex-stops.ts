@@ -18,25 +18,29 @@
 //   trim     a trim changed a message the request before had sent, and the
 //            read fell back from there to an older entry
 //   changed  a message the request before had sent changed, with no trim
-//   expired  the read fell short after a gap longer than the TTL (30 min)
+//   expired  the read fell short after a gap longer than the model's TTL
 //   short    the read fell short with no gap: the API read less than it had
 // A read that reaches the last item the two requests share is whole: OpenAI
 // never reads the tail of that item, the last few hundred tokens or less.
 //
-// A trim costs what it lost, written at 1.25x input where it would have been
-// read at 0.1x, and saves what it took out, read at 0.1x by every later
-// request: both in tokens at the input price (gpt-6-luna's prices, models.ts).
+// A trim costs what it lost, written where it would have been read, and saves
+// what it took out, read by every later request: both in tokens at the input
+// price, by the request's model's prices and TTL (models.ts).
 
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
+import { modelOf } from '../src/models.ts'
 
 type Counts = { input_tokens: number; cached_tokens: number; cache_write_tokens: number; output_tokens: number }
 type Part = { part: string; hash: string; ids?: string[] }
-type Line = { event: string; time: string; inputTokens?: number; cachedTokens?: number; predictedCachedChars?: number; headIds?: string[]; parts?: (Part & { bytes: number })[]; system?: { hash: string }[]; tools?: { hash: string }[]; attribution?: { items: Record<string, Counts> } }
+type Line = { event: string; time: string; model?: string; inputTokens?: number; cachedTokens?: number; predictedCachedChars?: number; headIds?: string[]; parts?: (Part & { bytes: number })[]; system?: { hash: string }[]; tools?: { hash: string }[]; attribution?: { items: Record<string, Counts> } }
 
-const TTL = 30 * 60_000
-const [READ, WRITE] = [0.1, 1.25]
+// What a model reads and writes at, as a fraction of its input price, and its TTL in ms.
+const cache = (name = '') => {
+  const { price, ttl = 1800 } = modelOf(name)
+  return price ? { READ: price.read / price.input, WRITE: (price.write ?? 1.25 * price.input) / price.input, TTL: ttl * 1000 } : { READ: 0.1, WRITE: 1.25, TTL: ttl * 1000 }
+}
 const { values, positionals } = parseArgs({ allowPositionals: true, options: { since: { type: 'string' }, until: { type: 'string' } } })
 const [since, until] = [values.since ? Date.parse(values.since) : -Infinity, values.until ? Date.parse(values.until) : Infinity]
 const logs = path.join(import.meta.dirname, '..', 'proxy-data', 'logs')
@@ -79,6 +83,7 @@ for (const dir of dirs) {
     const tokens = (k: number) => items[order[k].id]?.input_tokens ?? 0
     const head = [...l.headIds!, ...(l.system ?? []).map((s) => s.hash), ...(l.tools ?? []).map((t) => t.hash)].join()
     const time = Date.parse(l.time)
+    const { READ, WRITE, TTL } = cache(l.model)
 
     const shown = time >= since && time <= until
     const lose = (cause: string, n: number) => shown && loss(cause, n)
