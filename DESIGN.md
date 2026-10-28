@@ -308,8 +308,11 @@ the others, asking once more for any it left out. The question is a fork of the
 request's base as the proxy sends it, through the message holding the skill
 list (on Codex, the head alone), so it reads what the session has cached of
 it: on Claude Code past a conversation's first request, the tools and system
-prompt, since only that request marks the base's end. It shows the lines and
-the tokens they save: the base is sent with the old lines and with the new,
+prompt, since only that request marks the base's end. Claude Code lists a skill
+again in a later system message when its description changes, as with a new
+working directory; the base ends at the first list, and a skill listed again
+is taken at its later entry. A line saying what it's doing streams first; then
+it shows the tokens the lines save, then the lines: the base is sent with the old lines and with the new,
 each with a short question after it, and the difference of their prompt
 tokens, as the API's usage reports them, is the saving. Then it asks whether
 to apply them, giving what rewriting the warm sessions' caches would cost. A `y` or `n` as the next prompt is the answer, a command like the

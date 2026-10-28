@@ -14,7 +14,7 @@
 import type { Usage } from './cost.ts'
 import { blocks, type ApiMsg, type Block } from './items.ts'
 import { kinds } from './log.ts'
-import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Held, type Protocol, type Wire } from './protocol.ts'
+import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Held, type Protocol, type Replying, type Wire } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Item = { type: string; role?: string; content?: Part[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: unknown; encrypted_content?: string; summary?: Part[]; [k: string]: unknown }
@@ -223,20 +223,19 @@ function usageReader() {
   return eventReader({ event: (e) => read(finished(e)), body: read, result: () => ({ usage, content, attribution }), final: (e) => !!finished(e) })
 }
 
-function reply(text: string, model: string, stream: boolean, context: number): string {
+function replying(model: string, stream: boolean, context: number): Replying {
   const id = `resp_proxy_${Date.now()}`
-  const item = { id: `msg_proxy_${Date.now()}`, type: 'message', status: 'completed', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text, annotations: [] }] }
+  const item = (text: string) => ({ id: `msg_proxy_${id.slice('resp_proxy_'.length)}`, type: 'message', status: 'completed', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text, annotations: [] }] })
   const usage = { input_tokens: context, input_tokens_details: { cached_tokens: context }, output_tokens: 0, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: context }
-  const response = { id, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model, output: [item], usage }
-  if (!stream) return JSON.stringify(response)
+  const response = (text: string) => ({ id, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model, output: [item(text)], usage })
+  if (!stream) return { start: '', text: () => '', end: (text) => JSON.stringify(response(text)) }
   const event = (type: string, e: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...e })}\n\n`
-  return (
-    event('response.created', { response: { ...response, status: 'in_progress', output: [], usage: null } }) +
-    event('response.output_item.added', { output_index: 0, item: { ...item, status: 'in_progress', content: [] } }) +
-    event('response.output_text.delta', { item_id: item.id, output_index: 0, content_index: 0, delta: text }) +
-    event('response.output_item.done', { output_index: 0, item }) +
-    event('response.completed', { response })
-  )
+  const { id: item_id } = item('')
+  return {
+    start: event('response.created', { response: { ...response(''), status: 'in_progress', output: [], usage: null } }) + event('response.output_item.added', { output_index: 0, item: { ...item(''), status: 'in_progress', content: [] } }),
+    text: (delta) => event('response.output_text.delta', { item_id, output_index: 0, content_index: 0, delta }),
+    end: (text) => event('response.output_item.done', { output_index: 0, item: item(text) }) + event('response.completed', { response: response(text) }),
+  }
 }
 
 // A stream held from response.completed on, which ends the turn when the
@@ -272,7 +271,7 @@ export const RESPONSES: Protocol = {
   serves: (p) => p === '/v1/responses' || p === '/responses',
   canonical,
   usageReader,
-  reply,
+  replying,
   holdClose,
   error: openaiError,
   // Codex's limits and credits; its turn state is the turn's, not the account's.

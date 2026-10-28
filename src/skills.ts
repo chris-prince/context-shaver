@@ -102,17 +102,19 @@ export function shaveSkills(body: Body, rules: readonly SkillRule[]): number {
   return out
 }
 
-// The message holding a request's skill list, the last in its system messages,
-// or -1 with none, as when the list is in the system: where its base ends,
-// for `:shaver optimize`'s fork.
-export const listMessage = (body: Body): number => (body.messages ?? []).findLastIndex((m) => m.role === 'system' && textsOf(m.content).some((t) => listAt(t)))
+// The message holding a request's skill list, the first in its system
+// messages, or -1 with none, as when the list is in the system: where its base
+// ends, for `:shaver optimize`'s fork. Claude Code lists a skill again later in
+// the conversation when its description changes, so a later list is history.
+export const listMessage = (body: Body): number => (body.messages ?? []).findIndex((m) => m.role === 'system' && textsOf(m.content).some((t) => listAt(t)))
 
-// The skills a request lists, as its harness sent them: the last list in its
-// system and system messages.
+// The skills a request lists, as its harness sent them: every list in its
+// system and system messages, a skill listed again taking its later entry.
 export function skillsOf(body: Body): Skill[] {
   const texts = [...textsOf(body.system), ...(body.messages ?? []).filter((m) => m.role === 'system').flatMap((m) => textsOf(m.content))]
-  const list = texts.map(listAt).findLast((l) => l !== undefined)
-  return list?.entries.flatMap((e) => skillOf(e, list.format) ?? []) ?? []
+  const out = new Map<string, Skill>()
+  for (const list of texts.map(listAt)) for (const s of list?.entries.flatMap((e) => skillOf(e, list.format) ?? []) ?? []) out.set(s.name, s)
+  return [...out.values()]
 }
 
 // The skills the rules keep whole, which `:shaver optimize` writes lines for;

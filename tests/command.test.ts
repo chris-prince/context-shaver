@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { answeredMidTurn, closeHeld, commandOf, midTurnCommands, pendingCommand, reply, stripCommands, textBlock, withoutPending, wordsOf } from '../src/command.ts'
+import { CHAT } from '../src/chat.ts'
+import { MESSAGES } from '../src/messages.ts'
+import { wholeReply } from '../src/protocol.ts'
+import { RESPONSES } from '../src/responses.ts'
 
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] })
 const system = (text: string) => ({ role: 'system', content: text })
@@ -101,6 +105,20 @@ test('the reply streams as one text block, reporting the context as cache reads'
   const plain = JSON.parse(reply('hi', 'm', false, 58000))
   assert.deepEqual(plain.content, [{ type: 'text', text: 'hi' }])
   assert.equal(plain.usage.cache_read_input_tokens, 58000)
+})
+
+test('a reply sent in pieces reads as one whole answer of all its text, on every protocol', () => {
+  const read = (p: typeof MESSAGES, s: string) => {
+    const r = p.usageReader()
+    r.push(new TextEncoder().encode(s))
+    return { done: r.done, chars: r.end().content.visibleChars }
+  }
+  for (const p of [MESSAGES, CHAT, RESPONSES]) {
+    const r = p.replying('m', true, 100)
+    const pieces = r.start + r.text('working… ') + r.text('done') + r.end('working… done')
+    assert.deepEqual(read(p, pieces), read(p, wholeReply(p.replying('m', true, 100), 'working… done')), p.name)
+    assert.deepEqual(read(p, pieces), { done: true, chars: 'working… done'.length }, p.name)
+  }
 })
 
 test('a command the model answered with a tool call stays', () => {

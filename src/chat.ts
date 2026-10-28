@@ -11,7 +11,7 @@
 
 import type { Usage } from './cost.ts'
 import type { ApiMsg, Block } from './items.ts'
-import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Held, type Protocol } from './protocol.ts'
+import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Held, type Protocol, type Replying } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Call = { id: string; type: 'function'; function: { name: string; arguments: string } }
@@ -129,13 +129,17 @@ function usageReader() {
   })
 }
 
-function reply(text: string, model: string, stream: boolean, context: number): string {
+function replying(model: string, stream: boolean, context: number): Replying {
   const id = `chatcmpl-proxy-${Date.now()}`
   const created = Math.floor(Date.now() / 1000)
   const usage = { prompt_tokens: context, completion_tokens: 0, total_tokens: context, prompt_tokens_details: { cached_tokens: context } }
-  if (!stream) return JSON.stringify({ id, object: 'chat.completion', created, model, choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }], usage })
+  if (!stream) return { start: '', text: () => '', end: (text) => JSON.stringify({ id, object: 'chat.completion', created, model, choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }], usage }) }
   const chunk = (choices: unknown[], extra = {}) => `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices, ...extra })}\n\n`
-  return chunk([{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }]) + chunk([{ index: 0, delta: {}, finish_reason: 'stop' }]) + chunk([], { usage }) + 'data: [DONE]\n\n'
+  return {
+    start: chunk([{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }]),
+    text: (content) => chunk([{ index: 0, delta: { content }, finish_reason: null }]),
+    end: () => chunk([{ index: 0, delta: {}, finish_reason: 'stop' }]) + chunk([], { usage }) + 'data: [DONE]\n\n',
+  }
 }
 
 // A stream held from the chunk whose choice finishes, which ends the turn when
@@ -162,7 +166,7 @@ export const CHAT: Protocol = {
   serves: (p) => p === '/v1/chat/completions' || p === '/chat/completions',
   canonical,
   usageReader,
-  reply,
+  replying,
   holdClose,
   error: openaiError,
   automatic: true,

@@ -74,6 +74,15 @@ test('the skills listed are read whole, descriptions running over lines included
   assert.equal(skillsOf(request())[1].description, 'Reference for the Claude API. Covers models.\nTRIGGER — whenever the prompt names Claude.\nSKIP — when another provider is used.')
 })
 
+test('a skill listed again later takes its later entry, and the base ends at the first list', () => {
+  const b = request()
+  b.messages.push({ role: 'user', content: 'go on' }, { role: 'system', content: [{ type: 'text', text: `# Environment update\n\n${HEAD}- init: Initialize a CLAUDE.md file, now faster.` }] })
+  const skills = skillsOf(b)
+  assert.deepEqual(skills.map((s) => s.name), ['init', 'claude-api', 'artifact-design', 'anthropic-skills:docs'])
+  assert.equal(skills[0].description, 'Initialize a CLAUDE.md file, now faster.')
+  assert.equal(listMessage(b), 1)
+})
+
 test('lines are written for the skills kept whole, lines written before aside', () => {
   const skills = skillsOf(request())
   const rules: SkillRule[] = [

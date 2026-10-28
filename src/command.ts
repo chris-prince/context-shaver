@@ -25,7 +25,7 @@
 // opening with `answeredMidTurn`'s words (the protocol's `holdClose`). That
 // text is taken out of every later request too.
 
-import { holding, type Held } from './protocol.ts'
+import { holding, wholeReply, type Held, type Replying } from './protocol.ts'
 
 export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize']
 
@@ -202,17 +202,25 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
 // No model ran, but Claude Code reads its context size from the last reply's
 // usage, so `context` (the latest real request's input) is reported as cache
 // reads, the input that adds least to its cost tally.
-export function reply(text: string, model: string, stream: boolean, context: number): string {
+export function replying(model: string, stream: boolean, context: number): Replying {
   const usage = { input_tokens: 0, cache_read_input_tokens: context, output_tokens: 0 }
   const message = { id: `msg_proxy_${Date.now()}`, type: 'message', role: 'assistant', model, stop_sequence: null, usage }
-  if (!stream) return JSON.stringify({ ...message, content: [{ type: 'text', text }], stop_reason: 'end_turn' })
-  return [
-    sse({ type: 'message_start', message: { ...message, content: [], stop_reason: null } }),
-    textBlock(text, 0),
-    sse({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 0 } }),
-    sse({ type: 'message_stop' }),
-  ].join('')
+  if (!stream) return { start: '', text: () => '', end: (text) => JSON.stringify({ ...message, content: [{ type: 'text', text }], stop_reason: 'end_turn' }) }
+  return {
+    start: sse({ type: 'message_start', message: { ...message, content: [], stop_reason: null } }) + sse({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }),
+    text: (text) => sse({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }),
+    end: () =>
+      [
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 0 } },
+        { type: 'message_stop' },
+      ]
+        .map(sse)
+        .join(''),
+  }
 }
+
+export const reply = (text: string, model: string, stream: boolean, context: number): string => wholeReply(replying(model, stream, context), text)
 
 const sse = (e: Record<string, unknown>) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`
 

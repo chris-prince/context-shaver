@@ -28,6 +28,13 @@ export type UsageReader = { push(chunk: Uint8Array): void; end(): Read; readonly
 // the events that add text to it, and rest what is held, to write after them.
 export type Held = { push(chunk: Uint8Array): void; readonly ended: boolean; add(text: string): string; rest(): string }
 
+// A response made here, in parts so a stream can show text before the rest is
+// known: start, then text for each piece in turn, then end with all the text.
+// A plain response is all in end.
+export type Replying = { start: string; text(piece: string): string; end(all: string): string }
+
+export const wholeReply = (r: Replying, text: string): string => r.start + r.text(text) + r.end(text)
+
 // A stream's events written as they arrive, each seen, until the first that
 // closes it: that one and all after it are held, for rest.
 export function holding(write: (s: string) => void, see: (e: any) => void, closes: (e: any) => boolean): Pick<Held, 'push' | 'rest'> {
@@ -118,9 +125,9 @@ export type Protocol = {
   // reads that usage, for the stats and the cache model to use over estimates.
   canonical(wire: Record<string, unknown>): Wire
   usageReader(): UsageReader
-  // A response holding just `text`, as Claude Code's `:shaver` answers are made
+  // A response holding just text, as Claude Code's `:shaver` answers are made
   // (command.ts), with `context` reported as the input read.
-  reply(text: string, model: string, stream: boolean, context: number): string
+  replying(model: string, stream: boolean, context: number): Replying
   // A stream held at its close, for the answers to commands sent mid-turn.
   holdClose(write: (s: string) => void): Held
   error(status: number, message: string): string

@@ -1,7 +1,7 @@
 // Anthropic's Messages protocol (/v1/messages), as Claude Code speaks it: the
 // core's own shape, so a request is the core's as it comes (protocol.ts).
 
-import { closeHeld, reply } from './command.ts'
+import { closeHeld, replying } from './command.ts'
 import type { Usage } from './cost.ts'
 import type { ApiMsg, Block } from './items.ts'
 import { eventReader, type Canonical, type Content, type Protocol } from './protocol.ts'
@@ -45,7 +45,7 @@ export const MESSAGES: Protocol = {
   serves: (p) => p === '/v1/messages' || p === '/messages',
   canonical: (wire) => ({ body: wire as Canonical, render: (c) => c }),
   usageReader,
-  reply,
+  replying,
   holdClose: closeHeld,
   error: (status, message) => JSON.stringify({ type: 'error', error: { type: errorType(status), message } }),
   limits: /^anthropic-ratelimit-unified-/,

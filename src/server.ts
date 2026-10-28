@@ -24,7 +24,7 @@ import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { forceDefer } from './defer.ts'
-import { keptWhole, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
+import { keptWhole, LINE_WORDS, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
@@ -432,11 +432,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         // Read before stripping: an answer to `:shaver optimize` is one only after its reply.
         const command = body.tools?.length && pendingCommand(body.messages)
         if (command) {
-          const key = () => conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers)
-          const text = await answerOf(command, proto, h, key(), { ...body, messages: msgs }, c.render, upstream + url, forwarded(req.headers, zstd), req.headers)
+          const key = conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers)
+          const r = proto.replying(body.model, !!body.stream, latestOf(key)?.inputTokens ?? 0)
           res.writeHead(200, { ...limits.get(proto), 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
-          const context = latestOf(key())?.inputTokens ?? 0
-          return void res.end(proto.reply(text, body.model, !!body.stream, context))
+          res.write(r.start)
+          // What an answer says before it's done shows at once in a stream.
+          let said = ''
+          const say = (t: string) => {
+            said += t
+            res.write(r.text(t))
+          }
+          const text = await answerOf(command, proto, h, key, { ...body, messages: msgs }, c.render, upstream + url, forwarded(req.headers, zstd), req.headers, say).catch((err) => `shaver: answering it failed: ${err instanceof Error ? err.message : err}`)
+          return void res.end(r.text(text) + r.end(said + text))
         }
         // Commands sent mid-turn wait for a response that ends the turn.
         const mid = body.tools?.length ? midTurnCommands(body.messages) : []
@@ -541,8 +548,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (held.ended && commands && !res.destroyed) {
       waiting.delete(turnEnd.key)
       for (const command of commands) {
-        const text = await answerOf(command, proto, h, turnEnd.key, turnEnd.body, turnEnd.render, upstream + url, headers, req.headers).catch((err) => `shaver: answering it failed: ${err instanceof Error ? err.message : err}`)
-        write(held.add(answeredMidTurn(command) + text))
+        let said = ''
+        const text = await answerOf(command, proto, h, turnEnd.key, turnEnd.body, turnEnd.render, upstream + url, headers, req.headers, (t) => (said += t)).catch((err) => `shaver: answering it failed: ${err instanceof Error ? err.message : err}`)
+        write(held.add(answeredMidTurn(command) + said + text))
       }
     }
     write(held.rest())
@@ -552,9 +560,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 }
 
 // What answers a command, for the request `body` of conversation `key`, the
-// command stripped.
-async function answerOf(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, clientHeaders: IncomingHttpHeaders): Promise<string> {
-  if (command.startsWith(':shaver optimize')) return optimize(command, proto, h, key, body, render, target, headers)
+// command stripped; `say` gets any text ready before the rest, which follows it.
+async function answerOf(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, clientHeaders: IncomingHttpHeaders, say: (text: string) => void): Promise<string> {
+  if (command.startsWith(':shaver optimize')) return optimize(command, proto, h, key, body, render, target, headers, say)
   if (command === ':shaver policy') return policyText()
   if (command === ':shaver info all') return '```\n' + totals(stateDir, ttlMs) + '\n```'
   return stats(proto, h, body, clientHeaders)
@@ -741,7 +749,7 @@ async function promptOf(proto: Protocol, key: string, body: Canonical, base: Rec
   return { tokens: usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0), usage }
 }
 
-async function optimize(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>): Promise<string> {
+async function optimize(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void): Promise<string> {
   if (command !== ':shaver optimize') {
     const shown = proposal?.key === key ? proposal : undefined
     proposal = undefined
@@ -768,6 +776,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   }
   const skills = keptWhole(skillsOf(body), policy.skill_list ?? [])
   if (!skills.length) return 'shaver: this request lists no skills the policy keeps whole, so there are no lines to write.'
+  say(`shaver optimize: asking ${body.model} for a line of up to ${LINE_WORDS} words for each of ${countOf(skills.length, 'skill')}, to list in place of its description, then measuring the savings. This takes several seconds.\n\n`)
   let lines: Record<string, string> = {}
   // A model's answer can leave skills out, so those are asked for once more.
   for (let tries = 0; tries < 2; tries++) {
@@ -791,16 +800,16 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   const warm = warmWithOther(rules, Date.now())
   const n = (x: number) => x.toLocaleString('en-US')
   return [
-    `shaver: lines for ${lined.length} of ${countOf(skills.length, 'skill')} (${body.model}):`,
+    measured instanceof Error
+      ? `Couldn't measure the savings: sending the base failed: ${measured.message}`
+      : `Found ${n(measured[0].tokens - measured[1].tokens)} tokens of savings on every request: the lines take this session's base from ${n(measured[0].tokens)} tokens to ${n(measured[1].tokens)}, as the API counted them.`,
+    '',
+    `Lines for ${lined.length} of ${countOf(skills.length, 'skill')}:`,
     '',
     '```',
     ...lined.map((s) => `${s.name.padEnd(width)}  ${lines[s.name]}`),
     '```',
     ...(left.length ? ['', `No line, so kept whole: ${left.join(', ')}.`] : []),
-    '',
-    measured instanceof Error
-      ? `Sending the bases to measure them failed: ${measured.message}`
-      : `They take this session's base from ${n(measured[0].tokens)} tokens to ${n(measured[1].tokens)}, ${n(measured[0].tokens - measured[1].tokens)} fewer on every request, as the API counted them sending both.`,
     '',
     `Apply them to every session now? Answer y or n.${warm.length ? ` ${countOf(warm.length, 'session')} with a warm cache would rewrite it once, about ${money(warm.reduce((x, y) => x + y, 0))}.` : ''}`,
   ].join('\n')

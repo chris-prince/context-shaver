@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canonical, RESPONSES, withWrites } from '../src/responses.ts'
 import type { ApiMsg, Block } from '../src/items.ts'
+import { wholeReply } from '../src/protocol.ts'
 
 // Shaped like Codex's requests to ChatGPT's backend.
 const wire = {
@@ -135,7 +136,7 @@ test("a summary fork's streamed answer becomes blocks and usage", () => {
 })
 
 test("a local answer streams as one message, and turn state isn't kept as a limit", () => {
-  const events = RESPONSES.reply('hi', 'gpt-6-luna', true, 500).split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)))
+  const events = wholeReply(RESPONSES.replying('gpt-6-luna', true, 500), 'hi').split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)))
   assert.equal(events.at(-1).type, 'response.completed')
   assert.equal(events.at(-1).response.output[0].content[0].text, 'hi')
   assert.ok(RESPONSES.limits?.test('x-codex-primary-used-percent'))
