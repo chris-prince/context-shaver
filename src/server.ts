@@ -442,7 +442,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
             said += t
             res.write(r.text(t))
           }
-          const text = await answerOf(command, proto, h, key, { ...body, messages: msgs }, c.render, upstream + url, forwarded(req.headers, zstd), req.headers, say).catch((err) => `shaver: answering it failed: ${err instanceof Error ? err.message : err}`)
+          const text = await answerOf(command, proto, h, key, { ...body, messages: msgs }, c.render, upstream + url, forwarded(req.headers, zstd), req.headers, say).catch(internalError)
           return void res.end(r.text(text) + r.end(said + text))
         }
         // Commands sent mid-turn wait for a response that ends the turn.
@@ -549,7 +549,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       waiting.delete(turnEnd.key)
       for (const command of commands) {
         let said = ''
-        const text = await answerOf(command, proto, h, turnEnd.key, turnEnd.body, turnEnd.render, upstream + url, headers, req.headers, (t) => (said += t)).catch((err) => `shaver: answering it failed: ${err instanceof Error ? err.message : err}`)
+        const text = await answerOf(command, proto, h, turnEnd.key, turnEnd.body, turnEnd.render, upstream + url, headers, req.headers, (t) => (said += t)).catch(internalError)
         write(held.add(answeredMidTurn(command) + said + text))
       }
     }
@@ -746,6 +746,12 @@ async function promptOf(proto: Protocol, key: string, body: Canonical, base: Rec
 }
 
 const UNRETRIEVED = 'Shaver unable to retrieve skill details.'
+
+// A command's answer threw: a bug, shown rather than breaking the stream.
+function internalError(err: unknown): string {
+  console.error('shaver: answering a command failed:', err)
+  return `Shaver internal error: ${err instanceof Error ? err.message : err}`
+}
 
 async function optimize(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void): Promise<string> {
   if (command !== ':shaver optimize') {
