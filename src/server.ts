@@ -13,7 +13,7 @@
 // conversation's requests left.
 
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
@@ -28,7 +28,7 @@ import { keptWhole, LINE_WORDS, linesOf, linesPrompt, listMessage, shaveSkills, 
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, money, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
 import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -705,21 +705,6 @@ const waiting = new Map<string, string[]>()
 // before then takes the policy's on its next request, warm or not.
 let skillsForcedAt = 0
 
-// The conversations whose cache is warm with other skill rules than `rules`,
-// each with what rewriting its cache once costs beyond reading it.
-function warmWithOther(rules: readonly SkillRule[], now: number): number[] {
-  const out: number[] = []
-  for (const f of readdirSync(stateDir)) {
-    if (!f.endsWith('.json') || f.endsWith('.summaries.json')) continue
-    const key = f.slice(0, -'.json'.length)
-    const s = load(key)
-    const st = s?.skillList && JSON.stringify(s.skillList.rules) !== JSON.stringify(rules) ? latestOf(key) : undefined
-    if (!st || !Object.values(s!.entries ?? {}).some((t) => now - t <= lifetimeMs(modelOf(st.model, st.provider).ttl, ttlMs))) continue
-    const n = st.inputTokens
-    out.push(spent(st.model, st.provider, { input_tokens: 0, cache_creation_input_tokens: n, cache_creation: { ephemeral_5m_input_tokens: n } }) - spent(st.model, st.provider, { input_tokens: 0, cache_read_input_tokens: n }))
-  }
-  return out
-}
 
 // The request's base as the proxy sends it, through the message holding the
 // skill list, with the skill rules the session sends it with, or `rules`.
@@ -757,7 +742,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     const shown = proposal?.key === key ? proposal : undefined
     proposal = undefined
     if (!shown) return 'shaver: no lines are waiting; `shaver optimize` writes them.'
-    if (command === ':shaver optimize no') return 'shaver: left the policy as it is.'
+    if (command === ':shaver optimize no') return 'Skills not modified in shaver policy file.'
     // From the file as it is now, so edits by hand since the proxy started stay.
     let text: string
     try {
@@ -813,8 +798,6 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   const rules = withLines(policy.skill_list ?? [], skills, lines)
   const measured = await Promise.all([old, measure(rules)]).catch((err) => err as Error)
   const cell = (s: string) => s.replace(/\|/g, '\\|')
-  const left = skills.filter((s) => !lines[s.name]).map((s) => s.name)
-  const warm = warmWithOther(rules, Date.now())
   return [
     measured instanceof Error
       ? `Couldn't measure the savings (sending the base failed: ${measured.message}). Short skill descriptions:`
@@ -823,8 +806,6 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     '| Skill | Description |',
     '| --- | --- |',
     ...lined.map((s) => `| ${cell(s.name)} | ${cell(lines[s.name])} |`),
-    ...(left.length ? ['', `No short description, so kept whole: ${left.join(', ')}.`] : []),
-    ...(warm.length ? ['', `${countOf(warm.length, 'session')} with a warm cache would rewrite it once, about ${money(warm.reduce((x, y) => x + y, 0))}.`] : []),
     '',
     'Apply these changes? Answer y or n.',
   ].join('\n')
