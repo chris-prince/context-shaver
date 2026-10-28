@@ -16,7 +16,7 @@ export type ToolRule = { name: string; defer: boolean }
 type Block = { type: string; text?: string }
 type Body = { tools?: { name?: string; defer_loading?: boolean }[]; messages?: { role: string; content: string | Block[] }[] }
 
-const deferredBy = (rules: readonly ToolRule[], name: string) => rules.find((r) => matches(r.name, name))?.defer === true
+export const deferredBy = (rules: readonly ToolRule[], name: string) => rules.find((r) => matches(r.name, name))?.defer === true
 
 // Whether Claude Code's tool search is on: a system message lists the deferred
 // tools. Only system messages: a conversation that quotes the list is not one.
@@ -34,12 +34,26 @@ export const deferrable = (body: Body, rules: readonly ToolRule[]): string[] =>
 // coding session uses on most steps.
 export const CORE_TOOLS = ['Bash', 'Edit', 'Read', 'Write']
 
-// `rules` with every tool they leave alone deferred, past the core ones; rules
-// with a catch-all already place every tool, and stay as they are.
-export const deferringAll = (rules: readonly ToolRule[]): ToolRule[] =>
-  rules.some((r) => r.name === '*')
-    ? [...rules]
-    : [...rules, ...CORE_TOOLS.filter((n) => !rules.some((r) => matches(r.name, n))).map((name) => ({ name, defer: false })), { name: '*', defer: true }]
+// The tools Claude Code sends in full that `:shaver optimize` asks about
+// deferring: all but ToolSearch and the core ones.
+export const offerable = (body: Body): string[] =>
+  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && t.name !== 'ToolSearch' && !CORE_TOOLS.includes(t.name) ? [t.name] : []))
+
+// `rules` placing the `shown` tools: the `picked` ones deferred, the others
+// kept loaded. Those kept are named first, then come the rules' others but a
+// catch-all, the core tools kept where no rule names them, and with any
+// picked, a catch-all deferring the rest. A picked tool an earlier rule would
+// still keep loaded is named first too.
+export function withDeferred(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>): ToolRule[] {
+  const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name))
+  const out = [
+    ...shown.filter((name) => !picked.has(name)).map((name) => ({ name, defer: false })),
+    ...others,
+    ...CORE_TOOLS.filter((n) => !others.some((r) => matches(r.name, n))).map((name) => ({ name, defer: false })),
+    ...(picked.size ? [{ name: '*', defer: true }] : []),
+  ]
+  return [...[...picked].filter((name) => !deferredBy(out, name)).map((name) => ({ name, defer: true })), ...out]
+}
 
 export function forceDefer(body: Body, rules: readonly ToolRule[]): number {
   if (!searchOn(body)) return 0

@@ -131,10 +131,11 @@ test('a command the model answered with a tool call stays', () => {
 
 const asked = `Which skills should I trim?\n${PICK}`
 
-test('all, none or numbers are a command only as the answer to a reply asking which to change', () => {
+test('all, none, keep or numbers are a command only as the answer to a reply asking which to change', () => {
   const offered = [user('a'), assistant('A'), user(':shaver optimize'), system('note'), assistant(asked)]
   assert.equal(pendingCommand([...offered, user(' ALL ')]), ':shaver optimize all')
   assert.equal(pendingCommand([...offered, user('none'), system('note')]), ':shaver optimize none')
+  assert.equal(pendingCommand([...offered, user('Keep')]), ':shaver optimize keep')
   assert.equal(pendingCommand([...offered, user('1 3,5')]), ':shaver optimize 1 3 5')
   assert.equal(pendingCommand([...offered, user('1 and 3')]), undefined)
   assert.equal(pendingCommand([user(':shaver info'), assistant('stats'), user('all')]), undefined)

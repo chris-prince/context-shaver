@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { descriptionHash, keptWhole, LINE_WORDS, linesOf, listMessage, shaveSkills, skillsOf, withLines, type SkillRule } from '../src/skills.ts'
+import { descriptionHash, keptWhole, LINE_WORDS, lineOf, linesOf, listMessage, shaveSkills, skillsOf, withLines, type SkillRule } from '../src/skills.ts'
 
 const HEAD = 'The following skills are available for use with the Skill tool:\n\n'
 const list = [
@@ -138,4 +138,13 @@ test('written lines go ahead of the other rules, in place of lines written befor
   assert.deepEqual(out, [{ match: 'init', action: 'stub', text: 'Set up project memory', replaces: descriptionHash(skills[0].description) }, { match: 'artifact-*', action: 'drop' }])
   // A skill in `keep`, not picked this time, keeps its line.
   assert.deepEqual(withLines(rules, skills, { init: 'Set up project memory' }, new Set(['claude-api'])).slice(1), rules)
+})
+
+test("a skill's line counts as sent only while its rule is the first to match and the line is still its description's", () => {
+  const [init] = skillsOf(request())
+  const line: SkillRule = { match: 'init', action: 'stub', text: 'Set up project memory', replaces: descriptionHash(init.description) }
+  assert.equal(lineOf(init, [line]), 'Set up project memory')
+  assert.equal(lineOf(init, [{ match: 'in*', action: 'keep' }, line]), undefined)
+  assert.equal(lineOf(init, [{ ...line, replaces: 'changed' }]), undefined)
+  assert.equal(lineOf(init, []), undefined)
 })

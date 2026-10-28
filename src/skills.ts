@@ -175,6 +175,13 @@ export function linesOf(answer: string, skills: readonly Skill[]): Record<string
   return out
 }
 
+// The line the rules send for the skill in place of its description, if one
+// written for it is.
+export function lineOf(skill: Skill, rules: readonly SkillRule[]): string | undefined {
+  const rule = rules.find((r) => matches(r.match, skill.name))
+  if (rule?.action === 'stub' && rule.text !== undefined && stubOf(skill.description, rule) === rule.text) return rule.text
+}
+
 // The rules with written lines: one stub for each line, ahead of the rest, in
 // place of any lines written before but those for the skills in `keep`.
 export const withLines = (rules: readonly SkillRule[], skills: readonly Skill[], lines: Record<string, string>, keep: ReadonlySet<string> = new Set()): SkillRule[] => [

@@ -24,8 +24,8 @@ import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from '.
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
-import { deferrable, deferringAll, forceDefer, searchOn, toolListMessage, type ToolRule } from './defer.ts'
-import { keptWhole, LINE_WORDS, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
+import { CORE_TOOLS, deferredBy, forceDefer, offerable, searchOn, toolListMessage, withDeferred, type ToolRule } from './defer.ts'
+import { keptWhole, LINE_WORDS, lineOf, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
 import { answeredMidTurn, midTurnCommands, pendingCommand, PICK, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
@@ -783,7 +783,10 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
 // The changes shown last, waiting for an answer in the conversation they were
 // shown in: the skill lines first, if any were offered, then the tools to
 // defer, offered or why none are, and how many skills were trimmed so far.
-type Proposal = { key: string; asking: 'skills' | 'tools'; skills: Skill[]; lines: Record<string, string>; tools: { names: string[]; text: string } | string; trimmed: number }
+// What `:shaver optimize` asked about: the skills in its table with a line for
+// each, those already trimmed, and the tools in its table with those already
+// deferred, or why it has none. `changed` counts the items answers changed.
+type Proposal = { key: string; asking: 'skills' | 'tools'; skills: Skill[]; lines: Record<string, string>; trimmed: string[]; tools: { names: string[]; deferred: string[]; text: string } | string; changed: number }
 let proposal: Proposal | undefined
 
 // Commands sent mid-turn, by conversation, waiting for a response that ends
@@ -838,12 +841,16 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   if (command !== ':shaver optimize') {
     const shown = proposal?.key === key ? proposal : undefined
     if (!shown) return 'No changes to apply. Run `shaver optimize` again.'
-    const lined = shown.skills.filter((s) => shown.lines[s.name])
-    const items = shown.asking === 'skills' ? lined.map((s) => s.name) : typeof shown.tools === 'string' ? [] : shown.tools.names
+    const tools = typeof shown.tools === 'string' ? { names: [], deferred: [] } : shown.tools
+    const items = shown.asking === 'skills' ? shown.skills.map((s) => s.name) : tools.names
+    const on = new Set(shown.asking === 'skills' ? shown.trimmed : tools.deferred)
     const answer = command.slice(':shaver optimize '.length)
-    const numbers = answer === 'all' || answer === 'none' ? [] : answer.split(' ').map(Number)
+    const numbers = ['all', 'none', 'keep'].includes(answer) ? [] : answer.split(' ').map(Number)
     if (numbers.some((i) => i < 1 || i > items.length)) return `Pick numbers from 1 to ${items.length}.\n\n${askOf(shown.asking)}`
-    const picked = answer === 'all' ? items : items.filter((_, i) => numbers.includes(i + 1))
+    // The answer names every item to have trimmed or deferred, so those not
+    // named are turned back.
+    const picked = new Set(answer === 'all' ? items : answer === 'keep' ? on : items.filter((_, i) => numbers.includes(i + 1)))
+    const changes = items.filter((name) => picked.has(name) !== on.has(name)).length
     // From the file as it is now, so edits by hand since the proxy started stay.
     let text: string
     try {
@@ -853,14 +860,13 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     }
     const file = parsePolicy(JSON.parse(text))
     let written = text
-    if (picked.length && shown.asking === 'skills') {
-      const lines = Object.fromEntries(picked.map((name) => [name, shown.lines[name]]))
-      written = withList(written, 'skill_list', withLines(file.skill_list ?? [], shown.skills, lines, new Set(shown.skills.map((s) => s.name).filter((name) => !lines[name]))))
+    if (changes && shown.asking === 'skills') {
+      const lines = Object.fromEntries([...picked].map((name) => [name, shown.lines[name]]))
+      // Lines for skills this session doesn't list stay.
+      const elsewhere = new Set((file.skill_list ?? []).filter((r) => r.text !== undefined && !items.includes(r.match)).map((r) => r.match))
+      written = withList(written, 'skill_list', withLines(file.skill_list ?? [], shown.skills, lines, elsewhere))
     }
-    if (picked.length && shown.asking === 'tools') {
-      const now = toolRulesOf(file) ?? []
-      written = withList(written, 'tool_list', picked.length === items.length ? deferringAll(now) : [...now, ...picked.map((name) => ({ name, defer: true }))], 'tools_not_deferred')
-    }
+    if (changes && shown.asking === 'tools') written = withList(written, 'tool_list', withDeferred(toolRulesOf(file) ?? [], items, picked), 'tools_not_deferred')
     if (written !== text) {
       const now = parsePolicy(JSON.parse(written))
       writeFileSync(a.policy, written)
@@ -872,14 +878,13 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
         delete policy.tools_not_deferred
       }
     }
-    const done = [`Modified ${countOf(picked.length, shown.asking === 'skills' ? 'skill' : 'tool')} in shaver policy file.`, a.policy]
-    const trimmed = shown.trimmed + (shown.asking === 'skills' ? picked.length : 0)
+    const done = [`Modified ${countOf(changes, shown.asking === 'skills' ? 'skill' : 'tool')} in shaver policy file.`, a.policy]
+    const changed = shown.changed + changes
     if (shown.asking === 'skills' && typeof shown.tools !== 'string') {
-      proposal = { ...shown, asking: 'tools', trimmed }
+      proposal = { ...shown, asking: 'tools', changed }
       return [...done, '', shown.tools.text, '', askOf('tools')].join('\n')
     }
     proposal = undefined
-    const changed = trimmed + (shown.asking === 'tools' ? picked.length : 0) > 0
     return [
       ...done,
       ...(typeof shown.tools === 'string' ? ['', shown.tools] : []),
@@ -892,16 +897,20 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   const old = () => (base ??= measure())
   // Tools are measured while the skills' lines are asked for.
   const offer = toolOffer(proto, h, body)
-  const table = (names: string[]) => ['| # | Tool |', '| --- | --- |', ...names.map((name, i) => `| ${i + 1} | ${name} |`)].join('\n')
-  const tools = typeof offer === 'string' ? offer : Promise.all([old(), measure(undefined, offer.rules)]).then(
-    ([o, d]) => ({ names: offer.names, text: `Can save ${n(o.tokens - d.tokens)} tokens by deferring ${countOf(offer.names.length, 'tool')} until the model needs them:\n\n${table(offer.names)}` }),
-    (err: Error) => ({ names: offer.names, text: `Couldn't measure the savings (sending the base failed: ${err.message}). Tools to defer:\n\n${table(offer.names)}` }),
-  )
+  const tools = typeof offer === 'string' ? offer : (() => {
+    const { names, deferred } = offer
+    const table = ['| # | Tool | Deferred |', '| --- | --- | --- |', ...names.map((name, i) => `| ${i + 1} | ${name} | ${deferred.includes(name) ? 'Yes' : 'No'} |`)].join('\n')
+    const head = (saved: number) => (deferred.length < names.length ? `Can save ${n(saved)} tokens by deferring tools until the model needs them:` : `${countOf(names.length, 'tool')} load only when the model needs them:`)
+    return Promise.all([old(), measure(undefined, offer.all)]).then(
+      ([o, d]) => ({ names, deferred, text: `${head(o.tokens - d.tokens)}\n\n${table}` }),
+      (err: Error) => ({ names, deferred, text: `Couldn't measure the savings (sending the base failed: ${err.message}). Tools:\n\n${table}` }),
+    )
+  })()
   const skilled = await skillsStage(proto, h, key, body, render, target, headers, say, old, measure)
   const told = await tools
-  const shown: Proposal = { key, asking: 'skills', skills: skilled.skills, lines: skilled.lines, tools: told, trimmed: 0 }
+  const shown: Proposal = { key, asking: 'skills', skills: skilled.skills, lines: skilled.lines, trimmed: skilled.trimmed, tools: told, changed: 0 }
   proposal = undefined
-  if (Object.keys(skilled.lines).length) {
+  if (skilled.skills.length) {
     proposal = shown
     return [skilled.text, '', askOf('skills')].join('\n')
   }
@@ -913,29 +922,60 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
 // The question that ends a reply offering skill lines or tools to defer.
 const askOf = (asking: 'skills' | 'tools') => `${asking === 'skills' ? 'Which skills should I trim?' : 'Which tools should I defer?'}\n${PICK}`
 
-// The tools `:shaver optimize` would defer, with the rules deferring them, or
-// why there are none.
-function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { rules: ToolRule[]; names: string[] } | string {
+// The tools `:shaver optimize` asks about deferring, those the policy defers
+// already, and the rules deferring them all, or why there are none.
+function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { names: string[]; deferred: string[]; all: ToolRule[] } | string {
   // Codex goes here: it could defer tools when its tool search probe
   // (probeCodexToolSearch) finds them supported, and if not, say so.
   if (!proto.defers || !h?.defers) return "Shaver can't defer tools in this harness yet."
   if (!searchOn(body)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
   const now = toolRulesOf(policy) ?? []
-  const rules = deferringAll(now)
-  const already = new Set(deferrable(body, now))
-  const names = deferrable(body, rules).filter((t) => !already.has(t))
-  if (!names.length) return 'All tools are already deferred or kept loaded in shaver policy file, no changes needed.'
-  return { rules, names }
+  const names = offerable(body)
+  if (!names.length) return `No tools but ${CORE_TOOLS.join(', ')} are sent in full, so none can be deferred.`
+  return { names, deferred: names.filter((name) => deferredBy(now, name)), all: withDeferred(now, names, new Set(names)) }
 }
 
-// The skills part of `:shaver optimize`'s answer, with the skills it asked
-// lines for and the lines it got.
-async function skillsStage(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>): Promise<{ text: string; skills: Skill[]; lines: Record<string, string> }> {
-  const none = (text: string) => ({ text, skills: [], lines: {} })
+// The skills part of `:shaver optimize`'s answer, with the skills in its
+// table, a line for each, and those whose line is sent already. Lines are
+// asked for only for the others.
+async function skillsStage(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>): Promise<{ text: string; skills: Skill[]; lines: Record<string, string>; trimmed: string[] }> {
+  const none = (text: string) => ({ text, skills: [], lines: {}, trimmed: [] })
   const listed = skillsOf(body)
   if (!listed.length) return none('No skills found in this session.')
-  const skills = keptWhole(listed, policy.skill_list ?? [])
-  if (!skills.length) return none('All skills are already trimmed in shaver policy file, no changes needed.')
+  const shown = keptWhole(listed, policy.skill_list ?? [])
+  if (!shown.length) return none('All skills are already trimmed in shaver policy file, no changes needed.')
+  const current: Record<string, string> = {}
+  for (const s of shown) {
+    const line = lineOf(s, policy.skill_list ?? [])
+    if (line !== undefined) current[s.name] = line
+  }
+  const skills = shown.filter((s) => current[s.name] === undefined)
+  const generated = skills.length ? await linesFor(proto, h, key, body, render, target, headers, say, old, measure, skills) : {}
+  if (typeof generated === 'string') return none(generated)
+  const lines = { ...current, ...generated }
+  const lined = shown.filter((s) => lines[s.name])
+  // Only if both answers were no JSON object or had every line too long.
+  if (!lined.length) return none('Shaver skill optimization failed.')
+  const n = (x: number) => x.toLocaleString('en-US')
+  const measured = await Promise.all([old(), measure(withLines(policy.skill_list ?? [], lined, lines))]).catch((err) => err as Error)
+  const cell = (s: string) => s.replace(/\|/g, '\\|')
+  const text = [
+    measured instanceof Error
+      ? `Couldn't measure the savings (sending the base failed: ${measured.message}). Short skill descriptions:`
+      : Object.keys(generated).length
+        ? `Can save ${n(measured[0].tokens - measured[1].tokens)} tokens using short skill descriptions:`
+        : `${countOf(lined.length, 'skill')} use short descriptions:`,
+    '',
+    '| # | Skill | Trimmed | Description |',
+    '| --- | --- | --- | --- |',
+    ...lined.map((s, i) => `| ${i + 1} | ${cell(s.name)} | ${current[s.name] === undefined ? 'No' : 'Yes'} | ${cell(lines[s.name])} |`),
+  ].join('\n')
+  return { text, skills: lined, lines, trimmed: lined.filter((s) => current[s.name] !== undefined).map((s) => s.name) }
+}
+
+// Lines for `skills` from the session's model, or why there are none, saying
+// what it is doing while it waits.
+async function linesFor(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>, skills: Skill[]): Promise<Record<string, string> | string> {
   say('Analyzing skills...\n\n')
   // The lines are asked for while the skills' own tokens are measured: the
   // base as sent, and without those skills' entries.
@@ -961,24 +1001,7 @@ async function skillsStage(proto: Protocol, h: Harness | undefined, key: string,
   const own = await Promise.all([old(), without]).then(([o, w]) => o.tokens - w.tokens, () => undefined)
   const are = skills.length === 1 ? 'is' : 'are'
   say(`${countOf(skills.length, 'skill')} ${own === undefined ? `${are} listed` : `add ${n(own)} tokens on every request`}. Optimizing...\n\n`)
-  const lines = await asked
-  if (typeof lines === 'string') return none(lines)
-  const lined = skills.filter((s) => lines[s.name])
-  // Only if both answers were no JSON object or had every line too long.
-  if (!lined.length) return none('Shaver skill optimization failed.')
-  const rules = withLines(policy.skill_list ?? [], skills, lines)
-  const measured = await Promise.all([old(), measure(rules)]).catch((err) => err as Error)
-  const cell = (s: string) => s.replace(/\|/g, '\\|')
-  const text = [
-    measured instanceof Error
-      ? `Couldn't measure the savings (sending the base failed: ${measured.message}). Short skill descriptions:`
-      : `Can save ${n(measured[0].tokens - measured[1].tokens)} tokens using short skill descriptions:`,
-    '',
-    '| # | Skill | Description |',
-    '| --- | --- | --- |',
-    ...lined.map((s, i) => `| ${i + 1} | ${cell(s.name)} | ${cell(lines[s.name])} |`),
-  ].join('\n')
-  return { text, skills, lines }
+  return asked
 }
 
 createServer((req, res) => {

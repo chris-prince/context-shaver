@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { deferrable, deferringAll, forceDefer, type ToolRule } from '../src/defer.ts'
+import { deferrable, forceDefer, offerable, withDeferred, type ToolRule } from '../src/defer.ts'
 import { toolRulesOf } from '../src/policy.ts'
 
 const HEAD = 'Use ToolSearch with query "select:<name>[,<name>...]" to load tool schemas before calling them:\n'
@@ -29,10 +29,21 @@ test('tools_not_deferred reads as rules keeping its tools, then deferring every 
   assert.equal(toolRulesOf({}), undefined)
 })
 
-test('deferring all keeps the core tools no rule places, and leaves rules with a catch-all as they are', () => {
-  assert.deepEqual(deferringAll([{ name: 'Edit', defer: true }]), [{ name: 'Edit', defer: true }, ...['Bash', 'Read', 'Write'].map((name) => ({ name, defer: false })), { name: '*', defer: true }])
-  assert.deepEqual(deferringAll(keepBash), keepBash)
-  assert.deepEqual(deferringAll([{ name: '*', defer: false }]), [{ name: '*', defer: false }])
+test('picked tools are deferred and the others shown kept, whatever the rules did before; the core tools stay loaded', () => {
+  const tools = ['Bash', 'Edit', 'Read', 'Write', 'ToolSearch', 'Agent', 'Artifact', 'Skill', 'mcp__docs__read'].map((name) => ({ name }))
+  const shown = ['Agent', 'Artifact', 'Skill', 'mcp__docs__read']
+  const before: ToolRule[] = [{ name: 'Agent', defer: true }, { name: 'mcp__*', defer: false }, { name: 'Bash', defer: true }, { name: '*', defer: true }]
+  for (const picked of [[], ['Artifact'], ['Agent', 'mcp__docs__read'], shown]) {
+    const rules = withDeferred(before, shown, new Set(picked))
+    // A hand rule placing a core tool stays; the other core tools are kept.
+    assert.deepEqual(deferrable({ tools }, rules), tools.map((t) => t.name).filter((n) => n === 'Bash' || picked.includes(n)))
+  }
+  assert.ok(!withDeferred(before, shown, new Set()).some((r) => r.name === '*'))
+})
+
+test('the tools offered are those sent in full, but ToolSearch and the core ones', () => {
+  const tools = [{ name: 'Bash' }, { name: 'ToolSearch' }, { name: 'Agent' }, { name: 'WebFetch', defer_loading: true }]
+  assert.deepEqual(offerable({ tools }), ['Agent'])
 })
 
 test('with no list in a system message, nothing is deferred, even if the conversation quotes one', () => {

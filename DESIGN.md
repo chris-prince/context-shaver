@@ -346,12 +346,15 @@ is taken at its later entry. "Analyzing skills..." streams first, then the
 tokens the skill list adds, then the tokens the lines save and the lines as a
 table: the base is sent with the old lines and with the new, each with a short
 question after it, and the difference of their prompt tokens, as the API's
-usage reports them, is the saving. The skills and the tools are numbered, and
-each list ends asking which to change: `all`, `none`, or numbers like `1 3 5`
-as the next prompt is the answer, a command like the others, and a number out
-of range asks again. The skills picked get their lines first in `skill_list`
-(the others keep any line they had), in memory and in the policy file, and
-every session gets them from its next request. The file is read
+usage reports them, is the saving. The skills and the tools are numbered, with
+a Trimmed or Deferred column saying which the policy changes now, and each list
+ends asking which to change: `all`, `none`, numbers like `1 3 5`, or `keep` as
+the next prompt is the answer, a command like the others, and a number out of
+range asks again. The answer sets every row: those picked are trimmed or
+deferred, the rest are not, and `keep` leaves the policy as it is. Skills
+already trimmed keep their lines; the others get new ones. The policy changes
+in memory and in the policy file, and every session gets them from its next
+request. The file is read
 again, and only its top-level `skill_list` value is rewritten, so edits by hand
 elsewhere in it stay as they were. Probes found 6-word lines made the model
 pick the right skill more often than the full descriptions, at about a tenth of
