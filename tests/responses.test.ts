@@ -156,3 +156,21 @@ test("the API's usage per item counts the head, each message it counted all of, 
   assert.deepEqual([...n!.reasoning], [['enc', 5]])
   assert.equal(c.counted!(c.body.messages, {}), undefined)
 })
+
+test('a stream is held from response.completed, and text added is a message item of its own', () => {
+  const event = (type: string, e: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...e })}\n\n`
+  const item = { id: 'm1', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] }
+  const wire = event('response.output_item.added', { output_index: 0, item }) + event('response.output_item.done', { output_index: 0, item }) + event('response.completed', { response: { output: [item] } })
+  let out = ''
+  const held = RESPONSES.holdClose((s) => (out += s))
+  for (let i = 0; i < wire.length; i += 7) held.push(Buffer.from(wire.slice(i, i + 7)))
+  assert.equal(out, wire.slice(0, wire.indexOf('event: response.completed')))
+  assert.equal(held.ended, true)
+  const added = held.add('answer').split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)))
+  assert.deepEqual(added.map((e) => [e.type, e.output_index]), [['response.output_item.added', 1], ['response.output_text.delta', 1], ['response.output_item.done', 1]])
+  assert.equal(added[2].item.content[0].text, 'answer')
+  assert.equal(held.rest(), event('response.completed', { response: { output: [item] } }))
+  const calling = RESPONSES.holdClose(() => {})
+  calling.push(Buffer.from(wire.replace(/"output":\[[^\]]*\]\]?/, '"output":[{"type":"function_call","call_id":"c"}]')))
+  assert.equal(calling.ended, false)
+})

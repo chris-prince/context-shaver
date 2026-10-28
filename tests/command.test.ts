@@ -162,6 +162,32 @@ test("y or n answers `:shaver optimize` sent mid-turn once the turn ends with it
   assert.deepEqual(stripCommands([...before, user('y'), assistant('wrote'), user('next')]), [user('a'), call, { role: 'user', content: [result] }, assistant('done'), user('next')])
 })
 
+test('a command right after tool results was sent mid-turn by Codex or OpenCode, unless a tool was interrupted', () => {
+  const tools = { role: 'user', content: [result] }
+  const sent = user('shaver info')
+  assert.deepEqual(midTurnCommands([user('a'), call, tools, sent]), [':shaver info'])
+  assert.equal(pendingCommand([user('a'), call, tools, sent]), undefined)
+  assert.deepEqual(stripCommands([user('a'), call, tools, sent]), [user('a'), call, tools])
+  // It stays in the turn's later requests, and still goes.
+  assert.deepEqual(stripCommands([user('a'), call, tools, sent, call, tools]), [user('a'), call, tools, call, tools])
+  // An ordinary prompt stays.
+  assert.deepEqual(midTurnCommands([user('a'), call, tools, user('also check the tests')]), [])
+  // After an interrupted tool, it's the next turn's command, answered now.
+  const stopped = { role: 'user', content: [{ ...result, content: '{"error":{"type":"aborted","message":"Tool execution interrupted"},"content":[]}' }] }
+  assert.deepEqual(midTurnCommands([user('a'), call, stopped, sent]), [])
+  assert.equal(pendingCommand([user('a'), call, stopped, sent]), ':shaver info')
+  // Between turns, after a reply, likewise.
+  assert.equal(pendingCommand([user('a'), assistant('done'), sent]), ':shaver info')
+})
+
+test("an answer added to the model's text is cut from it, and y still answers `:shaver optimize`", () => {
+  const tools = { role: 'user', content: [result] }
+  const ended = { role: 'assistant', content: [{ type: 'text', text: 'done\n\n' + answeredMidTurn(':shaver optimize') + 'Apply? y or n' }] }
+  const before = [user('a'), call, tools, user('shaver optimize'), ended]
+  assert.equal(pendingCommand([...before, user('y')]), ':shaver optimize yes')
+  assert.deepEqual(stripCommands([...before, user('next')]), [user('a'), call, tools, assistant('done'), user('next')])
+})
+
 test('a stream passes through but for its close, held so blocks can go before it', () => {
   const events = [
     { type: 'message_start', message: {} },
@@ -179,8 +205,7 @@ test('a stream passes through but for its close, held so blocks can go before it
   for (let i = 0; i < wire.length; i += 7) held.push(Buffer.from(wire.slice(i, i + 7)))
   assert.equal(out, wire.slice(0, wire.indexOf('event: message_delta')))
   assert.equal(held.ended, true)
-  assert.equal(held.next, 2)
-  assert.equal(out + textBlock('answer', held.next) + held.rest(), wire.replace('event: message_delta', textBlock('answer', 2) + 'event: message_delta'))
+  assert.equal(out + held.add('answer') + held.rest(), wire.replace('event: message_delta', textBlock('answer', 2) + 'event: message_delta'))
   const calling = closeHeld(() => {})
   calling.push(Buffer.from(wire.replace('end_turn', 'tool_use')))
   assert.equal(calling.ended, false)

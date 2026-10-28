@@ -14,7 +14,7 @@
 import type { Usage } from './cost.ts'
 import { blocks, type ApiMsg, type Block } from './items.ts'
 import { kinds } from './log.ts'
-import { eventReader, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Protocol, type Wire } from './protocol.ts'
+import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Held, type Protocol, type Wire } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Item = { type: string; role?: string; content?: Part[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: unknown; encrypted_content?: string; summary?: Part[]; [k: string]: unknown }
@@ -239,12 +239,41 @@ function reply(text: string, model: string, stream: boolean, context: number): s
   )
 }
 
+// A stream held from response.completed on, which ends the turn when the
+// response calls no tool. Text added is a message item of its own.
+function holdClose(write: (s: string) => void): Held {
+  let next = 0
+  let output: Item[] | undefined
+  const see = (o: { type?: string; output_index?: number; response?: { output?: Item[] } }) => {
+    if (o.type === 'response.output_item.added' && typeof o.output_index === 'number') next = Math.max(next, o.output_index + 1)
+    if (o.type === 'response.completed') output = o.response?.output ?? []
+  }
+  const h = holding(write, see, (o) => o.type === 'response.completed')
+  return {
+    ...h,
+    get ended() {
+      return !!output && !output.some((it) => CALLS.has(it.type) || it.type === 'local_shell_call')
+    },
+    add(text) {
+      const item = { id: `msg_proxy_${Date.now()}_${next}`, type: 'message', status: 'completed', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text, annotations: [] }] }
+      const event = (type: string, e: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...e })}\n\n`
+      const at = next++
+      return (
+        event('response.output_item.added', { output_index: at, item: { ...item, status: 'in_progress', content: [] } }) +
+        event('response.output_text.delta', { item_id: item.id, output_index: at, content_index: 0, delta: text }) +
+        event('response.output_item.done', { output_index: at, item })
+      )
+    },
+  }
+}
+
 export const RESPONSES: Protocol = {
   name: 'responses',
   serves: (p) => p === '/v1/responses' || p === '/responses',
   canonical,
   usageReader,
   reply,
+  holdClose,
   error: openaiError,
   // Codex's limits and credits; its turn state is the turn's, not the account's.
   limits: /^x-codex-(?!turn-state)/,

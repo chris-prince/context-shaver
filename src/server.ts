@@ -25,7 +25,7 @@ import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { forceDefer } from './defer.ts'
 import { keptWhole, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
-import { answeredMidTurn, closeHeld, midTurnCommands, pendingCommand, stripCommands, textBlock, withoutPending } from './command.ts'
+import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, money, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
@@ -439,7 +439,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           return void res.end(proto.reply(text, body.model, !!body.stream, context))
         }
         // Commands sent mid-turn wait for a response that ends the turn.
-        const mid = proto.name === 'messages' && body.tools?.length ? midTurnCommands(body.messages) : []
+        const mid = body.tools?.length ? midTurnCommands(body.messages) : []
         if (mid.length || waiting.size) {
           const key = conversationId(h, proto.name, { ...body, messages: msgs }, req.headers)
           if (mid.length) waiting.set(key, [...(waiting.get(key) ?? []), ...mid])
@@ -522,7 +522,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // A response ending the turn gets the answers to the commands sent during
   // it, after the request is journaled, so `:shaver info` counts it.
   const write = (s: string | Uint8Array) => res.destroyed || res.write(s)
-  const held = turnEnd && closeHeld(write)
+  const held = turnEnd && proto.holdClose(write)
   try {
     if (up.body)
       for await (const chunk of up.body) {
@@ -540,10 +540,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const commands = waiting.get(turnEnd.key)
     if (held.ended && commands && !res.destroyed) {
       waiting.delete(turnEnd.key)
-      let index = held.next
       for (const command of commands) {
         const text = await answerOf(command, proto, h, turnEnd.key, turnEnd.body, turnEnd.render, upstream + url, headers, req.headers).catch((err) => `shaver: answering it failed: ${err instanceof Error ? err.message : err}`)
-        write(textBlock(answeredMidTurn(command) + text, index++))
+        write(held.add(answeredMidTurn(command) + text))
       }
     }
     write(held.rest())

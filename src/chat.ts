@@ -11,7 +11,7 @@
 
 import type { Usage } from './cost.ts'
 import type { ApiMsg, Block } from './items.ts'
-import { eventReader, openaiError, openaiUsage, type Canonical, type Content, type Protocol } from './protocol.ts'
+import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Held, type Protocol } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Call = { id: string; type: 'function'; function: { name: string; arguments: string } }
@@ -138,12 +138,32 @@ function reply(text: string, model: string, stream: boolean, context: number): s
   return chunk([{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }]) + chunk([{ index: 0, delta: {}, finish_reason: 'stop' }]) + chunk([], { usage }) + 'data: [DONE]\n\n'
 }
 
+// A stream held from the chunk whose choice finishes, which ends the turn when
+// it finishes with stop. Text added is more of the reply's content.
+function holdClose(write: (s: string) => void): Held {
+  let finish: unknown
+  let head = {}
+  const see = (o: { id?: string; object?: string; created?: number; model?: string; choices?: { finish_reason?: unknown }[] }) => {
+    if (o.id) head = { id: o.id, object: o.object, created: o.created, model: o.model }
+    finish = o.choices?.find((c) => c.finish_reason)?.finish_reason ?? finish
+  }
+  const h = holding(write, see, (o) => !!o.choices?.some((c: { finish_reason?: unknown }) => c.finish_reason))
+  return {
+    ...h,
+    get ended() {
+      return finish === 'stop'
+    },
+    add: (text) => `data: ${JSON.stringify({ ...head, choices: [{ index: 0, delta: { content: '\n\n' + text }, finish_reason: null }] })}\n\n`,
+  }
+}
+
 export const CHAT: Protocol = {
   name: 'chat',
   serves: (p) => p === '/v1/chat/completions' || p === '/chat/completions',
   canonical,
   usageReader,
   reply,
+  holdClose,
   error: openaiError,
   automatic: true,
   defers: false,

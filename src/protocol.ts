@@ -23,6 +23,37 @@ export type Content = { signatures: string[]; visibleChars: number }
 export type Read = { usage?: Usage; content: Content; attribution?: unknown }
 export type UsageReader = { push(chunk: Uint8Array): void; end(): Read; readonly done: boolean }
 
+// A stream passed on as it arrives but for its close, which is held so text
+// can be added before it: ended is whether the response ends the turn, add
+// the events that add text to it, and rest what is held, to write after them.
+export type Held = { push(chunk: Uint8Array): void; readonly ended: boolean; add(text: string): string; rest(): string }
+
+// A stream's events written as they arrive, each seen, until the first that
+// closes it: that one and all after it are held, for rest.
+export function holding(write: (s: string) => void, see: (e: any) => void, closes: (e: any) => boolean): Pick<Held, 'push' | 'rest'> {
+  const dec = new TextDecoder()
+  let buf = ''
+  let held = ''
+  return {
+    push(chunk) {
+      buf += dec.decode(chunk, { stream: true })
+      const events = buf.split('\n\n')
+      buf = events.pop() ?? ''
+      for (const e of events) {
+        const data = e.split('\n').find((l) => l.startsWith('data: '))
+        let o: unknown
+        try {
+          o = data && JSON.parse(data.slice(6))
+        } catch {}
+        if (o && typeof o === 'object') see(o)
+        if (held || (o && typeof o === 'object' && closes(o))) held += e + '\n\n'
+        else write(e + '\n\n')
+      }
+    },
+    rest: () => held + buf,
+  }
+}
+
 // A response read as it arrives: each event of a stream, or the body when it
 // isn't streamed, then what was read. The answer is done at the event final
 // picks out, or at a stream's closing data: [DONE].
@@ -90,6 +121,8 @@ export type Protocol = {
   // A response holding just `text`, as Claude Code's `:shaver` answers are made
   // (command.ts), with `context` reported as the input read.
   reply(text: string, model: string, stream: boolean, context: number): string
+  // A stream held at its close, for the answers to commands sent mid-turn.
+  holdClose(write: (s: string) => void): Held
   error(status: number, message: string): string
   // Headers of the account's usage limits, replayed on answers made here.
   limits?: RegExp

@@ -15,20 +15,24 @@
 // Code's prompt suggestion puts one on the last reply, and when that is the
 // proxy's, the suggestion would otherwise read only the system prompt.
 //
-// A command sent while the model works is one Claude Code adds to the turn,
-// wrapped in MID_TURN's words: as the last block of the next user message, the
-// one with the tool results, or from 2.1.312 as a system message after it.
-// That block, or system message, is taken out of every request, so
-// the model never sees it, and the command is answered at the turn's end
-// (server.ts), as a text block added to the turn's last response, opening with
-// `answeredMidTurn`'s words. That block is taken out of every later request too.
+// A command sent while the model works is one the harness adds to the turn.
+// Claude Code wraps it in MID_TURN's words: as the last block of the next user
+// message, the one with the tool results, or from 2.1.312 as a system message
+// after it. Codex and OpenCode send it as it was typed, a user message right
+// after the tool results (`steeredAt`). That block or message is taken out of
+// every request, so the model never sees it, and the command is answered at
+// the turn's end (server.ts), as text added to the turn's last response,
+// opening with `answeredMidTurn`'s words (the protocol's `holdClose`). That
+// text is taken out of every later request too.
+
+import { holding, type Held } from './protocol.ts'
 
 export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize']
 
 // The answers to `:shaver optimize`, as the commands they are.
 const ANSWERS: Record<string, string> = { y: ':shaver optimize yes', yes: ':shaver optimize yes', n: ':shaver optimize no', no: ':shaver optimize no' }
 
-type Block = { type: string; text?: string; cache_control?: unknown }
+type Block = { type: string; text?: string; content?: unknown; cache_control?: unknown }
 type Msg = { role: string; content: string | Block[] }
 
 const marked = (m: Msg) => Array.isArray(m.content) && m.content.some((b) => b.cache_control !== undefined)
@@ -83,28 +87,48 @@ function midTurnOf(b: Block): string | undefined {
   return m ? commandOf({ role: 'user', content: m[1] }) : undefined
 }
 
-// How the answer to a command sent mid-turn opens.
+// How the answer to a command sent mid-turn opens. Added to text the model
+// wrote, as Chat Completions does, it follows a blank line.
 export const answeredMidTurn = (command: string) => `[shaver] \`${command.slice(1)}\`, sent mid-turn:\n\n`
-const ANSWERED = /^\[shaver\] `shaver [^`\n]*`, sent mid-turn:\n/
+const ANSWERED = /(?:^|\n\n)\[shaver\] `shaver [^`\n]*`, sent mid-turn:\n/
 
 const blocksOf = (m: Msg): Block[] => (typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content)
 
-// The commands sent mid-turn that the request's newest message brings, in its
-// blocks or, from Claude Code 2.1.312, in system messages after it.
+// OpenCode's result for a tool the user interrupted: the prompt after it is
+// the next turn's, though it comes right after the results too.
+const interrupted = (b: Block) => typeof b.content === 'string' && b.content.startsWith('{"error":{"type":"aborted"')
+
+// Whether `msgs[i]` is a prompt Codex or OpenCode sent mid-turn: a user
+// message right after one of tool results, none interrupted. Codex puts a
+// `<turn_aborted>` message between them when the user interrupts.
+function steeredAt(msgs: Msg[], i: number): boolean {
+  const before = msgs[i - 1]
+  if (msgs[i].role !== 'user' || before?.role !== 'user' || !Array.isArray(before.content) || !before.content.length) return false
+  return before.content.every((b) => b.type === 'tool_result' && !interrupted(b))
+}
+
+// The commands sent mid-turn that the request's newest message brings: in its
+// blocks or, from Claude Code 2.1.312, in system messages after it, or the
+// message itself from Codex or OpenCode.
 export function midTurnCommands(msgs: Msg[]): string[] {
   const i = msgs.findLastIndex((m) => m.role !== 'system')
   if (msgs[i]?.role !== 'user') return []
+  const steered = steeredAt(msgs, i) ? commandOf(msgs[i]) : undefined
+  if (steered) return [steered]
   return msgs.slice(i).flatMap(blocksOf).map(midTurnOf).filter((c) => c !== undefined)
 }
 
 // The message without commands sent mid-turn and the answers added for them,
-// and the breakpoint on one taken out. A user or assistant message they would
-// leave empty stays as it is; a system message goes.
+// and the breakpoint on one taken out. An answer added to the model's text is
+// cut from it. A user or assistant message they would leave empty stays as it
+// is; a system message goes.
 function withoutMidTurn<M extends Msg>(m: M): { m?: M; control?: unknown } {
   const blocks = blocksOf(m)
-  const gone = (b: Block) => (m.role === 'assistant' ? b.type === 'text' && ANSWERED.test(b.text ?? '') : midTurnOf(b) !== undefined)
-  const kept = blocks.filter((b) => !gone(b))
-  if (kept.length === blocks.length || (!kept.length && m.role !== 'system')) return { m }
+  const at = (b: Block) => (m.role === 'assistant' && b.type === 'text' ? ANSWERED.exec(b.text ?? '')?.index : undefined)
+  const gone = (b: Block) => (m.role === 'assistant' ? at(b) === 0 : midTurnOf(b) !== undefined)
+  const kept = blocks.filter((b) => !gone(b)).map((b) => (at(b) ? { ...b, text: (b.text ?? '').slice(0, at(b)) } : b))
+  if (kept.every((b, i) => b === blocks[i]) && kept.length === blocks.length) return { m }
+  if (!kept.length && m.role !== 'system') return { m }
   return { m: kept.length ? { ...m, content: kept } : undefined, control: blocks.find((b) => gone(b) && b.cache_control !== undefined)?.cache_control }
 }
 
@@ -115,14 +139,17 @@ function offeredAt(msgs: Msg[], i: number): boolean {
   const c = msgs.findLastIndex((m, j) => j < r && m.role !== 'system')
   if (r < 0 || msgs[r].role !== 'assistant') return false
   const last = Array.isArray(msgs[r].content) ? (msgs[r].content as Block[]).at(-1) : undefined
-  return (c >= 0 && commandOf(msgs[c]) === ':shaver optimize') || (last?.type === 'text' && (last.text ?? '').startsWith(answeredMidTurn(':shaver optimize')))
+  const said = last?.type === 'text' ? (last.text ?? '') : ''
+  const answer = answeredMidTurn(':shaver optimize')
+  return (c >= 0 && commandOf(msgs[c]) === ':shaver optimize') || said.startsWith(answer) || said.includes('\n\n' + answer)
 }
 
 // The command a request asks for: its last message but for the system messages
-// after it, which Claude Code sends after a session's first prompt.
+// after it, which Claude Code sends after a session's first prompt. One sent
+// mid-turn waits for the turn's end.
 export function pendingCommand(msgs: Msg[]): string | undefined {
   const i = msgs.findLastIndex((m) => m.role !== 'system')
-  return i >= 0 ? commandOf(msgs[i], offeredAt(msgs, i)) : undefined
+  return i >= 0 && !steeredAt(msgs, i) ? commandOf(msgs[i], offeredAt(msgs, i)) : undefined
 }
 
 // The messages with the pending command left out but for its tagged blocks, as
@@ -147,9 +174,10 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
       out.push(...moved)
       moved = []
     }
-    if (!commandOf(msgs[i], offeredAt(msgs, i))) {
+    const steered = steeredAt(msgs, i) && commandOf(msgs[i]) !== undefined
+    if (steered || !commandOf(msgs[i], offeredAt(msgs, i))) {
       // A breakpoint on what goes moves to the block before it.
-      const { m, control } = withoutMidTurn(msgs[i])
+      const { m, control } = steered ? { control: blocksOf(msgs[i]).find((b) => b.cache_control !== undefined)?.cache_control } : withoutMidTurn(msgs[i])
       if (m) out.push(m)
       if (control !== undefined && out.length) out[out.length - 1] = withControl(out[out.length - 1], control)
       continue
@@ -198,39 +226,21 @@ export const textBlock = (text: string, index: number) =>
     .map(sse)
     .join('')
 
-// A Messages stream passed on as it arrives but for its close, from
-// message_delta on, which is held so blocks can be added before it: `ended` is
-// whether the response ends the turn, `next` the index a block added takes.
-export function closeHeld(write: (s: string) => void) {
-  const dec = new TextDecoder()
-  let buf = ''
-  let held = ''
+// A Messages stream held from message_delta on, which ends the turn when its
+// stop reason is end_turn. Text added is a block of its own.
+export function closeHeld(write: (s: string) => void): Held {
   let last = -1
   let stop: unknown
+  const see = (o: { type?: string; index?: number; delta?: { stop_reason?: unknown } }) => {
+    if (o.type === 'content_block_start' && typeof o.index === 'number') last = Math.max(last, o.index)
+    if (o.type === 'message_delta') stop = o.delta?.stop_reason
+  }
+  const h = holding(write, see, (o) => o.type === 'message_delta')
   return {
-    push(chunk: Uint8Array) {
-      buf += dec.decode(chunk, { stream: true })
-      const events = buf.split('\n\n')
-      buf = events.pop() ?? ''
-      for (const e of events) {
-        const data = e.split('\n').find((l) => l.startsWith('data: '))
-        let o: { type?: string; index?: number; delta?: { stop_reason?: unknown } } | undefined
-        try {
-          o = data && JSON.parse(data.slice(6))
-        } catch {}
-        if (o?.type === 'content_block_start' && typeof o.index === 'number') last = Math.max(last, o.index)
-        if (o?.type === 'message_delta') stop = o.delta?.stop_reason
-        if (held || o?.type === 'message_delta') held += e + '\n\n'
-        else write(e + '\n\n')
-      }
-    },
+    ...h,
     get ended() {
       return stop === 'end_turn'
     },
-    get next() {
-      return last + 1
-    },
-    // What is held, to write after any blocks added.
-    rest: () => held + buf,
+    add: (text) => textBlock(text, ++last),
   }
 }

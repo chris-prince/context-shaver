@@ -103,3 +103,17 @@ test("a summary fork's answer becomes blocks and usage", () => {
   assert.deepEqual(out.content, [{ type: 'text', text: 'the record' }])
   assert.deepEqual(out.usage, { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, output_tokens: 20 })
 })
+
+test('a stream is held from its finish, and text added is more of the reply', () => {
+  const chunk = (choices: unknown[], extra = {}) => `data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'm', choices, ...extra })}\n\n`
+  const wire = chunk([{ index: 0, delta: { content: 'done' }, finish_reason: null }]) + chunk([{ index: 0, delta: {}, finish_reason: 'stop' }]) + chunk([], { usage: { prompt_tokens: 5 } }) + 'data: [DONE]\n\n'
+  let out = ''
+  const held = CHAT.holdClose((s) => (out += s))
+  for (let i = 0; i < wire.length; i += 7) held.push(Buffer.from(wire.slice(i, i + 7)))
+  assert.equal(out, wire.slice(0, wire.indexOf('data: ', 1)))
+  assert.equal(held.ended, true)
+  assert.equal(out + held.add('answer') + held.rest(), chunk([{ index: 0, delta: { content: 'done' }, finish_reason: null }]) + chunk([{ index: 0, delta: { content: '\n\nanswer' }, finish_reason: null }]) + wire.slice(wire.indexOf('data: ', 1)))
+  const calling = CHAT.holdClose(() => {})
+  calling.push(Buffer.from(wire.replace('"stop"', '"tool_calls"')))
+  assert.equal(calling.ended, false)
+})

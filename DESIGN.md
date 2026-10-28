@@ -572,13 +572,16 @@ Scripts:
   suggestion puts its breakpoint on the last reply, and when that reply is the
   proxy's, stripping it would leave the suggestion reading only the system
   prompt.
-  A command sent while the model works, which Claude Code adds to the turn
-  (in the tool results' message, or from 2.1.312 as a system message after it),
-  is taken out before the request goes on, so the model never sees it. The
-  proxy keeps it, in memory, until a streamed response ends the turn, and adds
-  the answer to that response as one more text block, before its close. That
-  block and the command are stripped from every later request too, and a `y`
-  or `n` after a mid-turn `:shaver optimize` answers it as usual.
+  A command sent while the model works is added to the turn by the harness:
+  Claude Code wraps it in the tool results' message, or from 2.1.312 sends it
+  as a system message after them; Codex and OpenCode send it as a plain user
+  message after a tool result. It is taken out before the request goes on, so
+  the model never sees it. The proxy keeps it, in memory, until a streamed
+  response ends the turn, and adds the answer to that response before its
+  close: one more text block on Messages, more of the reply's text on Chat
+  Completions, and one more message item on Responses. The answer and the
+  command are stripped from every later request too, and a `y` or `n` after a
+  mid-turn `:shaver optimize` answers it as usual.
   `:shaver policy` shows the policy file the same way, as it is on disk now.
   `:shaver info all` adds up the costs of every conversation with a journal
   (`src/totals.ts`), replaying each as its own `:shaver info` does, then one
