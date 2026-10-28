@@ -309,8 +309,10 @@ rules first, then the core tools (Bash, Edit, Read, Write) kept and `*`
 deferring the rest. A policy that already has a `*` rule is left as it is, so
 nothing is offered. It names the tools that would newly
 be deferred and the tokens deferring them saves, measured as for the skill
-lines: the base sent with the old rules and with the new. One `y` applies both
-the lines and the rules, writing `tool_list` in place of `tools_not_deferred`.
+lines: the base sent with the old rules and with the new. It asks which to
+defer after the skills are answered; deferring all writes those rules, some
+adds a deferring rule for each, and either writes `tool_list` in place of
+`tools_not_deferred`.
 With tool search off it says how to turn it on. On Codex it says shaver can't
 defer tools there yet; `toolOffer` in `src/server.ts` is where that goes.
 
@@ -344,15 +346,18 @@ is taken at its later entry. "Analyzing skills..." streams first, then the
 tokens the skill list adds, then the tokens the lines save and the lines as a
 table: the base is sent with the old lines and with the new, each with a short
 question after it, and the difference of their prompt tokens, as the API's
-usage reports them, is the saving. Then it asks whether to apply them. A `y`
-or `n` as the next prompt is the answer, a command like the others. `y` puts the lines first in `skill_list`, in memory and in the policy
-file, and every session gets them from its next request. The file is read
+usage reports them, is the saving. The skills and the tools are numbered, and
+each list ends asking which to change: `all`, `none`, or numbers like `1 3 5`
+as the next prompt is the answer, a command like the others, and a number out
+of range asks again. The skills picked get their lines first in `skill_list`
+(the others keep any line they had), in memory and in the policy file, and
+every session gets them from its next request. The file is read
 again, and only its top-level `skill_list` value is rewritten, so edits by hand
 elsewhere in it stay as they were. Probes found 6-word lines made the model
 pick the right skill more often than the full descriptions, at about a tenth of
 their tokens. Its requests' cost counts against the skill list's saving. A
-session's stats start again only with a new conversation, so `y` asks for
-`/clear` in every active session on the machine.
+session's stats start again only with a new conversation, so a change asks
+for `/clear` in every active session on the machine.
 
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens
@@ -615,7 +620,7 @@ Scripts:
   response ends the turn, and adds the answer to that response before its
   close: one more text block on Messages, more of the reply's text on Chat
   Completions, and one more message item on Responses. The answer and the
-  command are stripped from every later request too, and a `y` or `n` after a
+  command are stripped from every later request too, and an answer after a
   mid-turn `:shaver optimize` answers it as usual.
   `:shaver policy` shows the policy file the same way, as it is on disk now.
   `:shaver info all` adds up the costs of every conversation with a journal

@@ -176,8 +176,8 @@ export function linesOf(answer: string, skills: readonly Skill[]): Record<string
 }
 
 // The rules with written lines: one stub for each line, ahead of the rest, in
-// place of any lines written before.
-export const withLines = (rules: readonly SkillRule[], skills: readonly Skill[], lines: Record<string, string>): SkillRule[] => [
+// place of any lines written before but those for the skills in `keep`.
+export const withLines = (rules: readonly SkillRule[], skills: readonly Skill[], lines: Record<string, string>, keep: ReadonlySet<string> = new Set()): SkillRule[] => [
   ...skills.filter((s) => lines[s.name]).map((s) => ({ match: s.name, action: 'stub' as const, text: lines[s.name], replaces: descriptionHash(s.description) })),
-  ...rules.filter((r) => r.text === undefined),
+  ...rules.filter((r) => r.text === undefined || keep.has(r.match)),
 ]

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answeredMidTurn, closeHeld, commandOf, midTurnCommands, pendingCommand, reply, stripCommands, textBlock, withoutPending, wordsOf } from '../src/command.ts'
+import { answeredMidTurn, closeHeld, commandOf, midTurnCommands, pendingCommand, PICK, reply, stripCommands, textBlock, withoutPending, wordsOf } from '../src/command.ts'
 import { CHAT } from '../src/chat.ts'
 import { MESSAGES } from '../src/messages.ts'
 import { wholeReply } from '../src/protocol.ts'
@@ -129,14 +129,21 @@ test('a command the model answered with a tool call stays', () => {
   assert.deepEqual(stripCommands(msgs), msgs)
 })
 
-test("y or n is a command only as the answer to `:shaver optimize`'s reply", () => {
-  const offered = [user('a'), assistant('A'), user(':shaver optimize'), system('note'), assistant('Apply? y or n')]
-  assert.equal(pendingCommand([...offered, user(' Y ')]), ':shaver optimize yes')
-  assert.equal(pendingCommand([...offered, user('no'), system('note')]), ':shaver optimize no')
-  assert.equal(pendingCommand([user(':shaver info'), assistant('stats'), user('y')]), undefined)
-  assert.equal(pendingCommand([user('a'), assistant('A'), user('y')]), undefined)
-  // Answered, the answer and its reply go with the command and its reply.
-  assert.deepEqual(stripCommands([...offered, user('y'), assistant('wrote'), user('next')]), [user('a'), assistant('A'), user('next'), system('note')])
+const asked = `Which skills should I trim?\n${PICK}`
+
+test('all, none or numbers are a command only as the answer to a reply asking which to change', () => {
+  const offered = [user('a'), assistant('A'), user(':shaver optimize'), system('note'), assistant(asked)]
+  assert.equal(pendingCommand([...offered, user(' ALL ')]), ':shaver optimize all')
+  assert.equal(pendingCommand([...offered, user('none'), system('note')]), ':shaver optimize none')
+  assert.equal(pendingCommand([...offered, user('1 3,5')]), ':shaver optimize 1 3 5')
+  assert.equal(pendingCommand([...offered, user('1 and 3')]), undefined)
+  assert.equal(pendingCommand([user(':shaver info'), assistant('stats'), user('all')]), undefined)
+  assert.equal(pendingCommand([user('a'), assistant('A'), user('2')]), undefined)
+  // An answer's reply can ask again, and the next answer is one too.
+  const again = [...offered, user('2'), assistant(`Modified 1 skill.\n\nWhich tools should I defer?\n${PICK}`)]
+  assert.equal(pendingCommand([...again, user('none')]), ':shaver optimize none')
+  // Answered, the answers and their replies go with the command and its reply.
+  assert.deepEqual(stripCommands([...again, user('none'), assistant('wrote'), user('next')]), [user('a'), assistant('A'), user('next'), system('note')])
 })
 
 // As Claude Code adds a message sent while the model works.
@@ -174,11 +181,11 @@ test('a command sent mid-turn as a system message waits, and the message goes', 
   assert.deepEqual(stripCommands([user('a'), call, tools, asked]), [user('a'), call, tools, asked])
 })
 
-test("y or n answers `:shaver optimize` sent mid-turn once the turn ends with its answer", () => {
-  const ended = { role: 'assistant', content: [{ type: 'text', text: 'done' }, { type: 'text', text: answeredMidTurn(':shaver optimize') + 'Apply? y or n' }] }
+test("an answer answers `:shaver optimize` sent mid-turn once the turn ends with its reply", () => {
+  const ended = { role: 'assistant', content: [{ type: 'text', text: 'done' }, { type: 'text', text: answeredMidTurn(':shaver optimize') + asked }] }
   const before = [user('a'), call, { role: 'user', content: [result, midTurn('shaver optimize')] }, ended]
-  assert.equal(pendingCommand([...before, user('y')]), ':shaver optimize yes')
-  assert.deepEqual(stripCommands([...before, user('y'), assistant('wrote'), user('next')]), [user('a'), call, { role: 'user', content: [result] }, assistant('done'), user('next')])
+  assert.equal(pendingCommand([...before, user('all')]), ':shaver optimize all')
+  assert.deepEqual(stripCommands([...before, user('all'), assistant('wrote'), user('next')]), [user('a'), call, { role: 'user', content: [result] }, assistant('done'), user('next')])
 })
 
 test('a command right after tool results was sent mid-turn by Codex or OpenCode, unless a tool was interrupted', () => {
@@ -199,11 +206,11 @@ test('a command right after tool results was sent mid-turn by Codex or OpenCode,
   assert.equal(pendingCommand([user('a'), assistant('done'), sent]), ':shaver info')
 })
 
-test("an answer added to the model's text is cut from it, and y still answers `:shaver optimize`", () => {
+test("an answer added to the model's text is cut from it, and a pick still answers `:shaver optimize`", () => {
   const tools = { role: 'user', content: [result] }
-  const ended = { role: 'assistant', content: [{ type: 'text', text: 'done\n\n' + answeredMidTurn(':shaver optimize') + 'Apply? y or n' }] }
+  const ended = { role: 'assistant', content: [{ type: 'text', text: 'done\n\n' + answeredMidTurn(':shaver optimize') + asked }] }
   const before = [user('a'), call, tools, user('shaver optimize'), ended]
-  assert.equal(pendingCommand([...before, user('y')]), ':shaver optimize yes')
+  assert.equal(pendingCommand([...before, user('1')]), ':shaver optimize 1')
   assert.deepEqual(stripCommands([...before, user('next')]), [user('a'), call, tools, assistant('done'), user('next')])
 })
 

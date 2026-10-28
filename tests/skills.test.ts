@@ -136,4 +136,6 @@ test('written lines go ahead of the other rules, in place of lines written befor
   const rules: SkillRule[] = [{ match: 'claude-api', action: 'stub', text: 'old', replaces: 'x' }, { match: 'artifact-*', action: 'drop' }]
   const out = withLines(rules, skills, { init: 'Set up project memory' })
   assert.deepEqual(out, [{ match: 'init', action: 'stub', text: 'Set up project memory', replaces: descriptionHash(skills[0].description) }, { match: 'artifact-*', action: 'drop' }])
+  // A skill in `keep`, not picked this time, keeps its line.
+  assert.deepEqual(withLines(rules, skills, { init: 'Set up project memory' }, new Set(['claude-api'])).slice(1), rules)
 })

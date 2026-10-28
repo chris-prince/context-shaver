@@ -1,6 +1,6 @@
 // `:shaver info`, `:shaver info all`, `:shaver policy` and `:shaver optimize`,
 // typed as a prompt, are answered by the proxy and never reach the model, nor
-// does the `y` or `n` answering `:shaver optimize`'s reply. Claude Code keeps the command and the proxy's
+// does the answer to a question `:shaver optimize` asks. Claude Code keeps the command and the proxy's
 // reply in its history and sends them again with every
 // later request, so the proxy strips each command, the system messages after
 // it and the reply from every request it forwards. Dropping them leaves what
@@ -29,8 +29,14 @@ import { holding, wholeReply, type Held, type Replying } from './protocol.ts'
 
 export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize', ':shaver probe-codex-tool-search']
 
-// The answers to `:shaver optimize`, as the commands they are.
-const ANSWERS: Record<string, string> = { y: ':shaver optimize yes', yes: ':shaver optimize yes', n: ':shaver optimize no', no: ':shaver optimize no' }
+// How `:shaver optimize`'s replies end when they ask which items to change.
+export const PICK = "Type 'all', 'none', or a specific list (like '1 3 5')."
+
+// An answer to PICK, as the command it is: `all`, `none`, or item numbers.
+function answerOf(text: string): string | undefined {
+  if (/^(?:all|none)$/i.test(text)) return `:shaver optimize ${text.toLowerCase()}`
+  if (/^\d+(?:[\s,]+\d+)*$/.test(text)) return `:shaver optimize ${text.split(/[\s,]+/).map(Number).join(' ')}`
+}
 
 type Block = { type: string; text?: string; content?: unknown; cache_control?: unknown }
 type Msg = { role: string; content: string | Block[] }
@@ -70,13 +76,13 @@ export function wordsOf(text: string): string[] | undefined {
 // The command a message is, if any: a user message whose only text, besides
 // tagged blocks, is one. The colon is optional, and space may follow it, so
 // `shaver info` and `: shaver info` count; the words after `shaver` are split
-// by `wordsOf`. After `:shaver optimize`'s reply (`offered`), `y`, `yes`, `n` or
-// `no` is one too.
+// by `wordsOf`. After a reply asking PICK (`offered`), an answer to it is one
+// too.
 export function commandOf(m: Msg, offered = false): string | undefined {
   const text = promptOf(m)
   if (text === undefined) return undefined
   const words = /^:?\s*shaver(?:\s|$)/.test(text) ? wordsOf(text.replace(/^:?\s*shaver/, '')) : undefined
-  return COMMANDS.find((c) => words?.join('\0') === c.split(' ').slice(1).join('\0')) ?? (offered ? ANSWERS[text.toLowerCase()] : undefined)
+  return COMMANDS.find((c) => words?.join('\0') === c.split(' ').slice(1).join('\0')) ?? (offered ? answerOf(text) : undefined)
 }
 
 const MID_TURN = /^The user sent a new message while you were working:\n([\s\S]*)\n\nThis is how Claude Code surfaces messages the user sends mid-turn\b/
@@ -132,16 +138,14 @@ function withoutMidTurn<M extends Msg>(m: M): { m?: M; control?: unknown } {
   return { m: kept.length ? { ...m, content: kept } : undefined, control: blocks.find((b) => gone(b) && b.cache_control !== undefined)?.cache_control }
 }
 
-// Whether `msgs[i]` comes right after `:shaver optimize` and its reply, the
-// system messages aside, or after a turn that ended with its answer.
+// Whether `msgs[i]` comes right after a reply that ends asking PICK, the system
+// messages aside: `:shaver optimize`'s, an answer's, or a turn's that ended
+// with one of those.
 function offeredAt(msgs: Msg[], i: number): boolean {
   const r = msgs.findLastIndex((m, j) => j < i && m.role !== 'system')
-  const c = msgs.findLastIndex((m, j) => j < r && m.role !== 'system')
   if (r < 0 || msgs[r].role !== 'assistant') return false
-  const last = Array.isArray(msgs[r].content) ? (msgs[r].content as Block[]).at(-1) : undefined
-  const said = last?.type === 'text' ? (last.text ?? '') : ''
-  const answer = answeredMidTurn(':shaver optimize')
-  return (c >= 0 && commandOf(msgs[c]) === ':shaver optimize') || said.startsWith(answer) || said.includes('\n\n' + answer)
+  const last = blocksOf(msgs[r]).at(-1)
+  return last?.type === 'text' && (last.text ?? '').trimEnd().endsWith(PICK)
 }
 
 // The command a request asks for: its last message but for the system messages
