@@ -949,8 +949,7 @@ async function skillsStage(proto: Protocol, h: Harness | undefined, key: string,
     const line = lineOf(s, policy.skill_list ?? [])
     if (line !== undefined) current[s.name] = line
   }
-  const skills = shown.filter((s) => current[s.name] === undefined)
-  const generated = skills.length ? await linesFor(proto, h, key, body, render, target, headers, say, old, measure, skills) : {}
+  const generated = await linesFor(proto, h, key, body, render, target, headers, say, old, measure, shown, shown.filter((s) => current[s.name] === undefined))
   if (typeof generated === 'string') return none(generated)
   const lines = { ...current, ...generated }
   const lined = shown.filter((s) => lines[s.name])
@@ -974,12 +973,13 @@ async function skillsStage(proto: Protocol, h: Harness | undefined, key: string,
 }
 
 // Lines for `skills` from the session's model, or why there are none, saying
-// what it is doing while it waits.
-async function linesFor(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>, skills: Skill[]): Promise<Record<string, string> | string> {
+// what it is doing while it waits. The count and tokens it reports are for
+// every skill in the table, `shown`, trimmed or not.
+async function linesFor(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>, shown: Skill[], skills: Skill[]): Promise<Record<string, string> | string> {
   say('Analyzing skills...\n\n')
   // The lines are asked for while the skills' own tokens are measured: the
   // base as sent, and without those skills' entries.
-  const without = measure([...skills.map((s) => ({ match: s.name, action: 'drop' as const })), ...(sessionRules(key, body) ?? [])])
+  const without = measure([...shown.map((s) => ({ match: s.name, action: 'drop' as const })), ...(sessionRules(key, body) ?? [])])
   const asked = (async (): Promise<Record<string, string> | string> => {
     let lines: Record<string, string> = {}
     // A model's answer can leave skills out, so those are asked for once more.
@@ -999,8 +999,8 @@ async function linesFor(proto: Protocol, h: Harness | undefined, key: string, bo
   })()
   const n = (x: number) => x.toLocaleString('en-US')
   const own = await Promise.all([old(), without]).then(([o, w]) => o.tokens - w.tokens, () => undefined)
-  const are = skills.length === 1 ? 'is' : 'are'
-  say(`${countOf(skills.length, 'skill')} ${own === undefined ? `${are} listed` : `add ${n(own)} tokens on every request`}. Optimizing...\n\n`)
+  const are = shown.length === 1 ? 'is' : 'are'
+  say(`${countOf(shown.length, 'skill')} ${own === undefined ? `${are} listed` : `add ${n(own)} tokens on every request`}. Optimizing...\n\n`)
   return asked
 }
 
