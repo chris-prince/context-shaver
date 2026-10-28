@@ -632,7 +632,9 @@ async function answerOf(command: string, proto: Protocol, h: Harness | undefined
     probeHeaders['content-type'] = 'application/json'
     probeHeaders.accept = 'application/json'
     const result = await probeCodexToolSearch({ target, headers: probeHeaders, model: body.model })
-    return 'Codex tool-search probe:\n```json\n' + JSON.stringify(result, null, 2) + '\n```'
+    const upstream = new URL(target)
+    const report = { model: body.model, upstream: upstream.origin + upstream.pathname, ...result }
+    return 'Codex tool-search probe:\n```json\n' + JSON.stringify(report, null, 2) + '\n```'
   }
   if (command === ':shaver policy') return policyText()
   if (command === ':shaver info all') return '```\n' + totals(stateDir, ttlMs) + '\n```'
