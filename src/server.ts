@@ -403,15 +403,19 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
     let data: any
     try { data = JSON.parse(text) } catch {
       // Codex's Responses backend requires streaming. Read its terminal event
-      // into the same shape as a non-streaming Responses object.
+      // into the same shape as a non-streaming Responses object; its output can
+      // be empty with the items sent only as their own events.
+      const items: unknown[] = []
       for (const line of text.split(/\r?\n/)) {
         if (!line.startsWith('data: ')) continue
         try {
           const event = JSON.parse(line.slice(6))
           if (event.type === 'response.completed' || event.type === 'response.failed' || event.type === 'response.incomplete') data = event.response
+          else if (event.type === 'response.output_item.done') items.push(event.item)
           else if (event.type === 'error') data = { error: event.error }
         } catch { /* ignore non-JSON SSE data */ }
       }
+      if (data && !data.output?.length && items.length) data.output = items
     }
     if (data?.usage) {
       const u = data.usage
