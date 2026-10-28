@@ -8,7 +8,7 @@
 
 import type { IncomingHttpHeaders } from 'node:http'
 import { CLAUDE_CODE, type Conventions } from './items.ts'
-import { hash } from './log.ts'
+import { CODEX_HEADINGS, hash } from './log.ts'
 import type { Canonical } from './protocol.ts'
 
 export type Harness = {
@@ -54,17 +54,7 @@ const CODEX: Harness = {
     kinds: {},
     stubbedInputs: {},
     shell: '',
-    promptHeadings: [
-      ['', 'system-prompt'],
-      ['<skills_instructions>', 'skills'],
-      ['<permissions instructions>', 'permissions'],
-      ['<collaboration_mode>', 'collaboration-mode'],
-      ['<recommended_plugins>', 'plugins'],
-      ['<multi_agent_role>', 'multi-agent'],
-      ['<multi_agent_mode>', 'multi-agent'],
-      ['# AGENTS.md instructions', 'agents-md'],
-      ['<environment_context>', 'other'],
-    ],
+    promptHeadings: [['', 'system-prompt'], ...CODEX_HEADINGS],
   },
   defers: false,
   // In 265 journaled requests to 2026-10-24, the 3 that left out the last

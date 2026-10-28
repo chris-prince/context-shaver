@@ -58,7 +58,7 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
   const injected = preamble ? 'system' : 'harness'
   const content = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content
   for (const b of content) {
-    const k = m.role === 'system' || isReminder(b) ? injected : kindOf(b, m.role)
+    const k = isCompaction(b) ? 'harness' : m.role === 'system' || isReminder(b) ? injected : kindOf(b, m.role)
     if (k === 'system' && b.type === 'text') for (const [s, n] of sections(b)) add(s, n)
     else add(k === 'system' && b.type === 'tool_addition' ? 'system:tools-deferred' : k, JSON.stringify(b).length)
   }
@@ -69,9 +69,27 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
   return { kinds: out, ...(typeof id === 'string' ? { lineage: `${m.role}:${id}` } : {}) }
 }
 
-// The headings Claude Code starts each part of the preamble with, as regex
-// sources, and the section each starts. The memory index comes inside the
-// instructions reminder, after the rules files.
+// The user messages Codex makes before the first prompt (responses.ts).
+export const CODEX_PREAMBLE = ['<environment_context>', '# AGENTS.md instructions']
+
+// The headings Codex starts its developer and preamble messages with, as
+// regex sources, and the section each starts. They lead its input, as its
+// system (harness.ts), until a compaction; after one they follow the first
+// prompt, as messages.
+export const CODEX_HEADINGS: Array<[string, string]> = [
+  ['<skills_instructions>', 'skills'],
+  ['<permissions instructions>', 'permissions'],
+  ['<collaboration_mode>', 'collaboration-mode'],
+  ['<recommended_plugins>', 'plugins'],
+  ['<multi_agent_role>', 'multi-agent'],
+  ['<multi_agent_mode>', 'multi-agent'],
+  ['# AGENTS.md instructions', 'agents-md'],
+  ['<environment_context>', 'other'],
+]
+
+// The headings Claude Code starts each part of the preamble with, and Codex's,
+// as regex sources, and the section each starts. The memory index comes
+// inside the instructions reminder, after the rules files.
 const HEADINGS: Array<[string, string]> = [
   ['The following skills are available', 'skills'],
   ['Available agent types', 'agent-types'],
@@ -84,6 +102,7 @@ const HEADINGS: Array<[string, string]> = [
   ['You are powered by the model', 'other'],
   ['While bypass permissions', 'other'],
   ["Today's date is", 'other'],
+  ...CODEX_HEADINGS,
 ]
 
 // A preamble text block's bytes by section. A section runs from its heading,
@@ -122,7 +141,11 @@ export function preambleEnd(msgs: readonly ApiMsg[]): number {
   return end < 0 ? msgs.length : end
 }
 
-const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('<system-reminder>')
+// Text the harness put in a user message: Claude Code's reminders, and Codex's
+// preamble messages, which after a compaction come as user messages.
+const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && ['<system-reminder>', ...CODEX_PREAMBLE].some((p) => (b.text as string).startsWith(p))
+// Codex's compaction item, which holds the history before it: conversation, not base.
+const isCompaction = (b: Block) => b.type === 'item' && (b.item as { type?: string } | undefined)?.type === 'compaction'
 
 function kindOf(b: Block, role: string): string {
   switch (b.type) {

@@ -6,6 +6,16 @@ import path from 'node:path'
 import { kinds, receivedOf, withReceivedDelta, writeDefs } from '../src/log.ts'
 import type { ApiMsg } from '../src/items.ts'
 
+test("after a Codex compaction, its preamble messages are base by section and the compaction is not", () => {
+  const dev: ApiMsg = { role: 'system', content: [{ type: 'text', text: '<skills_instructions>\n## Skills\n- a: b\n</skills_instructions>' }] }
+  const env: ApiMsg = { role: 'user', content: [{ type: 'text', text: '<environment_context>\n  <cwd>/w</cwd>\n</environment_context>' }] }
+  const compaction: ApiMsg = { role: 'system', content: [{ type: 'item', item: { type: 'compaction', encrypted_content: 'e' } }] }
+  assert.deepEqual(Object.keys(kinds(JSON.stringify(dev), dev, true).kinds), ['system:skills'])
+  // A user message's envelope stays user, as with Claude Code's reminders.
+  assert.deepEqual(Object.keys(kinds(JSON.stringify(env), env, true).kinds), ['system:other', 'user'])
+  assert.deepEqual(Object.keys(kinds(JSON.stringify(compaction), compaction, true).kinds), ['harness'])
+})
+
 test('injected content is system in the preamble and harness after it; the prompt is user', () => {
   const reminder = { type: 'text', text: '<system-reminder>\nCLAUDE.md\n</system-reminder>' }
   const m: ApiMsg = { role: 'user', content: [reminder, { type: 'text', text: 'hello' }] }

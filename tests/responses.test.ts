@@ -40,6 +40,18 @@ test('a head part the core changed is sent with its new text, every other item a
   assert.equal(head.content[1].text, 'old list')
 })
 
+test('after a compaction, a message part the core changed is sent with its new text, every other item as it came', () => {
+  // Codex keeps the first prompt, then sends the compaction and its developer messages.
+  const dev = { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'keep' }, { type: 'input_text', text: 'old list' }] }
+  const w = { ...wire, input: [wire.input[3], { type: 'compaction', id: 'cmp_1', encrypted_content: 'e' }, dev, wire.input[2], ...wire.input.slice(4)] }
+  const c = canonical(w)
+  const m = c.body.messages.find((x) => x.role === 'system' && JSON.stringify(x).includes('old list'))!
+  m.content = (m.content as Block[]).map((b) => (b.text === 'old list' ? { ...b, text: 'new list' } : b))
+  const sent = c.render(c.body) as typeof w
+  assert.deepEqual(sent.input[2], { ...dev, content: [dev.content[0], { type: 'input_text', text: 'new list' }] })
+  assert.equal(JSON.stringify({ ...sent, input: sent.input.filter((_, i) => i !== 2) }), JSON.stringify({ ...w, input: w.input.filter((_, i) => i !== 2) }))
+})
+
 test('a request becomes the core shape', () => {
   const { body } = canonical(wire)
   assert.deepEqual(body.system, [

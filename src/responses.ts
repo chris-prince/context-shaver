@@ -13,7 +13,7 @@
 
 import type { Usage } from './cost.ts'
 import { blocks, type ApiMsg, type Block } from './items.ts'
-import { kinds, preambleEnd } from './log.ts'
+import { CODEX_PREAMBLE, kinds, preambleEnd } from './log.ts'
 import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Held, type Protocol, type Replying, type Wire } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
@@ -22,11 +22,9 @@ type Tool = { type?: string; name?: string; tools?: Tool[]; [k: string]: unknown
 
 const CALLS = new Set(['function_call', 'custom_tool_call'])
 const OUTPUTS = new Set(['function_call_output', 'custom_tool_call_output'])
-// The user messages Codex makes before the first prompt.
-const PREAMBLE = ['<environment_context>', '# AGENTS.md instructions']
 
 const textOf = (it: Item) => (it.content ?? []).map((p) => p.text ?? '').join('')
-const isHead = (it: Item) => it.type === 'additional_tools' || (it.type === 'message' && (it.role === 'developer' || it.role === 'system' || (it.role === 'user' && PREAMBLE.some((p) => textOf(it).startsWith(p)))))
+const isHead = (it: Item) => it.type === 'additional_tools' || (it.type === 'message' && (it.role === 'developer' || it.role === 'system' || (it.role === 'user' && CODEX_PREAMBLE.some((p) => textOf(it).startsWith(p)))))
 // The side of the conversation an item is on: an answer's, a prompt's or a
 // tool's output, or neither.
 const sideOf = (it: Item): ApiMsg['role'] | 'output' =>
@@ -62,6 +60,10 @@ export function canonical(wire: Record<string, unknown>): Wire {
   // item and the part it was; and each call and output by its call's ID, for
   // a block the core changed.
   const from = new WeakMap<object, Item[]>()
+  // The content each was made with: one given new content (a skill list
+  // shortened, skills.ts, which after a compaction is in a message) is sent
+  // as its blocks now are.
+  const made = new WeakMap<object, unknown>()
   const srcOf = new WeakMap<object, { item: Item; part?: Part }>()
   const byCall = new Map<string, Item>()
   const byResult = new Map<string, Item>()
@@ -80,6 +82,7 @@ export function canonical(wire: Record<string, unknown>): Wire {
     const run = rest.slice(i, j)
     const msg: ApiMsg = { role: side === 'output' ? 'user' : side, content: run.flatMap(blocksOf) }
     from.set(msg, run)
+    made.set(msg, msg.content)
     messages.push(msg)
     i = j
   }
@@ -99,7 +102,12 @@ export function canonical(wire: Record<string, unknown>): Wire {
   // it was; text it made (a record, summary.ts) is a message of its own.
   function renderMsg(m: ApiMsg): Item[] {
     const was = from.get(m)
-    if (was) return was
+    const old = made.get(m)
+    if (was && m.content === old) return was
+    // A message item given new text, part for part, keeps its other parts and fields.
+    const item = was?.length === 1 && was[0].type === 'message' ? was[0] : undefined
+    if (item && Array.isArray(m.content) && Array.isArray(old) && m.content.length === old.length)
+      return [{ ...item, content: m.content.map((b, k) => (b === old[k] ? item.content![k] : { ...item.content![k], text: String(b.text) })) }]
     const out: Item[] = []
     let open: { src?: Item; role: string; parts: Part[]; same: boolean } | undefined
     const close = () => {

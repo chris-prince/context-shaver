@@ -197,7 +197,11 @@ matches bytes. Chat Completions streams are asked for their usage
 request's input is a list of items: its leading developer messages, its tools
 item and Codex's environment and AGENTS.md messages are the system; an answer's
 reasoning, messages and tool calls are one assistant message, and a run of tool
-outputs one user message of tool results.
+outputs one user message of tool results. After a compaction Codex sends the
+first prompt first, then the compaction and those messages, so they are system
+messages, kept in their place: the stats read them by Codex's headings and
+count them as base, and the compaction as conversation, and a message the core
+changes (a skill list shortened) is sent with its new text.
 
 A client may hang up once its answer is complete, before the stream's last
 bytes: Codex does. That isn't an interruption, so the proxy keeps reading the
