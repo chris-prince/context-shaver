@@ -104,6 +104,16 @@ export function bornOf(s: Stats | undefined, m: ApiMsg): string | undefined {
   return (lineage && s?.seen['lineage:' + lineage]) || s?.seen[keyOf(m)]
 }
 
+// When the messages from `from` on were first sent: the first of them with a
+// date. One sent trimmed and with no lineage (an assistant message with its
+// thinking taken out) has none under its own key.
+export function bornFrom(s: Stats | undefined, msgs: readonly ApiMsg[], from: number): string | undefined {
+  for (let i = from; i < msgs.length; i++) {
+    const born = bornOf(s, msgs[i])
+    if (born) return born
+  }
+}
+
 // The tools a message's tool results load by tool_reference.
 function referenced(m: ApiMsg): string[] {
   const out: string[] = []

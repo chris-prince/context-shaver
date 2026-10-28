@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Stats } from '../src/stats.ts'
+import { bornFrom, bornOf, describe, estimate, isSuggestion, observe, render, settled, withoutSuggestion, type Stats } from '../src/stats.ts'
 import { clockOf, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -176,6 +176,16 @@ test('records show as their own type, each dated by the first message it covers'
   assert.match(out, /^ +summary /m)
   assert.doesNotMatch(out, /^ +assistant /m)
   assert.match(out, /^ +2 days ago .*\n +5 days ago /m)
+})
+
+test('a message sent trimmed, with no lineage, is dated by the first message after it with a date', () => {
+  const prompt: ApiMsg = { role: 'user', content: 'go' }
+  const reply: ApiMsg = { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm', signature: 's' }, { type: 'text', text: 'done' }] }
+  const next: ApiMsg = { role: 'user', content: 'more' }
+  // The reply went up without its thinking, so its own key was never seen.
+  const s = observe(undefined, describe(body([prompt, { ...reply, content: [reply.content[1]] }, next]), ends, '2026-10-08T10:00:00Z'), 1000, 0)
+  assert.equal(bornOf(s, reply), undefined)
+  assert.equal(bornFrom(s, [prompt, reply, next], 1), '2026-10-08T10:00:00Z')
 })
 
 test('settled leaves out what the frontier holds, and only that', () => {

@@ -28,7 +28,7 @@ import { keptWhole, LINE_WORDS, linesOf, linesPrompt, listMessage, shaveSkills, 
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, sessionOf, type Harness } from './harness.ts'
-import { bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
 import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -246,8 +246,8 @@ function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { ren
   if (h?.resends && lastPart && !described.parts.some((q) => q.key === lastPart)) described.compacted = true
   // Each record is dated by the first message it covers, the memoir by its first record's.
   const starts = startsOf(msgs, chain.slice(0, records))
-  described.parts.filter((q) => q.kinds.memoir).forEach((q) => (q.born = bornOf(latestOf(key), msgs[starts[0]])))
-  described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornOf(latestOf(key), msgs[starts[merged + k]])))
+  described.parts.filter((q) => q.kinds.memoir).forEach((q) => (q.born = bornFrom(latestOf(key), msgs, starts[0])))
+  described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornFrom(latestOf(key), msgs, starts[merged + k])))
   if (suggestion) described.suggestion = true
   const after = policy.summary_threshold_tokens && (model.summaryThreshold ?? policy.summary_threshold_tokens)
   // Whether to send a summary fork is known once the response's counts are in.
