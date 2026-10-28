@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { commandOf, pendingCommand, reply, stripCommands, withoutPending } from '../src/command.ts'
+import { commandOf, pendingCommand, reply, stripCommands, withoutPending, wordsOf } from '../src/command.ts'
 
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] })
 const system = (text: string) => ({ role: 'system', content: text })
@@ -14,6 +14,18 @@ test('a command is a user message whose only text is one', () => {
   assert.equal(commandOf(user(':shaver info please')), undefined)
   assert.equal(commandOf(user(':shaver other')), undefined)
   assert.equal(commandOf(assistant(':shaver info')), undefined)
+})
+
+test('the colon is optional and the words after shaver are split as a shell would', () => {
+  assert.equal(commandOf(user('shaver info')), ':shaver info')
+  assert.equal(commandOf(user(':\t shaver   info \n all')), ':shaver info all')
+  assert.equal(commandOf(user(`:shaver "info" 'all'`)), ':shaver info all')
+  assert.equal(commandOf(user(':shaver "info all"')), undefined)
+  assert.equal(commandOf(user(':shavers info')), undefined)
+  assert.equal(commandOf(user('the shaver info')), undefined)
+  assert.deepEqual(wordsOf(` a "b c" d'e f'g '' "it's"`), ['a', 'b c', 'de fg', '', "it's"])
+  assert.equal(wordsOf('a "b'), undefined)
+  assert.equal(wordsOf(`a'b`), undefined)
 })
 
 const firstPrompt = (text: string) => ({ role: 'user', content: [{ type: 'text', text: '<system-reminder>\nAGENTS.md\n</system-reminder>' }, { type: 'text', text: '<system-reminder>\ngit status\n</system-reminder>\n' }, { type: 'text', text }] })

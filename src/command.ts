@@ -44,13 +44,27 @@ function promptOf(m: Msg): string | undefined {
   return texts.length === 1 ? texts[0].trim() : undefined
 }
 
+// `text` split into words as a shell would: on whitespace, with a quoted run,
+// single or double, kept as part of one word. Undefined if a quote is left open.
+export function wordsOf(text: string): string[] | undefined {
+  const words: string[] = []
+  for (const m of text.matchAll(/(?:[^\s'"]+|'[^']*'|"[^"]*")+|(['"])/g)) {
+    if (m[1]) return undefined
+    words.push(m[0].replace(/'([^']*)'|"([^"]*)"/g, (_, single, double) => single ?? double))
+  }
+  return words
+}
+
 // The command a message is, if any: a user message whose only text, besides
-// tagged blocks, is one. `: shaver` counts as `:shaver`. After `:shaver
-// optimize`'s reply (`offered`), `y`, `yes`, `n` or `no` is one too.
+// tagged blocks, is one. The colon is optional, and space may follow it, so
+// `shaver info` and `: shaver info` count; the words after `shaver` are split
+// by `wordsOf`. After `:shaver optimize`'s reply (`offered`), `y`, `yes`, `n` or
+// `no` is one too.
 export function commandOf(m: Msg, offered = false): string | undefined {
   const text = promptOf(m)
   if (text === undefined) return undefined
-  return COMMANDS.find((c) => c === text.replace(/^: shaver/, ':shaver')) ?? (offered ? ANSWERS[text.toLowerCase()] : undefined)
+  const words = /^:?\s*shaver(?:\s|$)/.test(text) ? wordsOf(text.replace(/^:?\s*shaver/, '')) : undefined
+  return COMMANDS.find((c) => words?.join('\0') === c.split(' ').slice(1).join('\0')) ?? (offered ? ANSWERS[text.toLowerCase()] : undefined)
 }
 
 // Whether `msgs[i]` comes right after `:shaver optimize` and its reply, the
