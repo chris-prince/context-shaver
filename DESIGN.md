@@ -8,8 +8,8 @@ The details behind the [README](README.md).
 bin/claude-via-shaver [claude args ...]
 ```
 
-`bin/claude-via-shaver` starts the proxy if nothing is listening on its port (8787,
-or `SHAVER_PORT`), then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
+`bin/claude-via-shaver` starts the proxy if nothing is listening on its port,
+then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json` (see
 [Policy](#policy)), and with logging off; to log (see [Logs](#logs)), start the
@@ -37,6 +37,15 @@ this one, keeping its logging in the same way. Whether or not requests are
 logged, every 4xx or 5xx answer from the upstream goes to `proxy.log` with its
 body, so the upstream's own error text is on record.
 
+The port is 18787, or `SHAVER_PORT` if set; `bin/run-proxy`, every wrapper and
+`scripts/backfill-suggestions.ts` read it, so set it once (say in your shell
+profile) to move them all. When another program already has the port, the
+proxy and `bin/run-proxy` stop with "port N is in use by another program. Set
+SHAVER_PORT=NNNN to an available port number." `bin/run-proxy` takes something
+on the port that doesn't say it's a proxy, and doesn't stop when asked, to be
+another program. A session started on the old port keeps using it, so moving
+the port leaves running sessions on the old proxy until it stops.
+
 Claude Code cannot reach the API while the proxy is down, so a session started
 this way fails if the proxy is stopped.
 
@@ -44,7 +53,7 @@ To run the proxy by hand (Node 24 or newer runs the TypeScript directly):
 
 ```bash
 bin/node-wrapper src/server.ts [options]
-ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
+ANTHROPIC_BASE_URL=http://127.0.0.1:18787 claude
 ```
 
 It works with a claude.ai login as well as an API key: the proxy forwards the
@@ -68,7 +77,7 @@ Deleting `proxy-data/node` makes the next run install the newest 24.x.
 
 | Option | Default | |
 | --- | --- | --- |
-| `--port` | `8787` | Listens on 127.0.0.1 only |
+| `--port` | `18787` | Listens on 127.0.0.1 only. The scripts pass `SHAVER_PORT` here ([above](#running)) |
 | `--upstream` | `https://api.anthropic.com` | For requests that don't name one ([below](#when-the-model-is-already-proxied)) |
 | `--dir` | the repo's `proxy-data/` | Where `state/` and `logs/` go |
 | `--policy` | the repo's `policy.json` | The policy file to use (format documented below). If not specified, defaults to `policy.json` and if missing creates a local `policy.json` from `policy.default.json` |
@@ -79,7 +88,7 @@ Deleting `proxy-data/node` makes the next run install the newest 24.x.
 
 If `ANTHROPIC_BASE_URL` is already set when `claude-via-shaver` runs, say to a
 company gateway, context-shaver goes in front of it rather than replacing it.
-Claude Code's base URL becomes `http://127.0.0.1:8787/harness/claude/via/<upstream>`, the
+Claude Code's base URL becomes `http://127.0.0.1:18787/harness/claude/via/<upstream>`, the
 upstream's base URL percent-encoded as one path segment, and
 the proxy sends that session's requests there with the prefix stripped
 (`src/via.ts`). The upstream may be `http` or `https`, and may have a path of
@@ -234,7 +243,7 @@ compresses with zstd, sending them on uncompressed. To send every Codex
 session through the proxy, put the address in `~/.codex/config.toml` instead:
 
 ```toml
-openai_base_url = "http://127.0.0.1:8787/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
+openai_base_url = "http://127.0.0.1:18787/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex"
 ```
 
 ## Policy

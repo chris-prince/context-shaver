@@ -14,7 +14,7 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-port=${SHAVER_PORT:-8787}
+port=${SHAVER_PORT:-18787}
 action= log=() logset=
 for arg; do
   case $arg in
@@ -68,6 +68,11 @@ fi
 if [[ -n $action ]] && up; then
   stop
   for _ in $(seq 50); do up || break; sleep 0.1; done
+  # Something there that didn't say it's a proxy, and didn't stop, isn't one.
+  if up && [[ -z $info ]]; then
+    echo "run-proxy: port $port is in use by another program. Set SHAVER_PORT=NNNN to an available port number." >&2
+    exit 1
+  fi
   ! up || { echo "run-proxy: the proxy on port $port did not stop" >&2; exit 1; }
 fi
 [[ $action == --stop ]] && exit 0
@@ -77,5 +82,8 @@ if ! up; then
   "$repo/bin/node-wrapper" --nohup "$repo/proxy-data/proxy.log" \
     "$repo/src/server.ts" --port "$port" ${log[@]+"${log[@]}"}
   for _ in $(seq 50); do up && break; sleep 0.1; done
-  up || { echo "run-proxy: the proxy did not start; see $repo/proxy-data/proxy.log" >&2; exit 1; }
+  # The proxy's own reason, when it gave one (a port in use) as its last line;
+  # the log is appended to, so an earlier run's line doesn't count.
+  up || { echo "run-proxy: the proxy did not start; see $repo/proxy-data/proxy.log" >&2
+    tail -n 1 "$repo/proxy-data/proxy.log" | sed -n 's/^shaver: \(port .* in use .*\)/run-proxy: \1/p' >&2; exit 1; }
 fi

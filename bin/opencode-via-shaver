@@ -22,7 +22,7 @@ depth=${SHAVER_DEPTH:-0}
 export SHAVER_LAUNCHER_PID=$$ SHAVER_DEPTH=$((depth + 1))
 real=("${SHELL:-bash}" -lic 'opencode "$@"' opencode)
 "$bin/run-proxy"
-port=${SHAVER_PORT:-8787}
+port=${SHAVER_PORT:-18787}
 via() { printf '"%s":{"options":{"baseURL":"http://127.0.0.1:%s/harness/opencode/via/%s"}}' "$1" "$port" "$2"; }
 export OPENCODE_CONFIG_CONTENT="{\"provider\":{$(via openrouter https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1),$(via openai https%3A%2F%2Fapi.openai.com%2Fv1),$(via anthropic https%3A%2F%2Fapi.anthropic.com%2Fv1)}}"
 case ${1:-} in

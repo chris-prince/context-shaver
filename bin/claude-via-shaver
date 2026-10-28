@@ -59,7 +59,7 @@ encode() {
 }
 
 "$bin/run-proxy"
-port=${SHAVER_PORT:-8787} up=${ANTHROPIC_BASE_URL:-}
+port=${SHAVER_PORT:-18787} up=${ANTHROPIC_BASE_URL:-}
 up=${up%/}
 if [[ -z $up ]]; then
   ANTHROPIC_BASE_URL=http://127.0.0.1:$port/harness/claude

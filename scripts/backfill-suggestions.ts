@@ -100,7 +100,7 @@ if (import.meta.main) {
     console.error('usage: bin/node-wrapper scripts/backfill-suggestions.ts <key>…')
     process.exit(1)
   }
-  if (await fetch('http://127.0.0.1:8787/').then(() => true, () => false)) {
+  if (await fetch(`http://127.0.0.1:${process.env.SHAVER_PORT || 18787}/`).then(() => true, () => false)) {
     console.error('the proxy is running: stop it first (bin/run-proxy --stop)')
     process.exit(1)
   }

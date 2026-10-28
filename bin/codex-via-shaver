@@ -89,7 +89,7 @@ encode() {
 }
 
 "$bin/run-proxy"
-port=${SHAVER_PORT:-8787}
+port=${SHAVER_PORT:-18787}
 
 # Where the last -c/--config value for a key is in args, as the last wins in
 # Codex, or nothing. Each is "-c key=value", "--config key=value" or

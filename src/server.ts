@@ -41,7 +41,7 @@ const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
   allowNegative: true,
   options: {
-    port: { type: 'string', default: '8787' },
+    port: { type: 'string', default: '18787' },
     upstream: { type: 'string', default: 'https://api.anthropic.com' },
     dir: { type: 'string', default: path.resolve(import.meta.dirname, '..', 'proxy-data') },
     policy: { type: 'string', default: repoPolicy },
@@ -913,7 +913,15 @@ createServer((req, res) => {
       res.end(protocolOf((req.url ?? '/').replace(/^\/via\/[^/?#]*/, '')).error(502, `shaver proxy: ${err}`))
     } else res.end()
   })
+}).on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code !== 'EADDRINUSE') throw err
+  console.error(`shaver: ${inUse(a.port)}`)
+  process.exit(1)
 }).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
+
+function inUse(port: string) {
+  return `port ${port} is in use by another program. Set SHAVER_PORT=NNNN to an available port number.`
+}
 
 const abortedBy = (err: unknown) => err instanceof Error && err.name === 'AbortError'
 
