@@ -297,7 +297,7 @@ function policyText(): string {
   try {
     return '`' + a.policy + '`:\n```json\n' + readFileSync(a.policy, 'utf8').trimEnd() + '\n```'
   } catch {
-    return `shaver: no policy at ${a.policy}, so requests pass through untrimmed.`
+    return `Shaver is disabled, no policy found at ${a.policy}`
   }
 }
 
@@ -745,11 +745,13 @@ async function promptOf(proto: Protocol, key: string, body: Canonical, base: Rec
   return { tokens: usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0), usage }
 }
 
+const UNRETRIEVED = 'Shaver unable to retrieve skill details.'
+
 async function optimize(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void): Promise<string> {
   if (command !== ':shaver optimize') {
     const shown = proposal?.key === key ? proposal : undefined
     proposal = undefined
-    if (!shown) return 'shaver: no lines are waiting; `shaver optimize` writes them.'
+    if (!shown) return 'No changes to apply. Run `shaver optimize` again.'
     if (command === ':shaver optimize no') return 'Modified 0 skills in shaver policy file.'
     // From the file as it is now, so edits by hand since the proxy started stay.
     let text: string
@@ -772,8 +774,10 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
       `Please /clear all ${countOf(activeSessions(Date.now()), 'active session')} on this machine to make \`shaver info\` report skill savings correctly.`,
     ].join('\n')
   }
-  const skills = keptWhole(skillsOf(body), policy.skill_list ?? [])
-  if (!skills.length) return 'shaver: this request lists no skills the policy keeps whole, so there are no lines to write.'
+  const listed = skillsOf(body)
+  if (!listed.length) return 'No skills found in this session.'
+  const skills = keptWhole(listed, policy.skill_list ?? [])
+  if (!skills.length) return 'All skills are already trimmed in shaver policy file, no changes needed.'
   say('Analyzing skills...\n\n')
   // The lines are asked for while the skills' own tokens are measured: the
   // base as sent, and without those skills' entries.
@@ -791,7 +795,8 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
         const answer = proto.summaryForkAnswer(text).content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
         lines = { ...lines, ...linesOf(answer, ask) }
       } catch (err) {
-        return `shaver: asking ${body.model} for skill lines failed: ${err instanceof Error ? err.message : err}`
+        console.error('shaver: asking for skill lines failed:', err)
+        return UNRETRIEVED
       }
     }
     return lines
@@ -803,7 +808,8 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   const lines = await asked
   if (typeof lines === 'string') return lines
   const lined = skills.filter((s) => lines[s.name])
-  if (!lined.length) return 'shaver: the model wrote no usable lines; try `shaver optimize` again.'
+  // Only if both answers were no JSON object or had every line too long.
+  if (!lined.length) return UNRETRIEVED
   proposal = { key, skills, lines }
   const rules = withLines(policy.skill_list ?? [], skills, lines)
   const measured = await Promise.all([old, measure(rules)]).catch((err) => err as Error)
