@@ -32,9 +32,9 @@ Then each time you start your CLI, use the wrapper for it:
 ~/context-shaver/bin/opencode-via-shaver   # OpenCode
 ```
 
-Each wrapper makes sure the local proxy is running (on 127.0.0.1:8787), then
-runs your CLI with its model calls routed through the proxy, leaving the CLI's
-own config untouched. `claude-via-shaver` works with both claude.ai logins and
+Each wrapper makes sure the local proxy is running (on 127.0.0.1:18787, or
+`SHAVER_PORT` if set), then runs your CLI with its model calls routed through
+the proxy, leaving the CLI's own config untouched. `claude-via-shaver` works with both claude.ai logins and
 Claude API keys. If Codex or Claude Code calls are already proxied by a
 wrapper, context-shaver can be chained in front of that proxy (see DESIGN.md).
 
