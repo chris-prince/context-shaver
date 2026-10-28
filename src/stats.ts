@@ -299,7 +299,7 @@ function sharesOf(p: Stats['parts'][number], tokens: Record<string, number>): Ar
 // the conversation each kind's (log.ts, kinds), with `other` for the rest.
 // The summaries' type holds the records and memoir, and the parts records
 // replace (Sent.covers), so its saving is net of what carrying them costs.
-export const BASE = ['deferred-tools', 'skill-list']
+export const BASE = ['tools-deferred', 'skill-list']
 export const SUMMARIES = 'summary+memoir'
 const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages', summary: SUMMARIES, memoir: SUMMARIES }
 

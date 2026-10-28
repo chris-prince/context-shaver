@@ -92,7 +92,7 @@ test("past the compaction's limit the client compacts, keeping the base and some
   // The 2k deferred: written cold, then read with the base, after the
   // compaction too.
   const price = modelOf('claude-opus-5-5').price!
-  assert.ok(Math.abs(c.saved['deferred-tools'] - (2000 * 2 * price.input + 2 * 2000 * price.read) / 1e6) < 1e-12)
+  assert.ok(Math.abs(c.saved['tools-deferred'] - (2000 * 2 * price.input + 2 * 2000 * price.read) / 1e6) < 1e-12)
   assert.ok(Math.abs(c.context!.rest - (160_000 * 0.2 + 20_000)) < 1e-6)
   // The request after it reads the base and writes the rest.
   const w = without(lines[1].stats, lines[2].stats, lines[2].usage, HOUR, { rest: 160_000 * 0.2, client: 160_000, cached: 12_000 }, modelOf('claude-opus-5-5').compaction)
@@ -147,8 +147,8 @@ test('render shows the cost in the summary and the tokens in the details', () =>
 
 test('render splits the saving by type of trim', () => {
   const s = { ...at(2, 13_000, 9000), first: at(0, 0, 0).time, requests: 3, turns: 2, tokens: {}, bound: {}, answers: {}, seen: {}, parts: [], defs: { key: 'd', systemPrompt: 1, tools: 1 }, ends: { tools: 0, reasoning: 0 } } as Stats
-  const out = render(s, 'session', false, { without: 1, actual: 0.4, saved: { 'deferred-tools': 0.1, 'skill-list': 0.05, tools: 0.3, reasoning: 0.15, messages: 0.001 }, compactions: 0, waitMs: 0 })
-  assert.match(out, /\$0\.60 saved \(60%\)\n\n  Savings Breakdown\n    \$0\.10 \(10%\) base:deferred-tools\n    \$0\.05 \( 5%\) base:skill-list\n    \$0\.30 \(30%\) conv:tools\n    \$0\.15 \(15%\) conv:reasoning\n\n  Speedup\n/)
+  const out = render(s, 'session', false, { without: 1, actual: 0.4, saved: { 'tools-deferred': 0.1, 'skill-list': 0.05, tools: 0.3, reasoning: 0.15, messages: 0.001 }, compactions: 0, waitMs: 0 })
+  assert.match(out, /\$0\.60 saved \(60%\)\n\n  Savings Breakdown\n    \$0\.10 \(10%\) base:tools-deferred\n    \$0\.05 \( 5%\) base:skill-list\n    \$0\.30 \(30%\) conv:tools\n    \$0\.15 \(15%\) conv:reasoning\n\n  Speedup\n/)
 })
 
 test('a trim is charged its rewrite, and later savings are shared by what each type took out', () => {
@@ -193,7 +193,7 @@ test('a base shave is saved at the price the estimate paid for it', () => {
   const zero = { without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 }
   const c = add(zero, undefined, s, usage(0, 500, 4500), HOUR)!
   const price = modelOf('claude-opus-5-5').price!
-  assert.ok(Math.abs(c.saved['deferred-tools'] - (1000 * price.read) / 1e6) < 1e-12)
+  assert.ok(Math.abs(c.saved['tools-deferred'] - (1000 * price.read) / 1e6) < 1e-12)
   assert.ok(Math.abs(c.without - c.actual - Object.values(c.saved).reduce((a, b) => a + b, 0)) < 1e-12)
 })
 
