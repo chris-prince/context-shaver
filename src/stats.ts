@@ -18,6 +18,7 @@
 import { hash, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
 import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Conventions } from './items.ts'
 import type { Cost } from './cost.ts'
+import { modelOf } from './models.ts'
 
 export type Tool = { name?: string; defer_loading?: boolean }
 
@@ -407,7 +408,9 @@ export const money = (v: number) => (v.toFixed(2).startsWith('-') && Number(v.to
 // own compactions the shaver kept it from needing.
 export const costLines = (c: Cost, heading = 'Costs (session)') => [
   ...difference(heading, c.without, c.actual, money, ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
-  ...(Object.keys(c.saved).some((t) => t !== 'other') ? ['', '  Savings Breakdown', ...split(c)] : []),
+  '',
+  '  Savings Breakdown',
+  ...(split(c).length ? split(c) : ['    none yet']),
   '',
   '  Speedup',
   `    ${counted(Math.round(c.waitMs / 60_000), 'minute')} saved (by avoiding ${c.compactions} /autocompact)`,
@@ -422,6 +425,10 @@ function split(c: Cost): string[] {
   const width = Math.max(...types.map((t) => money(c.saved[t]).length))
   return types.map((t) => `    ${money(c.saved[t]).padStart(width)} (${String(percent(c.saved[t], c.without)).padStart(2)}%) ${BASE.includes(t) ? 'base' : 'conv'}:${t}`)
 }
+
+// With no price for the session's model there is no cost (cost.ts, add), so
+// the breakdown says why.
+const unpriced = (s: Stats, estimated: boolean) => (estimated || modelOf(s.model, s.provider).price ? [] : ['', 'Shaver Summary', '  Savings Breakdown', `    MISSING: Shaver lacks cost details for model ${s.model}.`])
 
 export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 
@@ -463,12 +470,12 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost)] : [])]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost)] : unpriced(s, estimated))]
   // The prompt as sent, then as it would be without the shaver, lined up.
   const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
   const requests = forks.applied + forks.pending + forks.dropped
   const fates = requests ? [`    ${Object.entries(forks).map(([fate, n]) => `${n} ${fate}`).join(', ')}`] : []
-  out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. If over 10k, shrink big items.")
+  out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.
   const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections)]
