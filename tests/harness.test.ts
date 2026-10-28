@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { conversationId, harnessOf, type Harness } from '../src/harness.ts'
+import { conversationId, harnessOf, sessionOf, type Harness } from '../src/harness.ts'
 import { canonical as chat } from '../src/chat.ts'
 import { canonical as responses } from '../src/responses.ts'
 import { withoutPending } from '../src/command.ts'
@@ -28,6 +28,21 @@ test("a Claude Code conversation's id is its session, agent and first message", 
   assert.match(conversationId(claude, 'messages', body('s1'), { 'x-claude-code-agent-id': 'a7' }), /^claude-s1-a7-/)
   assert.notEqual(conversationId(claude, 'messages', body('s2'), {}), main)
   assert.match(conversationId(claude, 'messages', { model: 'm', messages: msgs }, {}), /^claude-[0-9a-f]{8}$/)
+})
+
+test("a conversation's session is shared by its subagents and later first messages, and by nothing else", () => {
+  const claude = of('claude')
+  const body = (session: string, text = 'hi') => ({ model: 'm', messages: [{ role: 'user', content: text }], metadata: { user_id: JSON.stringify({ session_id: session }) } })
+  const id = (session: string, text?: string, agent?: string) => conversationId(claude, 'messages', body(session, text), agent ? { 'x-claude-code-agent-id': agent } : {})
+  const s = 'a1b2-c3d4'
+  assert.equal(sessionOf(id(s)), sessionOf(id(s, 'after /compact')))
+  assert.equal(sessionOf(id(s)), sessionOf(id(s, 'hi', 'a7')))
+  assert.notEqual(sessionOf(id(s)), sessionOf(id('a1b2-c3d5')))
+  const lone = conversationId(claude, 'messages', { model: 'm', messages: msgs }, {})
+  assert.equal(sessionOf(lone), lone)
+  const opencode = (session: string, text: string) => conversationId(of('opencode'), 'messages', { model: 'm', messages: [{ role: 'user', content: text }] }, { 'x-opencode-session-id': session })
+  assert.equal(sessionOf(opencode('ses_a', 'x')), sessionOf(opencode('ses_a', 'y')))
+  assert.notEqual(sessionOf(opencode('ses_a', 'x')), sessionOf(opencode('ses_b', 'x')))
 })
 
 test("each harness's session names its conversations, on any protocol", () => {

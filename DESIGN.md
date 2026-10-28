@@ -322,8 +322,8 @@ again, and only its top-level `skill_list` value is rewritten, so edits by hand
 elsewhere in it stay as they were. Probes found 6-word lines made the model
 pick the right skill more often than the full descriptions, at about a tenth of
 their tokens. Its requests' cost counts against the skill list's saving. A
-session's stats start again only with a new conversation, so `y` suggests
-`/clear`.
+session's stats start again only with a new conversation, so `y` asks for
+`/clear` in each active session: those with a request in the last day.
 
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens
