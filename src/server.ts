@@ -12,6 +12,7 @@
 // outweighs what it rewrites, priced against the cache entries the
 // conversation's requests left.
 
+import { execFileSync } from 'node:child_process'
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -60,6 +61,11 @@ const ttlMs = Number(a['cache-ttl-seconds']) * 1000
 const stateDir = path.join(a.dir, 'state')
 const logRoot = path.join(a.dir, LOG_DIR)
 mkdirSync(stateDir, { recursive: true })
+// The commit this proxy started from, for bin/run-proxy to tell whether the
+// checkout has moved on since; empty outside a git checkout.
+const commit = (() => {
+  try { return execFileSync('git', ['-C', import.meta.dirname, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return '' }
+})()
 
 // A conversation's applied clock; the cache entries its answered requests
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
@@ -463,9 +469,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return void res.end('stopping\n', () => process.exit(0))
   }
   // bin/run-proxy asks this to tell whether the proxy on its port runs from its
-  // repo; one from elsewhere, or older than this, is restarted, keeping logging.
+  // repo (one from elsewhere is restarted, keeping logging) and from its commit.
   if (req.method === 'GET' && url === '/shaver/procinfo' && req.headers['x-shaver'] === 'procinfo') {
-    return void res.end(`shaver repo: ${path.resolve(import.meta.dirname, '..')}\nshaver logging: ${a['log-step-events'] ? 'on' : 'off'}\n`)
+    return void res.end(`shaver repo: ${path.resolve(import.meta.dirname, '..')}\nshaver commit: ${commit}\nshaver logging: ${a['log-step-events'] ? 'on' : 'off'}\n`)
   }
   // A WebSocket a client tries first (Codex's and OpenCode's OpenAI providers)
   // is refused with 426, which sends it straight to HTTP: Codex retried a

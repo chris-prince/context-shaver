@@ -27,13 +27,16 @@ Sessions running through it carry on with their next request. The new proxy
 keeps the old one's logging; pass `--log` or `--no-log` to choose. To stop it,
 run `bin/run-proxy --stop`. `bin/run-proxy --update` fast-forwards the repo to
 its upstream (fetch, then `merge --ff-only`, so no `pull.*` setting applies)
-and restarts the proxy the same way, but only if that brought in new commits.
-If the repo has local changes in the way or has diverged, it stops with git's
-error and leaves the proxy running.
+and restarts the proxy the same way, but only if the proxy then runs a
+different commit from the checkout. If the repo has local changes in the way or
+has diverged, it stops with git's error and leaves the proxy running.
 
 `bin/run-proxy`, and so each wrapper, asks a proxy already on the port which
-repo it runs from. One from another repo is restarted from this one, keeping
-its logging in the same way. Whether or not requests are
+repo and commit it runs from. One from another repo is restarted from this one,
+keeping its logging in the same way. One from this repo at another commit (a
+pull without `--update`, say) is left running, since a restart would cut off a
+reply another session is streaming, with a notice to run `--restart` or
+`--update`. Uncommitted edits don't count. Whether or not requests are
 logged, every 4xx or 5xx answer from the upstream goes to `proxy.log` with its
 body, so the upstream's own error text is on record.
 

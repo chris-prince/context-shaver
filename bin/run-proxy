@@ -32,7 +32,7 @@ if [[ $action == --update ]]; then
   before=$(git -C "$repo" rev-parse HEAD)
   git -C "$repo" fetch --quiet
   git -C "$repo" merge --ff-only --quiet '@{upstream}'
-  action=
+  action= updating=1
   if [[ $(git -C "$repo" rev-parse HEAD) != "$before" ]]; then action=--restart; fi
 fi
 # True if anything accepts a connection, through bash's own /dev/tcp (no nc).
@@ -66,6 +66,14 @@ if [[ -z $action ]] && up; then
   if [[ $other != "$repo" ]]; then
     echo "run-proxy: the proxy on port $port runs from $other; restarting it from $repo" >&2
     action=--restart
+  # This repo's proxy, started before the checkout moved (a pull without
+  # --update, say): --update restarts it, and otherwise it's left running, since
+  # a restart would cut off a reply another session is streaming.
+  elif [[ $(sed -n 's/^commit: //p' <<<"$info") != "$(git -C "$repo" rev-parse HEAD 2>/dev/null)" ]]; then
+    if [[ -n ${updating-} ]]; then action=--restart
+    else
+      echo "run-proxy: the proxy on port $port runs commit $(sed -n 's/^commit: //p' <<<"$info" | cut -c1-7), but the checkout is at $(git -C "$repo" rev-parse --short=7 HEAD). To switch, run bin/run-proxy --restart (or --update, which also pulls) when no session is mid-reply." >&2
+    fi
   fi
 fi
 # A proxy that replaces a running one keeps its logging unless told otherwise.
