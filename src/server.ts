@@ -14,7 +14,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
@@ -28,7 +28,7 @@ import { forceDefer } from './defer.ts'
 import { keptWhole, LINE_WORDS, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { totals } from './totals.ts'
-import { conversationId, harnessOf, NO_CONVENTIONS, sessionOf, type Harness } from './harness.ts'
+import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
 import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
@@ -782,15 +782,6 @@ const waiting = new Map<string, string[]>()
 // before then takes the policy's on its next request, warm or not.
 let skillsForcedAt = 0
 
-// Sessions with a request in the last day (harness.ts, sessionOf), going by
-// when their journals were last written.
-function activeSessions(now: number): number {
-  const keys = readdirSync(stateDir)
-    .filter((f) => f.endsWith('.journal.jsonl') && now - statSync(path.join(stateDir, f)).mtimeMs < 86_400_000)
-    .map((f) => f.slice(0, -'.journal.jsonl'.length))
-  return new Set(keys.map(sessionOf)).size
-}
-
 // The request's base as the proxy sends it, through the message holding the
 // skill list, with the skill rules the session sends it with, or `rules`.
 // Forks start from it, so they read what the session has cached of it.
@@ -854,7 +845,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
       `Modified ${countOf(modified, 'skill')} in shaver policy file.`,
       a.policy,
       '',
-      `Please /clear all ${countOf(activeSessions(Date.now()), 'active session')} on this machine to make \`shaver info\` report skill savings correctly.`,
+      'Run /clear in every claude/codex/opencode active session on this machine to make `shaver info` report skill savings accurately.',
     ].join('\n')
   }
   const listed = skillsOf(body)

@@ -120,14 +120,3 @@ export function conversationId(h: Harness | undefined, protocol: string, c: Cano
   const session = names.find((v) => typeof v === 'string' && v)
   return `${h?.name ?? protocol}-${session ? `${session}-` : ''}${hash(JSON.stringify(c.messages[0] ?? null)).slice(0, 8)}`
 }
-
-// The session a conversation's ID is part of: the ID without its first
-// message's hash, and on Claude Code without its agent, since a subagent runs
-// within its session. An ID with no session is a session of its own.
-export function sessionOf(key: string): string {
-  const parts = key.split('-')
-  if (parts.length < 3) return key
-  parts.pop()
-  if (parts[0] === CLAUDE.name) parts.pop()
-  return parts.join('-')
-}
