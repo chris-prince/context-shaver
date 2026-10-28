@@ -297,7 +297,7 @@ function policyText(): string {
   try {
     return '`' + a.policy + '`:\n```json\n' + readFileSync(a.policy, 'utf8').trimEnd() + '\n```'
   } catch {
-    return `Shaver is disabled, no policy found at ${a.policy}`
+    return `Shaver policy file not found, should be at ${a.policy}`
   }
 }
 
@@ -809,7 +809,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   if (typeof lines === 'string') return lines
   const lined = skills.filter((s) => lines[s.name])
   // Only if both answers were no JSON object or had every line too long.
-  if (!lined.length) return UNRETRIEVED
+  if (!lined.length) return 'Shaver skill optimization failed.'
   proposal = { key, skills, lines }
   const rules = withLines(policy.skill_list ?? [], skills, lines)
   const measured = await Promise.all([old, measure(rules)]).catch((err) => err as Error)
