@@ -779,6 +779,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   }
   const skills = keptWhole(skillsOf(body), policy.skill_list ?? [])
   if (!skills.length) return 'shaver: this request lists no skills the policy keeps whole, so there are no lines to write.'
+  say('Analyzing skills...\n\n')
   // The lines are asked for while the skills' own tokens are measured: the
   // base as sent, and without those skills' entries.
   const measure = (rules?: readonly SkillRule[]) => promptOf(proto, key, body, baseOf(proto, h, key, body, render, rules), target, headers)
@@ -802,7 +803,8 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   })()
   const n = (x: number) => x.toLocaleString('en-US')
   const own = await Promise.all([old, without]).then(([o, w]) => o.tokens - w.tokens, () => undefined)
-  say(`Analyzing ${countOf(skills.length, 'skill')}${own === undefined ? '' : ` that use ${n(own)} tokens`}\n\n`)
+  const are = skills.length === 1 ? 'is' : 'are'
+  say(`${countOf(skills.length, 'skill')} ${own === undefined ? `${are} listed` : `${are} using ${n(own)} tokens`}. Optimizing...\n\n`)
   const lines = await asked
   if (typeof lines === 'string') return lines
   const lined = skills.filter((s) => lines[s.name])
