@@ -120,7 +120,7 @@ export const ANALYZING_TOOLS = 'Analyzing tools...\n\n'
 // failed).
 export const ANALYZING = 'Analyzing skills...\n\n'
 export const optimizing = (skills: number, own: number | undefined) =>
-  `${counted(skills, 'skill')} ${own === undefined ? `${skills === 1 ? 'is' : 'are'} listed` : `add ${n(own)} tokens on every request`}. Optimizing...\n\n`
+  `${counted(skills, 'skill')} ${own === undefined ? `${skills === 1 ? 'is' : 'are'} listed` : `currently add${skills === 1 ? 's' : ''} ${n(own)} tokens on every request`}. Optimizing...\n\n`
 
 // The skills part of the offer: a table of `lined`, each with its line in
 // `lines` and whether it is trimmed already, headed by the tokens the lines

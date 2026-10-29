@@ -58,7 +58,8 @@ test("where tools can't be deferred, dropping is offered with a warning, and the
 })
 
 test('the header counts every skill in the table', () => {
-  assert.equal(optimizing(22, 4226), '22 skills add 4,226 tokens on every request. Optimizing...\n\n')
+  assert.equal(optimizing(22, 4226), '22 skills currently add 4,226 tokens on every request. Optimizing...\n\n')
+  assert.equal(optimizing(1, 90), '1 skill currently adds 90 tokens on every request. Optimizing...\n\n')
   assert.equal(optimizing(1, undefined), '1 skill is listed. Optimizing...\n\n')
 })
 
