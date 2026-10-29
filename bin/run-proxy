@@ -36,7 +36,7 @@ if [[ $action == --update ]]; then
   if [[ $(git -C "$repo" rev-parse HEAD) != "$before" ]]; then
     action=--restart
     n=$(git -C "$repo" rev-list --count "$before..HEAD")
-    echo "run-proxy: updated to $(git -C "$repo" log -1 --format='%h') ($n new commit$( ((n == 1)) || echo s)): $(git -C "$repo" log -1 --format=%s)"
+    echo "run-proxy: updated to $(git -C "$repo" log -1 --format='%h') ($n new commit$( ((n == 1)) || echo s))"
   fi
 fi
 # True if anything accepts a connection, through bash's own /dev/tcp (no nc).
