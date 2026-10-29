@@ -7,7 +7,7 @@
 // system prompt one section.
 
 import type { IncomingHttpHeaders } from 'node:http'
-import { CLAUDE_CODE, type Conventions } from './items.ts'
+import { CLAUDE_CODE, type ApiMsg, type Conventions } from './items.ts'
 import { CODEX_HEADINGS, hash } from './log.ts'
 import type { Canonical } from './protocol.ts'
 
@@ -108,15 +108,28 @@ export function harnessOf(declared: string | undefined, headers: IncomingHttpHea
 // replaces the history with a summary and carries on from that. The first
 // message changes exactly when the history is a new one.
 //
+// The first message is hashed as the client sent it, before the proxy strips
+// `:shaver` commands from it or moves a breakpoint onto it: the client sends
+// it the same way on every request, so only the client can change the key.
+// Its breakpoints are left out, so a client that marks the last message,
+// which on a conversation's first request is the first, keeps the key.
+//
 // The session keeps apart conversations whose first message is the same, as
-// happens when two Claude Code sessions start with `:shaver info` in the same
-// repo state: once the command is stripped, all that is left of it is the same
-// reminders. An unknown harness's is the body's prompt_cache_key or user, if
-// it sends one; with neither, the first message is the ID alone. A request
-// that is only a command, as Codex's first one can be, has no messages once it
-// is stripped.
+// happens when two Claude Code sessions start with the same prompt in the
+// same repo state. An unknown harness's is the body's prompt_cache_key or
+// user, if it sends one; with neither, the first message is the ID alone.
 export function conversationId(h: Harness | undefined, protocol: string, c: Canonical, headers: IncomingHttpHeaders): string {
   const names = h ? [h.session(c, headers)] : [c.prompt_cache_key, c.user]
   const session = names.find((v) => typeof v === 'string' && v)
-  return `${h?.name ?? protocol}-${session ? `${session}-` : ''}${hash(JSON.stringify(c.messages[0] ?? null)).slice(0, 8)}`
+  return `${h?.name ?? protocol}-${session ? `${session}-` : ''}${hash(JSON.stringify(unmarked(c.messages[0]) ?? null)).slice(0, 8)}`
+}
+
+// A message without its blocks' breakpoints; one with none is itself.
+function unmarked(m: ApiMsg | undefined): ApiMsg | undefined {
+  if (!m || !Array.isArray(m.content) || !m.content.some((b) => b && typeof b === 'object' && 'cache_control' in b)) return m
+  return { ...m, content: m.content.map((b) => {
+    if (!b || typeof b !== 'object' || !('cache_control' in b)) return b
+    const { cache_control: _, ...rest } = b
+    return rest
+  }) }
 }

@@ -381,17 +381,31 @@ The proxy reads the file when it starts; restart it after editing.
 Only requests that carry tools are trimmed: the main loop and subagents. Claude
 Code's side requests pass through unchanged.
 
-A conversation is one message history that only grows, and each has its own
-state: the applied clock below counts steps and turns into it, and its cache
-entries are prefixes of it, so neither carries over to another history. Its
-key is `claude-`, the session ID, the agent ID and a hash of its first message
+A conversation is a series of parts, the message history the client sends,
+which the proxy drops, trims and summarizes as it goes. The client re-sends
+the whole series with every request and only adds to its end, so the series
+continues until the client starts a new one. Each conversation has its own
+state: the applied clock below counts steps and turns into it, its summaries
+and trims stand for its parts, and its cache entries are prefixes of it, so
+none of it carries over to another series. Its key has to stay the same for
+as long as the series continues, and only then. It is `claude-`, the session
+ID, the agent ID and a hash of its first message
 (`claude-<session>-<agent or main>-<hash>`); OpenCode's and Codex's start
-`opencode-` and `codex-` with their session's ID (Protocols):
+`opencode-` and `codex-` with their session's ID (Protocols).
+
+`:shaver` commands and their answers are part of the history as the harness
+sees it: the client keeps them and sends them again with every request, though
+the proxy strips them before forwarding, so the model never sees them. The
+first message is hashed as the client sent it, command included, before that
+stripping or any other change the proxy makes. Its breakpoints are left out:
+a client that marks a request's last message marks the first one on a
+conversation's first request only, as Claude Code does on a one-message
+request. So only the client can change the key, and only by sending a new
+series.
 
 - Claude Code sends the session ID with every request. It keeps apart sessions
-  whose first message is the same, as when two start with `:shaver info` in
-  the same repo state: once the command is stripped, both first messages are
-  the same reminders.
+  whose first message is the same, as when two start with the same prompt in
+  the same repo state.
 - Each subagent's requests carry `x-claude-code-agent-id`; the main loop's
   carry none and are keyed `main`.
 - One agent can still send several histories. A WebSearch call is its own

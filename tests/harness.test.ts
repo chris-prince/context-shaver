@@ -37,18 +37,20 @@ test("each harness's session names its conversations, on any protocol", () => {
   assert.match(conversationId(of('codex'), 'responses', { model: 'm', messages: msgs }, { 'session-id': 'sess-b' }), /^codex-sess-b-/)
 })
 
-// As `:shaver info` names the conversation, from the request with the command
-// taken out: on a first request that leaves no messages at all.
-test('a first request that is only a command still names its conversation', () => {
-  const named = (body: { messages: never[] } & object, h: string, protocol: string, headers = {}) =>
-    conversationId(of(h), protocol, { ...body, messages: withoutPending(body.messages) } as never, headers)
-  const codex = responses({ model: 'gpt-6-luna', prompt_cache_key: 'sess-a', instructions: 'You are Codex.', input: [
-    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'rules' }] },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: ':shaver info' }] },
-  ] }).body
-  assert.match(named(codex as never, 'codex', 'responses'), /^codex-sess-a-[0-9a-f]{8}$/)
-  const opencode = chat({ model: 'm', messages: [{ role: 'system', content: 'You are OpenCode.' }, { role: 'user', content: ':shaver info' }] }).body
-  assert.match(named(opencode as never, 'opencode', 'chat', { 'x-opencode-session-id': 'ses_a' }), /^opencode-ses_a-[0-9a-f]{8}$/)
+// The key comes from the first message as the client sent it, so taking the
+// proxy's commands out of a request, or moving a breakpoint onto the first
+// message, can't change it: only the client can.
+test("a conversation's key ignores the first message's breakpoints, not its text", () => {
+  const claude = of('claude')
+  const metadata = { user_id: JSON.stringify({ session_id: 's1' }) }
+  const first = (content: unknown) => ({ model: 'm', metadata, messages: [{ role: 'user', content }, { role: 'user', content: 'next' }] }) as never
+  const reminder = { type: 'text', text: '<system-reminder>rules</system-reminder>' }
+  const command = { type: 'text', text: ':shaver optimize' }
+  const plain = conversationId(claude, 'messages', first([reminder, command]), {})
+  // A client that marks the first message on its first request only keeps the key.
+  assert.equal(conversationId(claude, 'messages', first([reminder, { ...command, cache_control: { type: 'ephemeral' } }]), {}), plain)
+  assert.equal(conversationId(claude, 'messages', first([{ ...reminder, cache_control: { type: 'ephemeral', ttl: '1h' } }, command]), {}), plain)
+  assert.notEqual(conversationId(claude, 'messages', first([reminder, { type: 'text', text: 'other' }]), {}), plain, 'text still counts')
 })
 
 test("an unknown harness's conversations are named by protocol, and by a session the body names", () => {

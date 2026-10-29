@@ -166,7 +166,7 @@ test('an invalid answer asks again, and the next one applies', async () => {
   assert.deepEqual(picked, ['beta'])
 })
 
-test('optimize as the first prompt applies its answer', { todo: 'the answer gets another conversation key' }, async () => {
+test('optimize as the first prompt applies its answer', async () => {
   const { replies, picked } = await scenario(['shaver optimize', 'all'])
   assert.match(replies[1], /^Modified 3 skills/)
   assert.deepEqual(picked, ['alpha', 'beta', 'gamma'])

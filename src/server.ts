@@ -166,10 +166,9 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
-function prepare(proto: Protocol, h: Harness | undefined, body: Canonical, { render, ids, counted }: Wire, headers: IncomingHttpHeaders, now: number): Prepared | undefined {
+function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
-  const key = conversationId(h, proto.name, body, headers)
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
   const s = load(key)
@@ -313,12 +312,11 @@ function policyText(): string {
 // The answer to `:shaver info`: the conversation's latest answered request,
 // from its journal (stats.ts), or before there is one, this request estimated
 // as it will be sent once the command is answered, tools deferred.
-function stats(proto: Protocol, h: Harness | undefined, body: Canonical, headers: IncomingHttpHeaders): string {
+function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canonical): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   const toolRules = toolRulesOf(policy)
   if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules)
   const trimmed = policy.skill_list ? shaveSkills(sent, policy.skill_list).trimmed : undefined
-  const key = conversationId(h, proto.name, sent, headers)
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
   // `:shaver optimize` requests made here are charged to the skill list.
@@ -504,13 +502,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: request not read:', err)
     }
     const body = c?.body
+    // The key comes from the messages as the client sent them, before any are stripped (harness.ts).
+    const key = body && Array.isArray(body.messages) && body.messages.length ? conversationId(h, proto.name, body, req.headers) : undefined
     try {
-      if (c && body && Array.isArray(body.messages) && body.messages.length) {
+      if (c && body && key) {
         const msgs = stripCommands(body.messages)
         // Read before stripping: an answer to `:shaver optimize` is one only after its reply.
         const command = body.tools?.length && pendingCommand(body.messages)
         if (command) {
-          const key = conversationId(h, proto.name, { ...body, messages: withoutPending(msgs) }, req.headers)
           const r = proto.replying(body.model, !!body.stream, latestOf(key)?.inputTokens ?? 0)
           res.writeHead(200, { ...limits.get(proto), 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
           res.write(r.start)
@@ -520,13 +519,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
             said += t
             res.write(r.text(t))
           }
-          const text = await answerOf(command, proto, h, key, { ...body, messages: msgs }, c.render, upstream + url, forwarded(req.headers, zstd), req.headers, say).catch(internalError)
+          const text = await answerOf(command, proto, h, key, { ...body, messages: msgs }, c.render, upstream + url, forwarded(req.headers, zstd), say).catch(internalError)
           return void res.end(r.text(text) + r.end(said + text))
         }
         // Commands sent mid-turn wait for a response that ends the turn.
         const mid = body.tools?.length ? midTurnCommands(body.messages) : []
         if (mid.length || waiting.size) {
-          const key = conversationId(h, proto.name, { ...body, messages: msgs }, req.headers)
           if (mid.length) waiting.set(key, [...(waiting.get(key) ?? []), ...mid])
           if (body.stream && waiting.has(key)) turnEnd = { key, body: structuredClone({ ...body, messages: msgs }), render: c.render }
         }
@@ -539,7 +537,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: commands left in:', err)
     }
     try {
-      if (c && body) p = prepare(proto, h, body, c, req.headers, Date.now())
+      if (c && body && key) p = prepare(proto, h, key, body, c, Date.now())
     } catch (err) {
       why = 'untrimmed'
       console.error('shaver: request left untrimmed:', err)
@@ -598,9 +596,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const provider = q ? q.provider : body?.provider
         const b: BareLine = { time: q?.sent.time ?? new Date(arrived).toISOString(), model: q?.model ?? body?.model ?? 'unknown', ...(provider && { provider }), ...(u && { usage: u }), why: cut ? 'cut off' : why }
         // One not read has no conversation to go with, so its harness's own.
-        const key = q?.key ?? (body && Array.isArray(body.messages) ? sideKey(stateDir, conversationId(h, proto.name, body, req.headers)) : `${h?.name ?? proto.name}-unread`)
-        const log = !a['log-step-events'] ? undefined : q ? q.logLine && { dir: q.logDir!, line: q.logLine } : body && { dir: path.join(logRoot, key), side: body, protocol: proto.name }
-        answeredBare(key, b, log)
+        const bare = q?.key ?? (key ? sideKey(stateDir, key) : `${h?.name ?? proto.name}-unread`)
+        const log = !a['log-step-events'] ? undefined : q ? q.logLine && { dir: q.logDir!, line: q.logLine } : body && { dir: path.join(logRoot, bare), side: body, protocol: proto.name }
+        answeredBare(bare, b, log)
       }
     })
   }
@@ -627,7 +625,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       waiting.delete(turnEnd.key)
       for (const command of commands) {
         let said = ''
-        const text = await answerOf(command, proto, h, turnEnd.key, turnEnd.body, turnEnd.render, upstream + url, headers, req.headers, (t) => (said += t)).catch(internalError)
+        const text = await answerOf(command, proto, h, turnEnd.key, turnEnd.body, turnEnd.render, upstream + url, headers, (t) => (said += t)).catch(internalError)
         write(held.add(answeredMidTurn(command) + said + text))
       }
     }
@@ -639,7 +637,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
 // What answers a command, for the request `body` of conversation `key`, the
 // command stripped; `say` gets any text ready before the rest, which follows it.
-async function answerOf(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, clientHeaders: IncomingHttpHeaders, say: (text: string) => void): Promise<string> {
+async function answerOf(command: string, proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void): Promise<string> {
   if (command.startsWith(':shaver optimize')) return optimize(command, proto, h, key, body, render, target, headers, say)
   if (command === ':shaver probe-codex-tool-search') {
     if (proto.name !== 'responses' || h?.name !== 'codex') return 'This probe is available only through a Codex Responses session.'
@@ -652,7 +650,7 @@ async function answerOf(command: string, proto: Protocol, h: Harness | undefined
   }
   if (command === ':shaver policy') return policyText()
   if (command === ':shaver info all') return '```\n' + totals(stateDir, ttlMs) + '\n```'
-  return stats(proto, h, body, clientHeaders)
+  return stats(proto, h, key, body)
 }
 
 // Records an answered request: its stats, cost and cache entries, the
