@@ -1,7 +1,7 @@
 // `:shaver optimize`'s questions, answers and replies, apart from what the
 // proxy measures and asks the model for, the policy file's I/O and the offer
 // it holds (server.ts), so each rule here can be tested alone. It offers
-// deferring the tools sent in full but the core ones, or dropping them where
+// deferring the tools sent in full but those always loaded, or dropping them where
 // they can't be deferred, and a line for each skill the policy keeps whole,
 // asks which tools to defer or drop, then which skills to trim, and puts the
 // ones picked in the policy file's text.
@@ -46,7 +46,7 @@ const CLEAR = 'Run /clear in every claude/codex/opencode active session on this 
 // The tools part of an offer: the harness asked, whether its tools are
 // deferred or dropped, the tools in its table, those that is done to already
 // and the text showing them, or why there are none.
-export type Tools = { harness: Pick<Harness, 'name' | 'core'>; action: 'defer' | 'drop'; names: string[]; chosen: string[]; text: string } | string
+export type Tools = { harness: Pick<Harness, 'name'>; action: 'defer' | 'drop'; names: string[]; chosen: string[]; text: string } | string
 
 // The skills part: the text showing them (skillsText's) or why there are
 // none, the skills in its table, a line for each and those already trimmed.
@@ -86,7 +86,7 @@ export function skillsAsked(shown: Proposal, skills: Skills): { reply: string; n
 // tool answer changes only its harness's rules. Its `next` asks about skills,
 // whose question skillsAsked adds.
 export function afterAnswer(shown: Proposal, answer: string, text: string, file: string): { reply: string; text: string; next?: Proposal } {
-  const tools = typeof shown.tools === 'string' ? { harness: { name: '', core: [] }, action: 'defer' as const, names: [], chosen: [] } : shown.tools
+  const tools = typeof shown.tools === 'string' ? { harness: { name: '' }, action: 'defer' as const, names: [], chosen: [] } : shown.tools
   const items = shown.asking === 'skills' ? shown.skills.map((s) => s.name) : tools.names
   const on = new Set(shown.asking === 'skills' ? shown.trimmed : tools.chosen)
   const numbers = ['all', 'none', 'keep'].includes(answer) ? [] : numbersOf(answer, items.length)
@@ -99,8 +99,8 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
     const lines = Object.fromEntries([...picked].map((name) => [name, shown.lines[name]]))
     written = withList(text, 'skill_shaver_rules', withLines(policy.skill_shaver_rules ?? [], shown.skills, lines))
   } else if (changes) {
-    const { name, core } = tools.harness
-    const lists = { ...policy.tool_shaver_rules, [name]: withPicked(policy.tool_shaver_rules?.[name] ?? [], items, picked, core, tools.action) }
+    const { name } = tools.harness
+    const lists = { ...policy.tool_shaver_rules, [name]: withPicked(policy.tool_shaver_rules?.[name] ?? [], items, picked, tools.action) }
     written = withList(text, 'tool_shaver_rules', lists)
   }
   const done = [`Modified ${counted(changes, shown.asking === 'skills' ? 'skill' : 'tool')} in shaver policy file.`, file]

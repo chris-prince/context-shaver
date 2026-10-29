@@ -19,9 +19,6 @@ export type Harness = {
   // Whether it has a tool that loads deferred tools, so the proxy can defer
   // others where the protocol can (defer.ts).
   defers: boolean
-  // The tools `:shaver optimize` keeps loaded when it defers the rest: those a
-  // coding session uses on most steps, where the proxy might defer them.
-  core: string[]
   // Whether it sends again all it sent before, but after compacting, so a
   // request without the last message of the one before follows a compaction
   // (stats.ts, Sent.compacted).
@@ -37,7 +34,6 @@ const CLAUDE: Harness = {
   headers: 'x-claude-code-',
   conventions: CLAUDE_CODE,
   defers: true,
-  core: ['Bash', 'Edit', 'Read', 'Write'],
   // It rewrites its last message's reminders on the next request.
   resends: false,
   session(c, headers) {
@@ -62,8 +58,6 @@ const CODEX: Harness = {
     promptHeadings: [['', 'system-prompt'], ...CODEX_HEADINGS],
   },
   defers: true,
-  // Its exec and wait are never deferred (defer.ts).
-  core: [],
   // In 265 journaled requests to 2026-10-24, the 3 that left out the last
   // message before were those after its 3 compactions.
   resends: true,
@@ -93,7 +87,6 @@ const OPENCODE: Harness = {
     ],
   },
   defers: false,
-  core: [],
   // Unchecked: no logged OpenCode session has compacted.
   resends: false,
   session: (_, headers) => headers['x-opencode-session-id'],

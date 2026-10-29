@@ -321,7 +321,8 @@ the proxy adds a `tool_search` tool the backend runs, and moves the tool out
 of the `additional_tools` input item, where the backend ignores
 `defer_loading`, to the top-level tools. The tools the others are loaded by or
 run through (`ToolSearch` on Claude Code, `functions.exec` and `functions.wait`
-on Codex) are never deferred or dropped, whatever the rules say. Of the older
+on Codex) are never deferred or dropped, whatever the rules say, nor are those
+a Claude Code session uses on most steps (Bash, Edit, Read, Write). Of the older
 forms, a flat `tool_list` or `tools_not_deferred` (tools to keep with every
 other deferred) becomes Claude Code's rules, since only it deferred tools then,
 and a rule's `defer`, true or false, its action. With tool search
@@ -329,9 +330,7 @@ off (no `ENABLE_TOOL_SEARCH` on Claude Code) nothing is deferred. Changing the
 rules rewrites the cache of open sessions once.
 
 `:shaver optimize` offers tool rules before the skill lines: the policy's own
-rules first, then the harness's core tools (Bash, Edit, Read, Write on Claude
-Code) kept and `*`
-deferring the rest. A policy that already has a `*` rule is left as it is, so
+rules first, then `*` deferring the rest. A policy that already has a `*` rule is left as it is, so
 nothing is offered. It names the tools that would newly
 be deferred and the tokens deferring them saves, measured as for the skill
 lines: the base sent with the old rules and with the new. It asks which to

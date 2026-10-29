@@ -997,9 +997,9 @@ function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { 
   if ((action === 'defer' && !proto.defers) || !h?.defers) return "Shaver can't defer tools in this harness yet."
   if (action === 'defer' && !searchOn(body, proto.searchTool)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
   const now = toolRulesOf(policy, h.name) ?? []
-  const names = offerable(body, h.core)
-  if (!names.length) return `No tools but ${proto.searchTool ? 'exec and wait' : h.core.join(', ')} are sent in full, so none can be ${action === 'drop' ? 'dropped' : 'deferred'}.`
-  return { action, names, chosen: names.filter((name) => actionOf(now, name) === action), all: withPicked(now, names, new Set(names), h.core, action) }
+  const names = offerable(body)
+  if (!names.length) return `No tools but ${proto.searchTool ? 'exec and wait' : 'ToolSearch, Bash, Edit, Read, Write'} are sent in full, so none can be ${action === 'drop' ? 'dropped' : 'deferred'}.`
+  return { action, names, chosen: names.filter((name) => actionOf(now, name) === action), all: withPicked(now, names, new Set(names), action) }
 }
 
 // The skills part of `:shaver optimize`'s answer, with the skills in its

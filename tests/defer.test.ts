@@ -10,8 +10,6 @@ const request = (env: string) => ({
   messages: [{ role: 'user', content: 'hi' }, { role: 'system', content: [{ type: 'text', text: `env\n\nThe following deferred tools… ${HEAD}WebFetch\n\nmore` }] }].slice(0, env ? 2 : 1),
 })
 const keepBash: ToolRule[] = [{ name: 'Bash', action: 'keep' }, { name: '*', action: 'defer' }]
-// Claude Code's core tools.
-const core = ['Bash', 'Edit', 'Read', 'Write']
 
 test('a tool the rules defer is deferred and listed with the others; ToolSearch never is', () => {
   const b = request('env')
@@ -21,9 +19,9 @@ test('a tool the rules defer is deferred and listed with the others; ToolSearch 
 })
 
 test('each tool takes the first rule matching it, and one no rule matches is sent as it came', () => {
-  const tools = ['Bash', 'BashOutput', 'Artifact', 'mcp__docs__read', 'mcp__docs__write'].map((name) => ({ name }))
-  const rules: ToolRule[] = [{ name: 'mcp__docs__read', action: 'keep' }, { name: 'mcp__*', action: 'defer' }, { name: 'Bash*', action: 'defer' }, { name: 'Bash', action: 'keep' }]
-  assert.deepEqual(deferrable({ tools }, rules), ['Bash', 'BashOutput', 'mcp__docs__write'])
+  const tools = ['Web', 'WebFetch', 'Artifact', 'mcp__docs__read', 'mcp__docs__write'].map((name) => ({ name }))
+  const rules: ToolRule[] = [{ name: 'mcp__docs__read', action: 'keep' }, { name: 'mcp__*', action: 'defer' }, { name: 'Web*', action: 'defer' }, { name: 'Web', action: 'keep' }]
+  assert.deepEqual(deferrable({ tools }, rules), ['Web', 'WebFetch', 'mcp__docs__write'])
 })
 
 test("each harness has its own tool rules; the older forms are Claude Code's, a tool_list winning over tools_not_deferred", () => {
@@ -40,21 +38,20 @@ test("each harness has its own tool rules; the older forms are Claude Code's, a 
   assert.deepEqual(now({ tool_list: { claude: [{ name: 'Bash', defer: false }, { name: '*', defer: true }], codex: [] } }), { claude: keepBash, codex: [] })
 })
 
-test('picked tools are deferred and the others shown kept, whatever the rules did before; the core tools stay loaded', () => {
+test("picked tools are deferred and the others shown kept, whatever the rules did before; Claude Code's Bash, Edit, Read and Write stay loaded, even if a rule defers them", () => {
   const tools = ['Bash', 'Edit', 'Read', 'Write', 'ToolSearch', 'Agent', 'Artifact', 'Skill', 'mcp__docs__read'].map((name) => ({ name }))
   const shown = ['Agent', 'Artifact', 'Skill', 'mcp__docs__read']
   const before: ToolRule[] = [{ name: 'Agent', action: 'defer' }, { name: 'mcp__*', action: 'keep' }, { name: 'Bash', action: 'defer' }, { name: '*', action: 'defer' }]
   for (const picked of [[], ['Artifact'], ['Agent', 'mcp__docs__read'], shown]) {
-    const rules = withPicked(before, shown, new Set(picked), core, 'defer')
-    // A hand rule placing a core tool stays; the other core tools are kept.
-    assert.deepEqual(deferrable({ tools }, rules), tools.map((t) => t.name).filter((n) => n === 'Bash' || picked.includes(n)))
+    const rules = withPicked(before, shown, new Set(picked), 'defer')
+    assert.deepEqual(deferrable({ tools }, rules), tools.map((t) => t.name).filter((n) => picked.includes(n)))
   }
-  assert.ok(!withPicked(before, shown, new Set(), core, 'defer').some((r) => r.name === '*'))
+  assert.ok(!withPicked(before, shown, new Set(), 'defer').some((r) => r.name === '*'))
 })
 
 test('picked tools are dropped by name, never by a catch-all, and those always loaded are never dropped', () => {
   const tools = ['functions.exec', 'functions.wait', 'clock.sleep', 'web.run', 'collaboration.ask'].map((name) => ({ type: 'function', name }))
-  const rules = withPicked([{ name: 'web.run', action: 'drop' }], ['clock.sleep', 'web.run', 'collaboration.ask'], new Set(['clock.sleep']), [], 'drop')
+  const rules = withPicked([{ name: 'web.run', action: 'drop' }], ['clock.sleep', 'web.run', 'collaboration.ask'], new Set(['clock.sleep']), 'drop')
   assert.ok(!rules.some((r) => r.name === '*'))
   const body = { tools: structuredClone(tools) }
   // A hand-written catch-all drops none always loaded.
@@ -62,9 +59,9 @@ test('picked tools are dropped by name, never by a catch-all, and those always l
   assert.deepEqual(body.tools.map((t) => t.name), ['functions.exec', 'functions.wait', 'web.run', 'collaboration.ask'])
 })
 
-test('the tools offered are those sent in full, but ToolSearch and the core ones', () => {
+test('the tools offered are those sent in full, but those always loaded', () => {
   const tools = [{ name: 'Bash' }, { name: 'ToolSearch' }, { name: 'Agent' }, { name: 'WebFetch', defer_loading: true }]
-  assert.deepEqual(offerable({ tools }, core), ['Agent'])
+  assert.deepEqual(offerable({ tools }), ['Agent'])
 })
 
 test('with no list in a system message, nothing is deferred, even if the conversation quotes one', () => {

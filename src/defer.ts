@@ -32,9 +32,9 @@ export const searchOn = (body: Body, searchTool?: object): boolean => searchTool
 export const toolListMessage = (body: Body): number => (body.messages ?? []).findIndex(lists)
 
 // The tools never deferred, whatever the rules say: those that load the
-// others, and Codex's exec, which runs every other, with the wait that resumes
-// its cells.
-const ALWAYS_LOADED = ['ToolSearch', 'functions.exec', 'functions.wait']
+// others, Codex's exec, which runs every other, with the wait that resumes
+// its cells, and those a Claude Code session uses on most steps.
+const ALWAYS_LOADED = ['ToolSearch', 'functions.exec', 'functions.wait', 'Bash', 'Edit', 'Read', 'Write']
 const loaded = (t: { type?: string; name?: string }) => t.type === 'tool_search' || ALWAYS_LOADED.includes(t.name ?? '')
 
 // The tools sent in full that `rules` would defer.
@@ -42,22 +42,20 @@ export const deferrable = (body: Body, rules: readonly ToolRule[]): string[] =>
   (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) && deferredBy(rules, t.name) ? [t.name] : []))
 
 // The tools sent in full that `:shaver optimize` asks about deferring: all but
-// those always loaded and the harness's `core` ones.
-export const offerable = (body: Body, core: readonly string[]): string[] =>
-  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) && !core.includes(t.name) ? [t.name] : []))
+// those always loaded.
+export const offerable = (body: Body): string[] =>
+  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) ? [t.name] : []))
 
 // `rules` placing the `shown` tools: the `picked` ones given `action`, the
 // others kept loaded. Those kept are named first, then come the rules' others
-// but a catch-all, the `core` tools kept where no rule names them, and with any
-// picked to defer, a catch-all deferring the rest; tools are dropped only by
-// name, so none Codex adds later is. A picked tool an earlier rule would still
-// keep loaded is named first too.
-export function withPicked(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, core: readonly string[], action: 'defer' | 'drop'): ToolRule[] {
+// but a catch-all, and with any picked to defer, a catch-all deferring the
+// rest; tools are dropped only by name, so none Codex adds later is. A picked
+// tool an earlier rule would still keep loaded is named first too.
+export function withPicked(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, action: 'defer' | 'drop'): ToolRule[] {
   const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name))
   const out: ToolRule[] = [
     ...shown.filter((name) => !picked.has(name)).map((name) => ({ name, action: 'keep' as const })),
     ...others,
-    ...core.filter((n) => !others.some((r) => matches(r.name, n))).map((name) => ({ name, action: 'keep' as const })),
     ...(picked.size && action === 'defer' ? [{ name: '*', action }] : []),
   ]
   return [...[...picked].filter((name) => actionOf(out, name) !== action).map((name) => ({ name, action })), ...out]

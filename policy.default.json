@@ -18,10 +18,6 @@
   },
   "tool_shaver_rules": {
     "claude": [
-      { "name": "Bash", "action": "keep" },
-      { "name": "Edit", "action": "keep" },
-      { "name": "Read", "action": "keep" },
-      { "name": "Write", "action": "keep" },
       { "name": "*", "action": "defer" }
     ]
   },

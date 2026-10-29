@@ -12,7 +12,7 @@ const stub = (s: { name: string; description: string }, text: string) => ({ name
 
 const proposal = (over: Partial<Proposal> = {}): Proposal => ({
   key: 'k', asking: 'skills', skills, lines, trimmed: [],
-  tools: { harness: { name: 'claude', core: ['Bash'] }, action: 'defer', names: ['Agent', 'WebFetch'], chosen: [], text: 'TOOLS TABLE' },
+  tools: { harness: { name: 'claude' }, action: 'defer', names: ['Agent', 'WebFetch'], chosen: [], text: 'TOOLS TABLE' },
   changed: 0, ...over,
 })
 
@@ -51,7 +51,7 @@ test('the tool table numbers every tool and says which are deferred', () => {
 test("where tools can't be deferred, dropping is offered with a warning, and the question asks which to drop", () => {
   const text = toolsText(['clock.sleep'], [], 40, 'drop')
   assert.match(text, /^Codex can't defer tools with ChatGPT sign-in, only drop them\. The model can't use a dropped tool at all, so drop with caution\.\n\nCan save 40 tokens by dropping tools:\n\n\| Tool \| Dropped \|\n/)
-  const tools = { harness: { name: 'codex', core: [] }, action: 'drop' as const, names: ['clock.sleep'], chosen: [], text }
+  const tools = { harness: { name: 'codex' }, action: 'drop' as const, names: ['clock.sleep'], chosen: [], text }
   assert.match(toolsAsked('k', tools)!.reply, /Which tools should be dropped\?/)
   const rules = toolRulesOf(rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', file({}), '/p').text), 'codex')
   assert.deepEqual(rules, [{ name: 'clock.sleep', action: 'drop' }])
@@ -141,7 +141,7 @@ test('a tool answer writes tool rules, then goes on to skills', () => {
 
 test("a tool answer changes only its harness's rules", () => {
   const codexRules = [{ name: 'clock.sleep', action: 'keep' }]
-  const tools = { harness: { name: 'codex', core: [] }, action: 'defer' as const, names: ['clock.sleep'], chosen: [], text: 'T' }
+  const tools = { harness: { name: 'codex' }, action: 'defer' as const, names: ['clock.sleep'], chosen: [], text: 'T' }
   const before = file({ tool_shaver_rules: { claude: [{ name: 'Agent', action: 'keep' }, { name: '*', action: 'defer' }], codex: codexRules } })
   const all = rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', before, '/p').text)
   assert.deepEqual(toolRulesOf(all, 'claude'), toolRulesOf(rulesIn(before), 'claude'))
