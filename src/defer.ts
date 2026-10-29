@@ -3,8 +3,8 @@
 // are added to the deferred tools it lists in its environment message, so the
 // model loads them with ToolSearch like the others; with tool search off there
 // is no list, nothing could load the tool, and the request is left as it came.
-// Over Responses, a client tool_search is added for Codex to answer. Gives the
-// bytes of the definitions it deferred.
+// Where the protocol has a search tool for the client to answer (Codex's), it
+// is added instead. Gives the bytes of the definitions it deferred.
 
 import { matches } from './skills.ts'
 
@@ -23,7 +23,7 @@ export const deferredBy = (rules: readonly ToolRule[], name: string) => rules.fi
 // tools. Only system messages: a conversation that quotes the list is not one.
 const envOf = (body: Body) => (body.messages ?? []).filter((m) => m.role === 'system')
 const lists = (m: { role: string; content: string | Block[] }) => m.role === 'system' && (typeof m.content === 'string' ? [m.content] : m.content.map((b) => b.text ?? '')).some((t) => t.includes(HEAD))
-export const searchOn = (body: Body, responses = false): boolean => responses || (body.messages ?? []).some(lists)
+export const searchOn = (body: Body, searchTool?: object): boolean => searchTool !== undefined || (body.messages ?? []).some(lists)
 // The message listing the deferred tools, or -1.
 export const toolListMessage = (body: Body): number => (body.messages ?? []).findIndex(lists)
 
@@ -63,21 +63,15 @@ export function withDeferred(rules: readonly ToolRule[], shown: readonly string[
   return [...[...picked].filter((name) => !deferredBy(out, name)).map((name) => ({ name, defer: true })), ...out]
 }
 
-export function forceDefer(body: Body, rules: readonly ToolRule[], responses = false): number {
-  if (!searchOn(body, responses)) return 0
+export function forceDefer(body: Body, rules: readonly ToolRule[], searchTool?: Record<string, unknown>): number {
+  if (!searchOn(body, searchTool)) return 0
   const env = envOf(body)
   const defer = new Set(deferrable(body, rules))
   if (!defer.size) return 0
   const bytes = (body.tools ?? []).filter((t) => defer.has(t.name)).reduce((n, t) => n + JSON.stringify(t).length, 0)
   body.tools = body.tools?.map((t) => (defer.has(t.name) ? { ...t, defer_loading: true } : t))
-  if (responses) {
-    // Responses client tool search is a client-executed tool. The backend
-    // returns a tool_search_call; the Codex client answers it with a
-    // tool_search_output containing the selected schemas.
-    if (!body.tools?.some((t) => t.type === 'tool_search')) body.tools?.push({
-      type: 'tool_search', execution: 'client', description: 'Find tools to use for the current task.',
-      parameters: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'], additionalProperties: false },
-    })
+  if (searchTool) {
+    if (!body.tools?.some((t) => t.type === searchTool.type)) body.tools?.push(searchTool)
   } else {
     const list = (t: string) => t.replace(HEAD, HEAD + [...defer].join('\n') + '\n')
     for (const m of env) m.content = typeof m.content === 'string' ? list(m.content) : m.content.map((b) => (b.text?.includes(HEAD) ? { ...b, text: list(b.text) } : b))

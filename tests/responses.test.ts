@@ -71,7 +71,7 @@ test('Codex tool search deferral renders nested function tools and adds the clie
   const clock = { type: 'namespace', name: 'clock', tools: [{ type: 'function', name: 'sleep' }] }
   const w = { ...wire, input: [{ ...wire.input[0], tools: [...(wire.input[0].tools as object[]), clock] }, ...wire.input.slice(1)] }
   const c = canonical(w)
-  forceDefer(c.body, [{ name: '*', defer: true }], true)
+  forceDefer(c.body, [{ name: '*', defer: true }], RESPONSES.searchTool)
   const sent = c.render(c.body) as typeof wire
   assert.deepEqual(sent.input[0], {
     type: 'additional_tools', role: 'developer',
@@ -85,21 +85,21 @@ test('Codex tool search deferral renders nested function tools and adds the clie
 
 test('tool_search calls and outputs become tool blocks and render back with their Responses shape', () => {
   const tool = { type: 'function', name: 'lookup', parameters: { type: 'object' } }
-  const call = { type: 'tool_search_call', call_id: 's1', goal: 'find lookup' }
+  const call = { type: 'tool_search_call', call_id: 's1', execution: 'client', arguments: { goal: 'find lookup' } }
   const output = { type: 'tool_search_output', call_id: 's1', tools: [tool] }
   const w = { ...wire, input: [...wire.input.slice(0, 4), call, output, ...wire.input.slice(4)] }
   const c = canonical(w)
   const callBlocks = c.body.messages.find((m) => m.role === 'assistant')!.content as Block[]
-  assert.ok(callBlocks.some((b) => b.type === 'tool_use' && b.name === 'tool_search' && (b.input as { query: string }).query === 'find lookup'))
+  assert.ok(callBlocks.some((b) => b.type === 'tool_use' && b.name === 'tool_search' && (b.input as { goal: string }).goal === 'find lookup'))
   const result = c.body.messages.find((m) => (m.content as Block[]).some((b) => b.type === 'tool_result'))!.content as Block[]
   assert.ok(result.some((b) => b.type === 'tool_result' && (b.content as Block[])[0].type === 'tool_reference' && (b.content as Block[])[0].tool_name === 'lookup'))
   assert.deepEqual(c.render(c.body), w)
 
-  const changedCall = { ...callBlocks.find((b) => b.type === 'tool_use')!, input: { query: 'find a different tool' } }
+  const changedCall = { ...callBlocks.find((b) => b.type === 'tool_use')!, input: { goal: 'find a different tool' } }
   const assistant = c.body.messages.find((m) => m.role === 'assistant')!
   const changed = { ...assistant, content: (assistant.content as Block[]).map((b) => b.type === 'tool_use' ? changedCall : b) }
   const sent = c.render({ ...c.body, messages: c.body.messages.map((m) => m === assistant ? changed : m) }) as typeof w
-  assert.deepEqual(sent.input.find((it) => it.type === 'tool_search_call'), { ...call, goal: 'find a different tool' })
+  assert.deepEqual(sent.input.find((it) => it.type === 'tool_search_call'), { ...call, arguments: { goal: 'find a different tool' } })
 
   // A message holding a search's result, rendered anew, keeps the result as it came.
   const at = c.body.messages.findIndex((m) => (m.content as Block[]).some((b) => b.type === 'tool_result'))

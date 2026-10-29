@@ -182,7 +182,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const live = new Set(Object.keys(entries))
   // What it takes out of the base: deferred tools, and skills off the list.
   const toolRules = toolRulesOf(policy)
-  const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules, proto.name === 'responses') : 0
+  const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules, proto.searchTool) : 0
   const skillList = skillListOf(s, live.size > 0, now)
   const { cut: skills, trimmed: skillsTrimmed } = skillList ? shaveSkills(body, skillList.rules) : { cut: 0 }
   const seed = seedOf(body.model, body.tools, body.system)
@@ -315,7 +315,7 @@ function policyText(): string {
 function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canonical): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   const toolRules = toolRulesOf(policy)
-  if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, proto.name === 'responses')
+  if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, proto.searchTool)
   const trimmed = policy.skill_list ? shaveSkills(sent, policy.skill_list).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
@@ -391,10 +391,7 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
     type: 'function', name: 'shaver_probe_confirm', description: 'Confirms this tool-search probe.', defer_loading: true,
     parameters: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'], additionalProperties: false },
   }
-  const searchTool = {
-    type: 'tool_search', execution: 'client', description: 'Find a harmless probe function.',
-    parameters: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'], additionalProperties: false },
-  }
+  const searchTool = RESPONSES.searchTool
   const usage: Record<string, Record<string, number>> = {}
   const send = async (stage: string, body: Record<string, unknown>) => {
     const response = await fetch(context.target, {
@@ -434,6 +431,9 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
     if (!first.response.ok) return { result: 'rejected', stage: 'search', status: first.response.status, error: first.data?.error?.message ?? first.text.slice(0, 1000), usage }
     const searchCall = first.data?.output?.find((item: any) => item.type === 'tool_search_call' && item.execution === 'client')
     if (!searchCall?.call_id) return { result: 'inconclusive', stage: 'search', detail: 'Response did not contain a client tool_search_call.', usage }
+    // The call as the backend sent it, which Codex answers: it names the field
+    // the search is asked in.
+    const search_call = Object.fromEntries(Object.entries(searchCall).filter(([k]) => !['id', 'call_id'].includes(k)))
     const second = await send('confirmation', {
       model: context.model, store: false, stream: true, parallel_tool_calls: false, max_output_tokens: 48, reasoning: { context: 'all_turns' },
       input: [
@@ -443,9 +443,9 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
       ],
       tool_choice: { type: 'function', name: 'shaver_probe_confirm' },
     })
-    if (!second.response.ok) return { result: 'rejected', stage: 'confirmation', status: second.response.status, error: second.data?.error?.message ?? second.text.slice(0, 1000), usage }
+    if (!second.response.ok) return { result: 'rejected', stage: 'confirmation', status: second.response.status, error: second.data?.error?.message ?? second.text.slice(0, 1000), search_call, usage }
     const confirmed = second.data?.output?.some((item: any) => item.type === 'function_call' && item.name === 'shaver_probe_confirm')
-    return { result: confirmed ? 'supported' : 'inconclusive', detail: confirmed ? 'Client tool-search round trip returned the probe function call; it was not executed.' : 'Follow-up did not return the probe function call.', response_status: second.data?.status, incomplete_details: second.data?.incomplete_details, error: second.data?.error, output: second.data?.output?.map((item: any) => ({ type: item.type, name: item.name, status: item.status })), usage }
+    return { result: confirmed ? 'supported' : 'inconclusive', detail: confirmed ? 'Client tool-search round trip returned the probe function call; it was not executed.' : 'Follow-up did not return the probe function call.', response_status: second.data?.status, incomplete_details: second.data?.incomplete_details, error: second.data?.error, output: second.data?.output?.map((item: any) => ({ type: item.type, name: item.name, status: item.status })), search_call, usage }
   } catch (error) {
     return { result: 'error', detail: error instanceof Error ? error.message : String(error), usage }
   }
@@ -805,7 +805,7 @@ let skillsForcedAt = 0
 // the session has cached of it.
 function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules = sessionRules(key, body), tools = toolRulesOf(policy)): Record<string, unknown> {
   const fork: Canonical = structuredClone({ ...body, messages: body.messages.slice(0, Math.max(listMessage(body), toolListMessage(body)) + 1) })
-  if (proto.defers && h?.defers && tools) forceDefer(fork, tools, proto.name === 'responses')
+  if (proto.defers && h?.defers && tools) forceDefer(fork, tools, proto.searchTool)
   if (rules) shaveSkills(fork, rules)
   return render(fork) as Record<string, unknown>
 }
@@ -906,11 +906,10 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
 // already, and the rules deferring them all, or why there are none.
 function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { names: string[]; deferred: string[]; all: ToolRule[] } | string {
   if (!proto.defers || !h?.defers) return "Shaver can't defer tools in this harness yet."
-  const responses = proto.name === 'responses'
-  if (!searchOn(body, responses)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
+  if (!searchOn(body, proto.searchTool)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
   const now = toolRulesOf(policy) ?? []
   const names = offerable(body)
-  if (!names.length) return `No tools but ${responses ? 'exec and wait' : CORE_TOOLS.join(', ')} are sent in full, so none can be deferred.`
+  if (!names.length) return `No tools but ${proto.searchTool ? 'exec and wait' : CORE_TOOLS.join(', ')} are sent in full, so none can be deferred.`
   return { names, deferred: names.filter((name) => deferredBy(now, name)), all: withDeferred(now, names, new Set(names)) }
 }
 

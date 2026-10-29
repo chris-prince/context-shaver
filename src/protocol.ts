@@ -139,6 +139,9 @@ export type Protocol = {
   // Whether tools can be deferred (defer.ts), for a harness that loads them
   // (harness.ts).
   defers: boolean
+  // The tool the proxy adds for the client to load deferred tools with, where
+  // the harness has none of its own: Codex answers Responses' tool_search.
+  searchTool?: Record<string, unknown>
   // A heavy-compaction summary fork (summary.ts): the request as sent, with
   // `text` asked after its messages, so it reads the request's cache entry, and
   // not streamed where the API allows; and the summary fork's answer, from the

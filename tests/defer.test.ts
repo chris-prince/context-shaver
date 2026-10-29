@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { deferrable, forceDefer, offerable, withDeferred, type ToolRule } from '../src/defer.ts'
 import { toolRulesOf } from '../src/policy.ts'
+import { RESPONSES } from '../src/responses.ts'
 
 const HEAD = 'Use ToolSearch with query "select:<name>[,<name>...]" to load tool schemas before calling them:\n'
 const request = (env: string) => ({
@@ -65,7 +66,7 @@ test('with tool search off, nothing is deferred', () => {
 test('Responses defers selected tools and adds client tool search without a Claude system message; exec and wait never are', () => {
   const b = { tools: [{ name: 'functions.exec' }, { name: 'functions.wait' }, { name: 'clock.sleep' }, { name: 'collaboration.spawn_agent' }] }
   assert.deepEqual(offerable(b), ['clock.sleep', 'collaboration.spawn_agent'])
-  const bytes = forceDefer(b, [{ name: '*', defer: true }], true)
+  const bytes = forceDefer(b, [{ name: '*', defer: true }], RESPONSES.searchTool)
   assert.equal(bytes, JSON.stringify({ name: 'clock.sleep' }).length + JSON.stringify({ name: 'collaboration.spawn_agent' }).length)
   assert.deepEqual(b.tools, [
     { name: 'functions.exec' },
@@ -82,6 +83,6 @@ test('Responses defers selected tools and adds client tool search without a Clau
 test('Responses leaves an existing client tool_search definition alone and never defers it', () => {
   const search = { type: 'tool_search', execution: 'client' }
   const b = { tools: [{ name: 'clock.sleep' }, search] }
-  forceDefer(b, [{ name: '*', defer: true }], true)
+  forceDefer(b, [{ name: '*', defer: true }], RESPONSES.searchTool)
   assert.deepEqual(b.tools, [{ name: 'clock.sleep', defer_loading: true }, search])
 })

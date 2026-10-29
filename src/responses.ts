@@ -45,7 +45,7 @@ function toBlocks(it: Item): Block[] {
     return [{ type: 'tool_use', id: it.call_id, name: it.name, input }]
   }
   if (OUTPUTS.has(it.type)) return [{ type: 'tool_result', tool_use_id: it.call_id, content: it.output ?? '' }]
-  if (it.type === 'tool_search_call') return [{ type: 'tool_use', id: it.call_id, name: 'tool_search', input: { query: it.query ?? it.goal ?? '' } }]
+  if (it.type === 'tool_search_call') return [{ type: 'tool_use', id: it.call_id, name: 'tool_search', input: it.arguments ?? {} }]
   if (it.type === 'tool_search_output') {
     const loaded = toolsOf((it.tools ?? []) as Tool[]).map((t) => ({ type: 'tool_reference', tool_name: t.name }))
     return [{ type: 'tool_result', tool_use_id: it.call_id, content: loaded }]
@@ -134,10 +134,9 @@ export function canonical(wire: Record<string, unknown>): Wire {
       else if (b.type === 'tool_use') {
         const c = byCall.get(String(b.id)) ?? { type: 'function_call', call_id: String(b.id), name: String(b.name) }
         const input = typeof b.input === 'string' ? b.input : JSON.stringify(b.input)
-        if (c.type === 'tool_search_call') {
-          const query = (b.input as { query?: unknown } | undefined)?.query ?? ''
-          out.push({ ...c, ['query' in c ? 'query' : 'goal']: String(query) })
-        } else out.push(c.type === 'custom_tool_call' ? { ...c, input } : { ...c, arguments: input })
+        // A search's arguments are an object, not JSON text.
+        if (c.type === 'tool_search_call') out.push({ ...c, arguments: b.input })
+        else out.push(c.type === 'custom_tool_call' ? { ...c, input } : { ...c, arguments: input })
       } else if (b.type === 'tool_result') {
         const r = byResult.get(String(b.tool_use_id)) ?? { type: 'function_call_output', call_id: String(b.tool_use_id) }
         // A search's result holds the tools it loaded, which are kept as they came.
@@ -318,6 +317,12 @@ export const RESPONSES: Protocol = {
   limits: /^x-codex-(?!turn-state)/,
   automatic: true,
   defers: true,
+  // Run by the client, which answers its tool_search_call with a
+  // tool_search_output holding the tools it loads.
+  searchTool: {
+    type: 'tool_search', execution: 'client', description: 'Find tools to use for the current task.',
+    parameters: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'], additionalProperties: false },
+  },
   // The summary fork's question is a user message of its own after the
   // request's items. ChatGPT's backend only streams, so it stays as it was.
   summaryFork: (sent, text) => ({ ...sent, input: [...(sent.input as Item[]), { type: 'message', role: 'user', content: [{ type: 'input_text', text }] }] }),
