@@ -160,9 +160,9 @@ test('an answer with a range and commas trims every skill it names', async () =>
   assert.deepEqual(picked, ['alpha', 'beta', 'gamma'])
 })
 
-test('an answer outside the table asks again, and the next one applies', async () => {
-  const { replies, picked } = await scenario(['hello', 'shaver optimize', '7', '2'])
-  assert.match(replies[2], /^Pick numbers from 1 to 3\./)
+test('an invalid answer asks again, and the next one applies', async () => {
+  const { replies, picked } = await scenario(['hello', 'shaver optimize', '3-1', '2'])
+  assert.match(replies[2], /^Pick numbers from 1 to 3, with ranges written low to high\./)
   assert.deepEqual(picked, ['beta'])
 })
 

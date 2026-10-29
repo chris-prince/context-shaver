@@ -25,8 +25,11 @@ test('an answer is all, none, keep or item numbers, whatever the case or separat
   assert.equal(pickWords('2 - 4,07'), '2-4 7')
   assert.equal(pickWords('trim them'), undefined)
   assert.equal(pickWords('1 x'), undefined)
-  assert.equal(pickWords('1-'), undefined)
-  assert.equal(pickWords('1-2-3'), undefined)
+  assert.equal(pickWords(' , '), undefined)
+  // Malformed lists are still answers, so they ask again.
+  assert.equal(pickWords('1-'), '1-')
+  assert.equal(pickWords('1-2-3'), '1-2-3')
+  assert.equal(pickWords('5-3'), '5-3')
 })
 
 test('the skill table numbers every skill and says which are trimmed', () => {
@@ -91,23 +94,23 @@ test('keep, or picking what is already so, leaves the file as it was', () => {
   assert.equal(afterAnswer(proposal({ trimmed: ['beta'] }), '2', before, '/p').text, before)
 })
 
-test('a number outside the table asks again and changes nothing', () => {
+test('an invalid list asks again and changes nothing', () => {
   const before = file({})
-  for (const answer of ['4', '0', '2-4', '1 99999']) {
-    const out = afterAnswer(proposal(), answer, before, '/p')
-    assert.equal(out.text, before)
-    assert.equal(out.reply, `Pick numbers from 1 to 3.\n\nWhich skills should I trim?\n${PICK}`)
+  for (const answer of ['4', '0', '2-4', '1 99999', '3-2', '2-2-3', '1-', '-1', '1 , -']) {
+    const out = afterAnswer(proposal(), pickWords(answer)!, before, '/p')
+    assert.equal(out.text, before, answer)
+    assert.equal(out.reply, `Pick numbers from 1 to 3, with ranges written low to high.\n\nWhich skills should I trim?\n${PICK}`)
     assert.equal(out.next?.asking, 'skills')
   }
 })
 
-test('a range picks every item in it, written either way round', () => {
+test('a range picks every item in it', () => {
   const trimmedBy = (answer: string) => {
     const text = afterAnswer(proposal(), pickWords(answer)!, file({ skill_list: [{ match: '*', action: 'keep' }] }), '/p').text
     return rulesIn(text).skill_list!.filter((r) => 'text' in r).map((r) => r.match)
   }
   assert.deepEqual(trimmedBy('1-2'), ['alpha', 'beta'])
-  assert.deepEqual(trimmedBy('3-2'), ['beta', 'gamma'])
+  assert.deepEqual(trimmedBy('2-2'), ['beta'])
   assert.deepEqual(trimmedBy('1,2-3'), ['alpha', 'beta', 'gamma'])
 })
 

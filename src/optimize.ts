@@ -17,20 +17,21 @@ export const PICK = "Type 'all', 'none', a specific list (like '1,3-5 8'), or 'k
 export const askOf = (asking: 'skills' | 'tools') => `${asking === 'skills' ? 'Which skills should I trim?' : 'Which tools should I defer?'}\n${PICK}`
 
 // An answer to PICK as the words of the command it is (command.ts): `all`,
-// `none`, `keep`, or item numbers and ranges (`3-5`) split by spaces; or
+// `none`, `keep`, or, for any text of only digits, dashes, commas and spaces,
+// its pieces split by spaces, valid or not (numbersOf checks them); or
 // undefined if it is none.
 export function pickWords(text: string): string | undefined {
   if (/^(?:all|none|keep)$/i.test(text)) return text.toLowerCase()
-  const item = String.raw`\d+(?:\s*-\s*\d+)?`
-  if (new RegExp(`^${item}(?:[\\s,]+${item})*$`).test(text)) return text.replace(/\s*-\s*/g, '-').split(/[\s,]+/).map((w) => w.split('-').map(Number).join('-')).join(' ')
+  if (/^[\d\s,-]+$/.test(text) && /\d/.test(text)) return text.replace(/\s*-\s*/g, '-').replace(/\d+/g, (d) => String(Number(d))).split(/[\s,]+/).filter(Boolean).join(' ')
 }
 
-// The item numbers in pickWords's `answer`, ranges counted either way round;
-// or undefined if any is outside 1 to `n`.
+// The item numbers in pickWords's `answer`; or undefined if a piece isn't a
+// number or a range written low to high (`3-5`), or is outside 1 to `n`.
 function numbersOf(answer: string, n: number): number[] | undefined {
+  if (!answer.split(' ').every((w) => /^\d+(?:-\d+)?$/.test(w))) return undefined
   const ends = answer.split(' ').map((w) => w.split('-').map(Number))
-  if (ends.flat().some((i) => i < 1 || i > n)) return undefined
-  return ends.flatMap(([a, b = a]) => Array.from({ length: Math.abs(b - a) + 1 }, (_, k) => Math.min(a, b) + k))
+  if (ends.some(([a, b = a]) => a < 1 || b > n || b < a)) return undefined
+  return ends.flatMap(([a, b = a]) => Array.from({ length: b - a + 1 }, (_, k) => a + k))
 }
 
 export const NOTHING = 'No changes to apply. Run `shaver optimize` again.'
@@ -58,7 +59,7 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
   const items = shown.asking === 'skills' ? shown.skills.map((s) => s.name) : tools.names
   const on = new Set(shown.asking === 'skills' ? shown.trimmed : tools.deferred)
   const numbers = ['all', 'none', 'keep'].includes(answer) ? [] : numbersOf(answer, items.length)
-  if (!numbers) return { reply: `Pick numbers from 1 to ${items.length}.\n\n${askOf(shown.asking)}`, text, next: shown }
+  if (!numbers) return { reply: `Pick numbers from 1 to ${items.length}, with ranges written low to high.\n\n${askOf(shown.asking)}`, text, next: shown }
   const picked = new Set(answer === 'all' ? items : answer === 'keep' ? on : items.filter((_, i) => numbers.includes(i + 1)))
   const changes = items.filter((name) => picked.has(name) !== on.has(name)).length
   let written = text
