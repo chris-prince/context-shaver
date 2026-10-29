@@ -9,8 +9,8 @@ import type { SkillRule } from './skills.ts'
 
 export type Action = 'stub' | 'drop'
 // Due once the item's request (or turn) is among the completed ones, leaving
-// out the latest few: `after` is "4 request" or "2 turn", the unit also taken
-// plural.
+// out the latest few: `after` is "4 requests" or "1 turn", the unit taken
+// singular or plural whatever the count.
 type Rule = { action: Action; after: string }
 const AFTER = /^(\d+) (request|turn)s?$/
 
@@ -99,7 +99,8 @@ export function upgraded(v: Record<string, unknown>): Record<string, unknown> | 
   const onWait = (r: unknown) => isObject(r) && 'on' in r
   const timedOlder = [...kinds.map((k) => v[k]), ...Object.values(conv)].some((rs) => Array.isArray(rs) && rs.some(onWait))
   if (!kinds.length && !timedOlder && !old.some((k) => k in v)) return undefined
-  const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { action: r.action, after: `${r.wait} ${r.on === 'step' ? 'request' : r.on}` } : r)) : rs)
+  const after = (wait: number, unit: string) => `${wait} ${unit}${wait === 1 ? '' : 's'}`
+  const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { action: r.action, after: after(r.wait, r.on === 'step' ? 'request' : r.on) } : r)) : rs)
   type Older = { name: string; defer?: boolean; action?: string }
   const now = (rs: Older[]) => rs.map((r) => (r.defer === undefined ? r : { name: r.name, action: r.defer ? 'defer' : 'keep' }))
   const tools = v.tool_list

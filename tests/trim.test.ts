@@ -5,14 +5,14 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
-import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
+import { afterOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
 import { anchored, apply, decide, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 
 const long = 'x'.repeat(5000)
-const stubAll: PartRules = { tool: [{ action: 'stub', after: '0 request' }], reasoning: [{ action: 'drop', after: '0 turn' }] }
-const dropAll: PartRules = { tool: [{ action: 'drop', after: '0 request' }], reasoning: [{ action: 'drop', after: '0 turn' }] }
+const stubAll: PartRules = { tool: [{ action: 'stub', after: '0 requests' }], reasoning: [{ action: 'drop', after: '0 turns' }] }
+const dropAll: PartRules = { tool: [{ action: 'drop', after: '0 requests' }], reasoning: [{ action: 'drop', after: '0 turns' }] }
 const policy = parsePolicy(JSON.parse(readFileSync(new URL('../policy.default.json', import.meta.url), 'utf8')))
 const committed = policy.conversation_shaver_rules!
 
@@ -63,11 +63,14 @@ test('a rule is due once its unit is completed, past the wait', () => {
   const it = { kind: 'tool' as const, id: 't', request: 3, turn: 2 }
   const stubAt = (requests: number) => treatment([{ action: 'stub', after: '1 request' }], it, { requests, turns: 0 })
   assert.deepEqual([3, 4].map(stubAt), [undefined, 'stub'])
+  // Singular or plural is read the same whatever the count.
+  assert.deepEqual(afterOf({ action: 'stub', after: '1 requests' }), { on: 'request', wait: 1 })
+  assert.deepEqual(afterOf({ action: 'stub', after: '4 turn' }), { on: 'turn', wait: 4 })
   const both = [{ action: 'stub', after: '0 requests' }, { action: 'drop', after: '0 turns' }] as const
   assert.equal(treatment([...both], it, { requests: 3, turns: 1 }), 'stub')
   assert.equal(treatment([...both], it, { requests: 3, turns: 2 }), 'drop') // the stronger wins
   // Before the first prompt is turn 0, which no rule reaches.
-  assert.equal(treatment([{ action: 'drop', after: '0 turn' }], { ...it, turn: 0 }, { requests: 9, turns: 9 }), undefined)
+  assert.equal(treatment([{ action: 'drop', after: '0 turns' }], { ...it, turn: 0 }, { requests: 9, turns: 9 }), undefined)
 })
 
 test('a policy file is checked', () => {
@@ -76,7 +79,7 @@ test('a policy file is checked', () => {
   const parts = (v: object) => ({ conversation_shaver_rules: v })
   const tools = (v: unknown) => ({ tool_shaver_rules: v })
   const skills = (v: unknown) => ({ skill_shaver_rules: v })
-  for (const bad of [[], { tools: [] }, { tool: [] }, parts([]), parts({ tool: {} }), parts({ tools: [] }), tools('x'), tools({ claude: {} }), tools({ claude: [{ name: 'x' }] }), tools({ codex: [{ name: 'x', defer: true }] }), tools({ codex: [{ name: 'x', action: 'stub' }] }), tools({ codex: [{ name: 'x', action: 'keep', defer: true }] }), parts({ prompt_and_assistant_text: { summary_threshold_tokens: 0 } }), parts({ prompt_and_assistant_text: { summary_threshold_tokens: '20k' } }), parts({ prompt_and_assistant_text: { memoir_threshold_tokens: 0 } }), parts({ prompt_and_assistant_text: { other: 1 } }), parts({ tool: [{ action: 'stub', after: '-1 request' }] }), parts({ tool: [{ action: 'stub', after: '1 step' }] }), parts({ tool: [{ action: 'stub', after: '1request' }] }), parts({ tool: [{ after: 1, action: 'stub' }] }), parts({ tool: [{ after: '1 turn', wait: 1, action: 'stub' }] }), parts({ tool: [{ on: 'step', wait: 1, action: 'stub' }] }), parts({ reasoning: [{ action: 'stub', after: '0 turn' }] }), skills({}), skills([{ name: 'x', action: 'stub' }]), skills([{ name: 'x', action: 'drop', sentences: 1 }]), skills([{ action: 'keep' }]), skills([{ match: 'x', action: 'keep' }]), skills([{ name: 'x', action: 'stub', text: 'a line' }]), skills([{ name: 'x', action: 'stub', text: 'a line', replaces: 'h', sentences: 1 }]), skills([{ name: 'x', action: 'drop', text: 'a line', replaces: 'h' }])])
+  for (const bad of [[], { tools: [] }, { tool: [] }, parts([]), parts({ tool: {} }), parts({ tools: [] }), tools('x'), tools({ claude: {} }), tools({ claude: [{ name: 'x' }] }), tools({ codex: [{ name: 'x', defer: true }] }), tools({ codex: [{ name: 'x', action: 'stub' }] }), tools({ codex: [{ name: 'x', action: 'keep', defer: true }] }), parts({ prompt_and_assistant_text: { summary_threshold_tokens: 0 } }), parts({ prompt_and_assistant_text: { summary_threshold_tokens: '20k' } }), parts({ prompt_and_assistant_text: { memoir_threshold_tokens: 0 } }), parts({ prompt_and_assistant_text: { other: 1 } }), parts({ tool: [{ action: 'stub', after: '-1 request' }] }), parts({ tool: [{ action: 'stub', after: '1 step' }] }), parts({ tool: [{ action: 'stub', after: '1request' }] }), parts({ tool: [{ after: 1, action: 'stub' }] }), parts({ tool: [{ after: '1 turn', wait: 1, action: 'stub' }] }), parts({ tool: [{ on: 'step', wait: 1, action: 'stub' }] }), parts({ reasoning: [{ action: 'stub', after: '0 turns' }] }), skills({}), skills([{ name: 'x', action: 'stub' }]), skills([{ name: 'x', action: 'drop', sentences: 1 }]), skills([{ action: 'keep' }]), skills([{ match: 'x', action: 'keep' }]), skills([{ name: 'x', action: 'stub', text: 'a line' }]), skills([{ name: 'x', action: 'stub', text: 'a line', replaces: 'h', sentences: 1 }]), skills([{ name: 'x', action: 'drop', text: 'a line', replaces: 'h' }])])
     assert.throws(() => parsePolicy(bad))
   assert.doesNotThrow(() => parsePolicy(skills([{ name: 'x', action: 'stub', text: 'a line', replaces: 'h' }])))
   assert.doesNotThrow(() => parsePolicy(tools({ claude: [{ name: 'x', action: 'defer' }], codex: [] })))
@@ -85,14 +88,14 @@ test('a policy file is checked', () => {
 test('a policy in an older form is put in the current one, and one in the current form is left', () => {
   const older = { tool: [{ on: 'step', wait: 4, action: 'drop' }], tools_not_deferred: ['Bash'], skill_list: [{ match: 'x-*', action: 'drop' }], summary_threshold_tokens: 20000, memoir_threshold_tokens: 15000 }
   assert.deepEqual(upgraded(older), {
-    conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 request' }], prompt_and_assistant_text: { summary_threshold_tokens: 20000, memoir_threshold_tokens: 15000 } },
+    conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 requests' }], prompt_and_assistant_text: { summary_threshold_tokens: 20000, memoir_threshold_tokens: 15000 } },
     tool_shaver_rules: { claude: [{ name: 'Bash', action: 'keep' }, { name: '*', action: 'defer' }] },
     skill_shaver_rules: [{ name: 'x-*', action: 'drop' }],
   })
   assert.equal(upgraded(policy), undefined)
   assert.equal(upgraded({}), undefined)
   const timed = { conversation_shaver_rules: { skill: [{ on: 'turn', wait: 2, action: 'stub' }, { action: 'drop', after: '9 requests' }], prompt_and_assistant_text: { summary_threshold_tokens: 5 } }, tool_shaver_rules: {} }
-  assert.deepEqual(upgraded(timed), { conversation_shaver_rules: { skill: [{ action: 'stub', after: '2 turn' }, { action: 'drop', after: '9 requests' }], prompt_and_assistant_text: { summary_threshold_tokens: 5 } }, tool_shaver_rules: {} })
+  assert.deepEqual(upgraded(timed), { conversation_shaver_rules: { skill: [{ action: 'stub', after: '2 turns' }, { action: 'drop', after: '9 requests' }], prompt_and_assistant_text: { summary_threshold_tokens: 5 } }, tool_shaver_rules: {} })
 })
 
 test('skill rules a session saved in the older form, by match, are read by name, so its list still shortens', () => {
@@ -117,7 +120,7 @@ test('loading a policy in an older form rewrites the file in the current one, ke
   const older = '{"tool":[{"on":"step","wait":4,"action":"drop"}],"tool_list":{"claude":[{"name":"*","defer":true}]},"summary_threshold_tokens":20000}'
   writeFileSync(file, older)
   const loaded = loadPolicy(file)
-  assert.deepEqual(loaded, { conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 request' }], prompt_and_assistant_text: { summary_threshold_tokens: 20000 } }, tool_shaver_rules: { claude: [{ name: '*', action: 'defer' }] } })
+  assert.deepEqual(loaded, { conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 requests' }], prompt_and_assistant_text: { summary_threshold_tokens: 20000 } }, tool_shaver_rules: { claude: [{ name: '*', action: 'defer' }] } })
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), loaded)
   assert.equal(readFileSync(`${file}.old`, 'utf8'), older)
   assert.deepEqual(loadPolicy(file), loaded)
@@ -214,7 +217,7 @@ test('of two pairs before a system message, one is kept so that it follows a use
 
 test('a tool search is its own kind, dropped by its own rules', () => {
   const convo = [1, 2, 3].flatMap((n) => turn(n, n === 1 ? 'ToolSearch' : 'Bash', { query: 'select:CronList' }))
-  const p: PartRules = { tool: [{ action: 'drop', after: '0 request' }], tool_search: [{ action: 'drop', after: '1 turn' }] }
+  const p: PartRules = { tool: [{ action: 'drop', after: '0 requests' }], tool_search: [{ action: 'drop', after: '1 turn' }] }
   const kept = apply(convo, p, { requests: 5, turns: 1 })
   assert.deepEqual(counts(kept), { 'tool:drop': 2 })
   assert.ok(kept.msgs.some((m) => typeof m.content !== 'string' && m.content.some((b) => b.tool_use_id === 'toolu_1')))
@@ -246,7 +249,7 @@ test('a Read sent as system text is a tool call; the rest of its message stays',
 
 test('a tool call is stubbed, then dropped, as the conversation goes on', () => {
   // Stub once a request is behind the latest completed one; drop 2 requests later.
-  const p: PartRules = { tool: [{ action: 'stub', after: '1 request' }, { action: 'drop', after: '3 request' }] }
+  const p: PartRules = { tool: [{ action: 'stub', after: '1 request' }, { action: 'drop', after: '3 requests' }] }
   const convo = [1, 2, 3, 4].flatMap((n) => turn(n, 'Bash', { command: 'seq 1 3000' }))
   // What the first call's result is in each request, and the completed requests
   // when that changed. Each request is trimmed at the clock it is sent at, or,
@@ -281,7 +284,7 @@ test('the gate applies every due transition at once', () => {
   assert.deepEqual(transitions(at({ requests: 0, turns: 0 }), at({ requests: 5, turns: 2 })), { 'tool:stub': 2, 'reasoning:drop': 4 })
   // A clock the gate held back catches up in one batch: a call never sent
   // stubbed goes straight to dropped. One sent stubbed moves on to dropped.
-  const p: PartRules = { tool: [{ action: 'stub', after: '3 request' }, { action: 'drop', after: '4 request' }] }
+  const p: PartRules = { tool: [{ action: 'stub', after: '3 requests' }, { action: 'drop', after: '4 requests' }] }
   assert.deepEqual(transitions(apply(msgs, p, { requests: 0, turns: 0 }), apply(msgs, p, { requests: 5, turns: 2 })), { 'tool:drop': 1 })
   assert.deepEqual(transitions(apply(msgs, p, { requests: 4, turns: 2 }), apply(msgs, p, { requests: 5, turns: 2 })), { 'tool:drop': 1 })
 })
@@ -295,7 +298,7 @@ test('a skill goes whole, with its body, once its turn is completed', () => {
     { role: 'user', content: 'prompt 2' },
     { role: 'assistant', content: [{ type: 'text', text: 'answer 2' }] },
   ]
-  const p: PartRules = { skill: [{ action: 'drop', after: '0 turn' }] }
+  const p: PartRules = { skill: [{ action: 'drop', after: '0 turns' }] }
   const within = skill.slice(0, 4)
   assert.deepEqual(apply(within, p, clockOf(within)).msgs, within)
   const after = apply(skill, p, clockOf(skill))
@@ -314,7 +317,7 @@ test('a stubbed skill keeps its call, result and base directory', () => {
     ...turn(2, 'Bash', { command: 'ls' }),
     ...turn(3, 'Bash', { command: 'ls' }),
   ]
-  const p: PartRules = { skill: [{ action: 'stub', after: '1 request' }, { action: 'drop', after: '3 request' }] }
+  const p: PartRules = { skill: [{ action: 'stub', after: '1 request' }, { action: 'drop', after: '3 requests' }] }
   const stubbed = apply(skill, p, { requests: 2, turns: 0 })
   assert.deepEqual(counts(stubbed), { 'skill:stub': 1 })
   assert.deepEqual(stubbed.msgs[2].content, [skill[2].content[0], { type: 'text', text: `Base directory for this skill: /x\n${stub(long.length)}` }])

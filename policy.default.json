@@ -1,18 +1,18 @@
 {
   "conversation_shaver_rules": {
     "tool": [
-      { "action": "drop", "after": "4 request" },
-      { "action": "drop", "after": "2 turn" }
+      { "action": "drop", "after": "4 requests" },
+      { "action": "drop", "after": "2 turns" }
     ],
     "skill": [
-      { "action": "stub", "after": "10 request" },
-      { "action": "drop", "after": "100 request" }
+      { "action": "stub", "after": "10 requests" },
+      { "action": "drop", "after": "100 requests" }
     ],
     "tool_search": [
-      { "action": "drop", "after": "10 turn" }
+      { "action": "drop", "after": "10 turns" }
     ],
     "reasoning": [
-      { "action": "drop", "after": "0 turn" }
+      { "action": "drop", "after": "0 turns" }
     ],
     "prompt_and_assistant_text": { "summary_threshold_tokens": 20000, "memoir_threshold_tokens": 15000 }
   },
