@@ -5,7 +5,8 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { blocks, clockOf, isPrompt, stepsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
-import { loadPolicy, parsePolicy, seedPolicy, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
+import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
+import { shaveSkills, type SkillRule } from '../src/skills.ts'
 import { anchored, apply, decide, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 
@@ -90,6 +91,15 @@ test('a policy in an older form is put in the current one, and one in the curren
   })
   assert.equal(upgraded(policy), undefined)
   assert.equal(upgraded({}), undefined)
+})
+
+test('skill rules a session saved in the older form, by match, are read by name, so its list still shortens', () => {
+  const saved = [{ match: 'x-*', action: 'drop' }, { name: 'y', action: 'keep' }] as SkillRule[]
+  const rules = skillRulesNow(saved)
+  assert.deepEqual(rules, [{ name: 'x-*', action: 'drop' }, { name: 'y', action: 'keep' }])
+  const body = { messages: [{ role: 'system', content: 'The following skills are available for use with the Skill tool:\n\n- x-a: A thing.\n- y: Why.' }] }
+  assert.doesNotThrow(() => shaveSkills(body, rules))
+  assert.ok(!body.messages[0].content.includes('x-a'))
 })
 
 test('loading a policy in an older form rewrites the file in the current one, keeping the old text beside it', () => {

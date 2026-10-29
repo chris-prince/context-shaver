@@ -72,6 +72,11 @@ export function parsePolicy(v: unknown): Policy {
   return v as Policy
 }
 
+// Skill rules with any in the older form, naming skills by `match`, put in
+// the current one. Sessions save the rules they were shortened by (server.ts).
+export const skillRulesNow = (rules: (SkillRule & { match?: string })[]): SkillRule[] =>
+  rules.map(({ match, ...r }) => (match === undefined ? r : { ...r, name: match }))
+
 // A policy in an older form put in the current one, or none if it is current.
 // The older forms: rule lists by kind and the summary and memoir thresholds at
 // the top level; `skill_list`, whose rules name skills by `match`;
@@ -87,7 +92,7 @@ export function upgraded(v: Record<string, unknown>): Record<string, unknown> | 
   const tools = v.tool_list
     ? Array.isArray(v.tool_list) ? { claude: now(v.tool_list) } : Object.fromEntries(Object.entries(v.tool_list as Record<string, Older[]>).map(([h, rs]) => [h, now(rs)]))
     : v.tools_not_deferred && { claude: [...(v.tools_not_deferred as string[]).map((name) => ({ name, action: 'keep' })), { name: '*', action: 'defer' }] }
-  const skills = (v.skill_list as Record<string, unknown>[] | undefined)?.map(({ match, ...r }) => ({ name: match, ...r }))
+  const skills = v.skill_list && skillRulesNow(v.skill_list as SkillRule[])
   const text = Object.fromEntries(['summary_threshold_tokens', 'memoir_threshold_tokens'].filter((k) => k in v).map((k) => [k, v[k]]))
   const parts = { ...Object.fromEntries(kinds.map((k) => [k, v[k]])), ...(Object.keys(text).length && { prompt_and_assistant_text: text }) }
   const rest = Object.fromEntries(Object.entries(v).filter(([k]) => !kinds.includes(k) && !old.includes(k)))

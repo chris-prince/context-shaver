@@ -34,7 +34,7 @@ import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion,
 import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
-import { loadPolicy, parsePolicy, seedPolicy, textRules, toolRulesOf, type Policy } from './policy.ts'
+import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { coveredBy, summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
@@ -90,6 +90,7 @@ const skillListOf = (s: State | undefined, warm: boolean, now: number): SkillLis
 function load(key: string): State | undefined {
   try {
     const s: State = JSON.parse(readFileSync(path.join(stateDir, `${key}.json`), 'utf8'))
+    if (s.skillList) s.skillList.rules = skillRulesNow(s.skillList.rules)
     return s.applied ? s : undefined
   } catch {
     return undefined
