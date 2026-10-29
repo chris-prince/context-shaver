@@ -13,13 +13,15 @@
   "reasoning": [
     { "on": "turn", "wait": 0, "action": "drop" }
   ],
-  "tool_list": [
-    { "name": "Bash", "defer": false },
-    { "name": "Edit", "defer": false },
-    { "name": "Read", "defer": false },
-    { "name": "Write", "defer": false },
-    { "name": "*", "defer": true }
-  ],
+  "tool_list": {
+    "claude": [
+      { "name": "Bash", "defer": false },
+      { "name": "Edit", "defer": false },
+      { "name": "Read", "defer": false },
+      { "name": "Write", "defer": false },
+      { "name": "*", "defer": true }
+    ]
+  },
   "skill_list": [
     { "match": "*", "action": "keep" }
   ],

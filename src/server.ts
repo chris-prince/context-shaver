@@ -24,7 +24,7 @@ import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from '.
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
-import { CORE_TOOLS, deferredBy, forceDefer, offerable, searchOn, toolListMessage, withDeferred, type ToolRule } from './defer.ts'
+import { deferredBy, forceDefer, offerable, searchOn, toolListMessage, withDeferred, type ToolRule } from './defer.ts'
 import { keptWhole, LINE_WORDS, lineOf, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
@@ -181,7 +181,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= lifetimeMs(model.ttl, ttlMs)))
   const live = new Set(Object.keys(entries))
   // What it takes out of the base: deferred tools, and skills off the list.
-  const toolRules = toolRulesOf(policy)
+  const toolRules = toolRulesOf(policy, h?.name)
   const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules, proto.searchTool) : 0
   const skillList = skillListOf(s, live.size > 0, now)
   const { cut: skills, trimmed: skillsTrimmed } = skillList ? shaveSkills(body, skillList.rules) : { cut: 0 }
@@ -314,7 +314,7 @@ function policyText(): string {
 // as it will be sent once the command is answered, tools deferred.
 function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canonical): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
-  const toolRules = toolRulesOf(policy)
+  const toolRules = toolRulesOf(policy, h?.name)
   if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, proto.searchTool)
   const trimmed = policy.skill_list ? shaveSkills(sent, policy.skill_list).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
@@ -803,7 +803,7 @@ let skillsForcedAt = 0
 // skill list, with the skill rules the session sends it with, or `rules`, and
 // the policy's tool rules, or `tools`. Forks start from it, so they read what
 // the session has cached of it.
-function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules = sessionRules(key, body), tools = toolRulesOf(policy)): Record<string, unknown> {
+function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules = sessionRules(key, body), tools = toolRulesOf(policy, h?.name)): Record<string, unknown> {
   const fork: Canonical = structuredClone({ ...body, messages: body.messages.slice(0, Math.max(listMessage(body), toolListMessage(body)) + 1) })
   if (proto.defers && h?.defers && tools) forceDefer(fork, tools, proto.searchTool)
   if (rules) shaveSkills(fork, rules)
@@ -874,7 +874,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   }
   // The tool rules as they are now, so a tools answer given while the skills
   // are measured doesn't change their base.
-  const now = toolRulesOf(policy) ?? []
+  const now = toolRulesOf(policy, h?.name) ?? []
   const measure = (rules?: readonly SkillRule[], tools = now) => promptOf(proto, key, body, baseOf(proto, h, key, body, render, rules, tools), target, headers)
   let base: ReturnType<typeof measure> | undefined
   const old = () => (base ??= measure())
@@ -896,7 +896,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     return reply
   }
   const saved = await Promise.all([old(), measure(undefined, offer.all)]).then(([o, d]) => o.tokens - d.tokens, (err: Error) => err)
-  const { reply, next } = toolsAsked(key, { names: offer.names, deferred: offer.deferred, text: toolsText(offer.names, offer.deferred, saved) })!
+  const { reply, next } = toolsAsked(key, { harness: h!, names: offer.names, deferred: offer.deferred, text: toolsText(offer.names, offer.deferred, saved) })!
   proposal = next
   skillsLater = later
   return reply
@@ -907,10 +907,10 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
 function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { names: string[]; deferred: string[]; all: ToolRule[] } | string {
   if (!proto.defers || !h?.defers) return "Shaver can't defer tools in this harness yet."
   if (!searchOn(body, proto.searchTool)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
-  const now = toolRulesOf(policy) ?? []
-  const names = offerable(body)
-  if (!names.length) return `No tools but ${proto.searchTool ? 'exec and wait' : CORE_TOOLS.join(', ')} are sent in full, so none can be deferred.`
-  return { names, deferred: names.filter((name) => deferredBy(now, name)), all: withDeferred(now, names, new Set(names)) }
+  const now = toolRulesOf(policy, h.name) ?? []
+  const names = offerable(body, h.core)
+  if (!names.length) return `No tools but ${proto.searchTool ? 'exec and wait' : h.core.join(', ')} are sent in full, so none can be deferred.`
+  return { names, deferred: names.filter((name) => deferredBy(now, name)), all: withDeferred(now, names, new Set(names), h.core) }
 }
 
 // The skills part of `:shaver optimize`'s answer, with the skills in its

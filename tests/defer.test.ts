@@ -10,6 +10,8 @@ const request = (env: string) => ({
   messages: [{ role: 'user', content: 'hi' }, { role: 'system', content: [{ type: 'text', text: `env\n\nThe following deferred tools… ${HEAD}WebFetch\n\nmore` }] }].slice(0, env ? 2 : 1),
 })
 const keepBash: ToolRule[] = [{ name: 'Bash', defer: false }, { name: '*', defer: true }]
+// Claude Code's core tools.
+const core = ['Bash', 'Edit', 'Read', 'Write']
 
 test('a tool the rules defer is deferred and listed with the others; ToolSearch never is', () => {
   const b = request('env')
@@ -24,10 +26,18 @@ test('each tool takes the first rule matching it, and one no rule matches is sen
   assert.deepEqual(deferrable({ tools }, rules), ['Bash', 'BashOutput', 'mcp__docs__write'])
 })
 
-test('tools_not_deferred reads as rules keeping its tools, then deferring every other; a tool_list wins over it', () => {
-  assert.deepEqual(toolRulesOf({ tools_not_deferred: ['Bash'] }), keepBash)
-  assert.deepEqual(toolRulesOf({ tools_not_deferred: ['Bash'], tool_list: [] }), [])
-  assert.equal(toolRulesOf({}), undefined)
+test("each harness has its own tool rules; the older forms are Claude Code's, a tool_list winning over tools_not_deferred", () => {
+  const lists = { tool_list: { claude: keepBash, codex: [{ name: '*', defer: false }] } }
+  assert.deepEqual(toolRulesOf(lists, 'claude'), keepBash)
+  assert.deepEqual(toolRulesOf(lists, 'codex'), [{ name: '*', defer: false }])
+  assert.equal(toolRulesOf(lists, 'opencode'), undefined)
+  assert.equal(toolRulesOf(lists, undefined), undefined)
+  assert.deepEqual(toolRulesOf({ tools_not_deferred: ['Bash'] }, 'claude'), keepBash)
+  assert.equal(toolRulesOf({ tools_not_deferred: ['Bash'] }, 'codex'), undefined)
+  assert.deepEqual(toolRulesOf({ tool_list: keepBash }, 'claude'), keepBash)
+  assert.equal(toolRulesOf({ tool_list: keepBash }, 'codex'), undefined)
+  assert.deepEqual(toolRulesOf({ tools_not_deferred: ['Bash'], tool_list: [] }, 'claude'), [])
+  assert.equal(toolRulesOf({}, 'claude'), undefined)
 })
 
 test('picked tools are deferred and the others shown kept, whatever the rules did before; the core tools stay loaded', () => {
@@ -35,16 +45,16 @@ test('picked tools are deferred and the others shown kept, whatever the rules di
   const shown = ['Agent', 'Artifact', 'Skill', 'mcp__docs__read']
   const before: ToolRule[] = [{ name: 'Agent', defer: true }, { name: 'mcp__*', defer: false }, { name: 'Bash', defer: true }, { name: '*', defer: true }]
   for (const picked of [[], ['Artifact'], ['Agent', 'mcp__docs__read'], shown]) {
-    const rules = withDeferred(before, shown, new Set(picked))
+    const rules = withDeferred(before, shown, new Set(picked), core)
     // A hand rule placing a core tool stays; the other core tools are kept.
     assert.deepEqual(deferrable({ tools }, rules), tools.map((t) => t.name).filter((n) => n === 'Bash' || picked.includes(n)))
   }
-  assert.ok(!withDeferred(before, shown, new Set()).some((r) => r.name === '*'))
+  assert.ok(!withDeferred(before, shown, new Set(), core).some((r) => r.name === '*'))
 })
 
 test('the tools offered are those sent in full, but ToolSearch and the core ones', () => {
   const tools = [{ name: 'Bash' }, { name: 'ToolSearch' }, { name: 'Agent' }, { name: 'WebFetch', defer_loading: true }]
-  assert.deepEqual(offerable({ tools }), ['Agent'])
+  assert.deepEqual(offerable({ tools }, core), ['Agent'])
 })
 
 test('with no list in a system message, nothing is deferred, even if the conversation quotes one', () => {
@@ -65,7 +75,7 @@ test('with tool search off, nothing is deferred', () => {
 
 test('Responses defers selected tools and adds client tool search without a Claude system message; exec and wait never are', () => {
   const b = { tools: [{ name: 'functions.exec' }, { name: 'functions.wait' }, { name: 'clock.sleep' }, { name: 'collaboration.spawn_agent' }] }
-  assert.deepEqual(offerable(b), ['clock.sleep', 'collaboration.spawn_agent'])
+  assert.deepEqual(offerable(b, []), ['clock.sleep', 'collaboration.spawn_agent'])
   const bytes = forceDefer(b, [{ name: '*', defer: true }], RESPONSES.searchTool)
   assert.equal(bytes, JSON.stringify({ name: 'clock.sleep' }).length + JSON.stringify({ name: 'collaboration.spawn_agent' }).length)
   assert.deepEqual(b.tools, [

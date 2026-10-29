@@ -29,8 +29,7 @@ export const toolListMessage = (body: Body): number => (body.messages ?? []).fin
 
 // The tools never deferred, whatever the rules say: those that load the
 // others, and Codex's exec, which runs every other, with the wait that resumes
-// its cells. The rules are shared by every harness, so a catch-all written in
-// Claude Code reaches Codex's tools too.
+// its cells.
 const ALWAYS_LOADED = ['ToolSearch', 'functions.exec', 'functions.wait']
 const loaded = (t: { type?: string; name?: string }) => t.type === 'tool_search' || ALWAYS_LOADED.includes(t.name ?? '')
 
@@ -38,26 +37,22 @@ const loaded = (t: { type?: string; name?: string }) => t.type === 'tool_search'
 export const deferrable = (body: Body, rules: readonly ToolRule[]): string[] =>
   (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) && deferredBy(rules, t.name) ? [t.name] : []))
 
-// The tools `:shaver optimize` keeps loaded when it defers the rest: those a
-// coding session uses on most steps.
-export const CORE_TOOLS = ['Bash', 'Edit', 'Read', 'Write']
-
 // The tools sent in full that `:shaver optimize` asks about deferring: all but
-// those always loaded and the core ones.
-export const offerable = (body: Body): string[] =>
-  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) && !CORE_TOOLS.includes(t.name) ? [t.name] : []))
+// those always loaded and the harness's `core` ones.
+export const offerable = (body: Body, core: readonly string[]): string[] =>
+  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) && !core.includes(t.name) ? [t.name] : []))
 
 // `rules` placing the `shown` tools: the `picked` ones deferred, the others
 // kept loaded. Those kept are named first, then come the rules' others but a
-// catch-all, the core tools kept where no rule names them, and with any
+// catch-all, the `core` tools kept where no rule names them, and with any
 // picked, a catch-all deferring the rest. A picked tool an earlier rule would
 // still keep loaded is named first too.
-export function withDeferred(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>): ToolRule[] {
+export function withDeferred(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, core: readonly string[]): ToolRule[] {
   const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name))
   const out = [
     ...shown.filter((name) => !picked.has(name)).map((name) => ({ name, defer: false })),
     ...others,
-    ...CORE_TOOLS.filter((n) => !others.some((r) => matches(r.name, n))).map((name) => ({ name, defer: false })),
+    ...core.filter((n) => !others.some((r) => matches(r.name, n))).map((name) => ({ name, defer: false })),
     ...(picked.size ? [{ name: '*', defer: true }] : []),
   ]
   return [...[...picked].filter((name) => !deferredBy(out, name)).map((name) => ({ name, defer: true })), ...out]

@@ -6,7 +6,8 @@
 // to trim, and puts the ones picked in the policy file's text.
 
 import { withDeferred } from './defer.ts'
-import { parsePolicy, toolRulesOf, withList } from './policy.ts'
+import type { Harness } from './harness.ts'
+import { olderTools, parsePolicy, toolListsOf, withList } from './policy.ts'
 import { withLines, type Skill } from './skills.ts'
 import { counted } from './stats.ts'
 
@@ -39,9 +40,9 @@ export const NOTHING = 'No changes to apply. Run `shaver optimize` again.'
 
 const CLEAR = 'Run /clear in every claude/codex/opencode active session on this machine to make `shaver info` report skill savings accurately.'
 
-// The tools part of an offer: the tools in its table, those deferred already
-// and the text showing them, or why there are none.
-export type Tools = { names: string[]; deferred: string[]; text: string } | string
+// The tools part of an offer: the harness asked, the tools in its table,
+// those deferred already and the text showing them, or why there are none.
+export type Tools = { harness: Pick<Harness, 'name' | 'core'>; names: string[]; deferred: string[]; text: string } | string
 
 // The skills part: the text showing them (skillsText's) or why there are
 // none, the skills in its table, a line for each and those already trimmed.
@@ -78,9 +79,11 @@ export function skillsAsked(shown: Proposal, skills: Skills): { reply: string; n
 // `text` at `file`: the reply, the file's text after it, and what is asked
 // next, if anything. An answer names every item to have trimmed or deferred,
 // so those not named are turned back; `keep` leaves them all as they are. A
-// tool answer's `next` asks about skills, whose question skillsAsked adds.
+// tool answer changes only its harness's rules, and puts tool rules in an
+// older form in the current one, whatever it changes. Its `next` asks about
+// skills, whose question skillsAsked adds.
 export function afterAnswer(shown: Proposal, answer: string, text: string, file: string): { reply: string; text: string; next?: Proposal } {
-  const tools = typeof shown.tools === 'string' ? { names: [], deferred: [] } : shown.tools
+  const tools = typeof shown.tools === 'string' ? { harness: { name: '', core: [] }, names: [], deferred: [] } : shown.tools
   const items = shown.asking === 'skills' ? shown.skills.map((s) => s.name) : tools.names
   const on = new Set(shown.asking === 'skills' ? shown.trimmed : tools.deferred)
   const numbers = ['all', 'none', 'keep'].includes(answer) ? [] : numbersOf(answer, items.length)
@@ -88,14 +91,19 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
   const picked = new Set(answer === 'all' ? items : answer === 'keep' ? on : items.filter((_, i) => numbers.includes(i + 1)))
   const changes = items.filter((name) => picked.has(name) !== on.has(name)).length
   let written = text
-  if (changes) {
-    const policy = parsePolicy(JSON.parse(text))
-    if (shown.asking === 'skills') {
+  const policy = parsePolicy(JSON.parse(text))
+  if (shown.asking === 'skills') {
+    if (changes) {
       const lines = Object.fromEntries([...picked].map((name) => [name, shown.lines[name]]))
       // Lines for skills this session doesn't list stay.
       const elsewhere = new Set((policy.skill_list ?? []).filter((r) => r.text !== undefined && !items.includes(r.match)).map((r) => r.match))
       written = withList(text, 'skill_list', withLines(policy.skill_list ?? [], shown.skills, lines, elsewhere))
-    } else written = withList(text, 'tool_list', withDeferred(toolRulesOf(policy) ?? [], items, picked), 'tools_not_deferred')
+    }
+  } else if (changes || olderTools(policy)) {
+    const lists = toolListsOf(policy)
+    const { name, core } = tools.harness
+    if (changes) lists[name] = withDeferred(lists[name] ?? [], items, picked, core)
+    written = withList(text, 'tool_list', lists, 'tools_not_deferred')
   }
   const done = [`Modified ${counted(changes, shown.asking === 'skills' ? 'skill' : 'tool')} in shaver policy file.`, file]
   const changed = shown.changed + changes

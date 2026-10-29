@@ -187,7 +187,8 @@ test('with tool search on, tools are asked about first and the skills, worked ou
   assert.match(replies[2], /Which skills should be trimmed\?/)
   assert.match(replies[3], /^Modified 2 skills/)
   assert.deepEqual(picked, ['alpha', 'gamma'])
-  assert.equal(policy.tool_list.at(-1).name, '*')
+  assert.deepEqual(Object.keys(policy.tool_list), ['claude'])
+  assert.equal(policy.tool_list.claude.at(-1).name, '*')
   assert.equal(tools.find((t: { name: string }) => t.name === 'Agent').defer_loading, true)
 })
 
