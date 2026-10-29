@@ -99,7 +99,7 @@ test('an invalid list asks again and changes nothing', () => {
   for (const answer of ['4', '0', '2-4', '1 99999', '3-2', '2-2-3', '1-', '-1', '1 , -']) {
     const out = afterAnswer(proposal(), pickWords(answer)!, before, '/p')
     assert.equal(out.text, before, answer)
-    assert.equal(out.reply, `Pick numbers from 1 to 3, with ranges written low to high.\n\nWhich skills should I trim?\n${PICK}`)
+    assert.equal(out.reply, `All numbers must be between 1 and 3. Ranges must be stated as X-Y, smaller number first.\n\nWhich skills should I trim?\n${PICK}`)
     assert.equal(out.next?.asking, 'skills')
   }
 })
