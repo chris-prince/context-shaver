@@ -620,7 +620,10 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     message characters the proxy expected the cache to serve, to check the
     model against `cachedTokens`; `breakpoints` is how many of the messages'
     blocks carry `cache_control` (with none, the messages are read from no
-    entry, so the proxy holds trimming). On the Responses API it also has
+    entry, so the proxy holds trimming). `params` is the rest of the request
+    as the client sent it (thinking, effort, reasoning, `max_tokens` and the
+    like), without the content, the model, or who is asking (`metadata`,
+    `client_metadata`, `prompt_cache_key`, `user`). On the Responses API it also has
     `attribution`, the usage per input item and block as the API gives it,
     keyed by the items' IDs. The IDs Codex sends with its items are logged
     too: the head's (tools and instructions) as `headIds`, and each part's

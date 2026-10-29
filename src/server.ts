@@ -18,7 +18,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
-import { hash, kinds, LOG_DIR, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
+import { hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
 import { blocks, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
@@ -171,7 +171,7 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
-function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, now: number): Prepared | undefined {
+function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const conv = h?.conventions ?? NO_CONVENTIONS
@@ -294,7 +294,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     // The messages as the client sent them, when they went up changed, so
     // what was taken (a newest answer's thinking, say) can be rebuilt.
     const changed = msgs.length !== body.messages.length || msgs.some((m, i) => JSON.stringify(m) !== JSON.stringify(body.messages[i]))
-    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...(changed && { received: writeParts(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...(changed && { received: writeParts(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -579,13 +579,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // Why a request the API answers would be journaled bare, if it's sent as it came.
   let why: Why = 'side'
   let c: ReturnType<Protocol['canonical']> | undefined
+  let params: Record<string, unknown> = {}
   // The conversation's key, from the messages as the client sent them, before any are stripped (harness.ts).
   let key: string | undefined
   const served = req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length > 0
   if (served) {
     // `shaver` commands are answered here; answered ones are stripped (command.ts).
     try {
-      c = proto.canonical(JSON.parse(raw.toString('utf8')))
+      const wire = JSON.parse(raw.toString('utf8'))
+      params = paramsOf(wire)
+      c = proto.canonical(wire)
     } catch (err) {
       why = 'unread'
       console.error('shaver: request not read:', err)
@@ -625,7 +628,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: commands left in:', err)
     }
     try {
-      if (c && body && key) p = prepare(proto, h, key, body, c, Date.now())
+      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now())
     } catch (err) {
       why = 'untrimmed'
       console.error('shaver: request left untrimmed:', err)

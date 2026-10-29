@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { kinds, receivedOf, withReceivedDelta, writeDefs } from '../src/log.ts'
+import { kinds, paramsOf, receivedOf, withReceivedDelta, writeDefs } from '../src/log.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 test("after a Codex compaction, its preamble messages are base by section and the compaction is not", () => {
@@ -81,6 +81,15 @@ test('system blocks and tool definitions are listed with their bytes, deferred t
     { name: 'Artifact', bytes: JSON.stringify(later).length, deferred: true },
   ])
   assert.equal(readFileSync(path.join(dir, 'parts', `${d.tools[1].hash}.json`), 'utf8'), JSON.stringify(later))
+})
+
+test('params are what a request asked for, without its content, model or who asked', () => {
+  const claude = { model: 'claude-opus-5-5', metadata: { user_id: 'u' }, system: [], tools: [], messages: [], max_tokens: 128000, thinking: { type: 'adaptive', display: 'omitted' }, output_config: { effort: 'medium' }, stream: true }
+  assert.deepEqual(paramsOf(claude), { max_tokens: 128000, thinking: { type: 'adaptive', display: 'omitted' }, output_config: { effort: 'medium' }, stream: true })
+  const codex = { model: 'gpt-6-luna', instructions: 'x', input: [], tools: [], client_metadata: {}, prompt_cache_key: 'k', reasoning: { effort: 'high' }, store: false }
+  assert.deepEqual(paramsOf(codex), { reasoning: { effort: 'high' }, store: false })
+  const opencode = { model: 'deepseek/deepseek-v4.1-flash', messages: [], tools: [], user: 'u', provider: { order: ['deepseek'] }, max_tokens: 32000 }
+  assert.deepEqual(paramsOf(opencode), { provider: { order: ['deepseek'] }, max_tokens: 32000 })
 })
 
 test('received is logged as a change from the line before and read back whole', () => {

@@ -234,3 +234,11 @@ export function writeDefs(dir: string, body: { system?: unknown; tools?: Array<{
     tools: (body.tools ?? []).map((t) => ({ name: t.name, ...save(t), ...(t.defer_loading ? { deferred: true } : {}) })),
   }
 }
+
+// What a request asked for besides its content, as the client sent it:
+// thinking, effort, reasoning, output limits and the like. Left out are the
+// content (saved as parts), the model (logged apart), and who is asking.
+const NOT_PARAMS = new Set(['messages', 'input', 'system', 'instructions', 'tools', 'model', 'metadata', 'client_metadata', 'prompt_cache_key', 'user'])
+
+export const paramsOf = (wire: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(wire).filter(([k]) => !NOT_PARAMS.has(k)))
