@@ -2,14 +2,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { afterAnswer, optimizing, pickWords, PICK, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal } from '../src/optimize.ts'
 import { parsePolicy, toolRulesOf } from '../src/policy.ts'
-import { descriptionHash } from '../src/skills.ts'
 
 const skill = (name: string) => ({ name, description: `${name} does a long thing in many words` })
 const skills = [skill('alpha'), skill('beta'), skill('gamma')]
 const lines = { alpha: 'Alpha line', beta: 'Beta line', gamma: 'Gamma line' }
 const file = (body: object) => JSON.stringify(body, null, 2) + '\n'
 const rulesIn = (text: string) => parsePolicy(JSON.parse(text))
-const stub = (s: { name: string; description: string }, text: string) => ({ match: s.name, action: 'stub', text, replaces: descriptionHash(s.description) })
+const stub = (s: { name: string; description: string }, text: string) => ({ match: s.name, action: 'stub', text, replaces: '*' })
 
 const proposal = (over: Partial<Proposal> = {}): Proposal => ({
   key: 'k', asking: 'skills', skills, lines, trimmed: [],

@@ -349,10 +349,11 @@ own. A conversation keeps the rules it took while its cache is warm, so a
 changed policy reaches it once the cache is cold.
 
 A `stub` can instead carry `text`, a line written for the skill, and
-`replaces`, the hash of the description it was written from. The line stands in
-for that description only, and only when shorter, so a skill whose description
-changed shows it whole until a new line is written. `:shaver optimize` writes
-these lines: for each skill the rules keep whole, or gave a line before, it asks
+`replaces`: `*`, so the line stands in for any description, or the hash of the
+description it was written from, so it stands in for that one only and a skill
+whose description changed shows it whole until a new line is written. Either
+way the line is used only when shorter. `:shaver optimize` writes these lines,
+with `*`: for each skill the rules keep whole, or gave a line before, it asks
 the session's own model for one of at most 6 words that tells the skill from
 the others, asking once more for any it left out. The question is a fork of the
 request's base as the proxy sends it, through the message holding the skill

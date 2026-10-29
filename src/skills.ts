@@ -4,8 +4,8 @@
 // whose pattern matches its name, and is kept, stubbed, or dropped from the
 // list. With no rule matching it is kept. A stub is the first sentences of the
 // description, or a line `:shaver optimize` wrote for it (server.ts), which
-// `replaces` names by the hash of the description it was written from; a
-// description since changed is kept whole. A dropped skill can still be run as
+// `replaces` names by the hash of the description it was written from, or `*`
+// for any; a description since changed from a hashed one is kept whole. A dropped skill can still be run as
 // `/name`; the model just isn't told of it. Gives the bytes it took out.
 
 import { hash } from './log.ts'
@@ -39,10 +39,11 @@ function firstSentences(text: string, n: number): string {
 }
 
 // A stub's description: the line written for it, if it is still the
-// description's and shorter, else the first sentences, or the whole of it.
+// description's (or replaces `*`, any) and shorter, else the first sentences,
+// or the whole of it.
 function stubOf(description: string, rule: SkillRule): string {
   if (rule.text === undefined) return firstSentences(description, rule.sentences!)
-  return rule.replaces === descriptionHash(description) && rule.text.length < description.length ? rule.text : description
+  return (rule.replaces === '*' || rule.replaces === descriptionHash(description)) && rule.text.length < description.length ? rule.text : description
 }
 
 // Each entry is `- name: description`, then its format's tail.
@@ -183,9 +184,10 @@ export function lineOf(skill: Skill, rules: readonly SkillRule[]): string | unde
 }
 
 // The rules with written lines: one stub for each line, ahead of the rest, in
-// place of any lines written before for these skills. Lines for other skills,
-// trimmed already or listed only elsewhere, stay.
+// place of any lines written before for these skills, each standing for
+// whatever the description becomes. Lines for other skills, trimmed already or
+// listed only elsewhere, stay.
 export const withLines = (rules: readonly SkillRule[], skills: readonly Skill[], lines: Record<string, string>): SkillRule[] => [
-  ...skills.filter((s) => lines[s.name]).map((s) => ({ match: s.name, action: 'stub' as const, text: lines[s.name], replaces: descriptionHash(s.description) })),
+  ...skills.filter((s) => lines[s.name]).map((s) => ({ match: s.name, action: 'stub' as const, text: lines[s.name], replaces: '*' })),
   ...rules.filter((r) => r.text === undefined || !skills.some((s) => s.name === r.match)),
 ]

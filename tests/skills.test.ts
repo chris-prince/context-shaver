@@ -62,6 +62,15 @@ test("a written line stands in for the description it replaces, and only that on
   assert.ok(textOf(b).includes(`- claude-api: ${api.description}\n`))
 })
 
+test('a written line that replaces * stands in for any description, if shorter', () => {
+  const b = request()
+  const { description } = skillsOf(b).find((s) => s.name === 'claude-api')!
+  shaveSkills(b, [{ match: 'claude-api', action: 'stub', text: 'Claude API reference', replaces: '*' }, { match: 'init', action: 'stub', text: 'x'.repeat(500), replaces: '*' }])
+  assert.ok(textOf(b).includes('- claude-api: Claude API reference\n'))
+  assert.ok(!textOf(b).includes(description))
+  assert.ok(textOf(b).includes('- init: Initialize'))
+})
+
 test('a written line no shorter than its description leaves the description', () => {
   const b = request()
   const { description } = skillsOf(b).find((s) => s.name === 'artifact-design')!
@@ -135,7 +144,7 @@ test('written lines go ahead of the other rules, in place of lines written befor
   const skills = skillsOf(request())
   const rules: SkillRule[] = [{ match: 'claude-api', action: 'stub', text: 'old', replaces: 'x' }, { match: 'artifact-*', action: 'drop' }]
   const out = withLines(rules, skills, { init: 'Set up project memory' })
-  assert.deepEqual(out, [{ match: 'init', action: 'stub', text: 'Set up project memory', replaces: descriptionHash(skills[0].description) }, { match: 'artifact-*', action: 'drop' }])
+  assert.deepEqual(out, [{ match: 'init', action: 'stub', text: 'Set up project memory', replaces: '*' }, { match: 'artifact-*', action: 'drop' }])
   // A skill not among those given, trimmed already or listed elsewhere, keeps its line.
   assert.deepEqual(withLines(rules, skills.filter((s) => s.name === 'init'), { init: 'Set up project memory' }).slice(1), rules)
 })
