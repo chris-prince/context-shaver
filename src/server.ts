@@ -980,8 +980,12 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     proposal = next
     return reply
   }
-  const saved = await Promise.all([old(), measure(undefined, offer.all)]).then(([o, d]) => o.tokens - d.tokens, (err: Error) => err)
-  const { reply, next } = toolsAsked(key, { harness: h!, action: offer.action, names: offer.names, chosen: offer.chosen, text: toolsText(offer.names, offer.chosen, saved, offer.action) })!
+  // The base as sent, without the offered tools, with none shaved, and with
+  // the action done to all.
+  const dropped = withPicked(now, offer.names, new Set(offer.names), 'drop')
+  const measured = await Promise.all([old(), measure(undefined, dropped), measure(undefined, []), measure(undefined, offer.all)])
+    .then(([o, w, whole, all]) => ({ own: o.tokens - w.tokens, blocked: whole.tokens - o.tokens, more: o.tokens - all.tokens }), (err: Error) => err)
+  const { reply, next } = toolsAsked(key, { harness: h!, action: offer.action, names: offer.names, chosen: offer.chosen, text: toolsText(offer.names, offer.chosen, measured, offer.action) })!
   proposal = next
   skillsLater = later
   return reply
@@ -1024,7 +1028,7 @@ async function skillsStage(proto: Protocol, h: Harness | undefined, key: string,
   if (!lined.length) return none('Shaver skill optimization failed.')
   const saved = await Promise.all([old(), measure(withLines(policy.skill_shaver_rules ?? [], lined, lines))]).then(([o, w]) => o.tokens - w.tokens, (err: Error) => err)
   const trimmed = lined.filter((s) => current[s.name] !== undefined).map((s) => s.name)
-  return { text: skillsText(lined, lines, new Set(trimmed), saved, Object.keys(generated).length > 0), skills: lined, lines, trimmed }
+  return { text: skillsText(lined, lines, new Set(trimmed), saved), skills: lined, lines, trimmed }
 }
 
 // Lines for `skills` from the session's model, or why there are none, saying
@@ -1033,8 +1037,9 @@ async function skillsStage(proto: Protocol, h: Harness | undefined, key: string,
 async function linesFor(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>, shown: Skill[], skills: Skill[]): Promise<Record<string, string> | string> {
   say(ANALYZING)
   // The lines are asked for while the skills' own tokens are measured: the
-  // base as sent, and without those skills' entries.
+  // base as sent, without those skills' entries, and with no skill shaved.
   const without = measure([...shown.map((s) => ({ name: s.name, action: 'drop' as const })), ...(sessionRules(key, body) ?? [])])
+  const whole = measure([])
   const asked = (async (): Promise<Record<string, string> | string> => {
     let lines: Record<string, string> = {}
     // A model's answer can leave skills out, so those are asked for once more.
@@ -1052,8 +1057,8 @@ async function linesFor(proto: Protocol, h: Harness | undefined, key: string, bo
     }
     return lines
   })()
-  const own = await Promise.all([old(), without]).then(([o, w]) => o.tokens - w.tokens, () => undefined)
-  say(optimizing(shown.length, own))
+  const measured = await Promise.all([old(), without, whole]).then(([o, w, n]) => ({ own: o.tokens - w.tokens, blocked: n.tokens - o.tokens }), () => undefined)
+  say(optimizing(shown.length, measured))
   return asked
 }
 

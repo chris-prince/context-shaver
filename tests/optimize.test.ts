@@ -31,26 +31,42 @@ test('an answer is all, none, keep or item numbers, whatever the case or separat
   assert.equal(pickWords('5-3'), '5-3')
 })
 
-test('the skill table numbers every skill and says which are trimmed', () => {
-  const text = skillsText(skills, lines, new Set(['beta']), 1000, true)
+test('the skill table numbers every skill and says which are trimmed, then what trimming all saves', () => {
+  const text = skillsText(skills, lines, new Set(['beta']), 1000)
   assert.equal(text, [
-    'Can save 1,000 tokens using short skill descriptions:',
+    'Current status:',
     '',
     '| Skill | Trimmed | Trimmed Description |',
     '| --- | --- | --- |',
     '| 1. alpha | No | Alpha line |',
     '| 2. beta | Yes | Beta line |',
     '| 3. gamma | No | Gamma line |',
+    '',
+    "Trimming 'all' would save 1,000 more tokens on every request.",
   ].join('\n'))
+  assert.doesNotMatch(skillsText(skills, lines, new Set(['alpha', 'beta', 'gamma']), 0), /would save/)
 })
 
-test('the tool table numbers every tool and says which are deferred', () => {
-  assert.match(toolsText(['Agent', 'WebFetch'], ['WebFetch'], 900), /^1 tool currently adds 900 tokens on every request, saved by deferring tools until the model needs them:\n\n\| Tool \| Deferred \|\n\| --- \| --- \|\n\| 1\. Agent \| No \|\n\| 2\. WebFetch \| Yes \|$/)
+test('the tool table says what the tools add and save already, numbers every tool, then what deferring all saves', () => {
+  assert.equal(toolsText(['Agent', 'WebFetch'], ['WebFetch'], { own: 1200, blocked: 300, more: 900 }), [
+    '2 tools currently add 1,200 tokens on every request.',
+    'Shaver already saves 300 additional tokens.',
+    'Current status:',
+    '',
+    '| Tool | Deferred |',
+    '| --- | --- |',
+    '| 1. Agent | No |',
+    '| 2. WebFetch | Yes |',
+    '',
+    "Deferring 'all' would save 900 more tokens on every request.",
+  ].join('\n'))
+  assert.match(toolsText(['Agent'], [], { own: 900, blocked: 0, more: 900 }), /^1 tool currently adds 900 tokens on every request\.\nCurrent status:/)
+  assert.doesNotMatch(toolsText(['Agent'], ['Agent'], { own: 50, blocked: 850, more: 0 }), /would save/)
 })
 
 test("where tools can't be deferred, dropping is offered with a warning, and the question asks which to drop", () => {
-  const text = toolsText(['clock.sleep'], [], 40, 'drop')
-  assert.match(text, /^Codex can't defer tools with ChatGPT sign-in, only drop them\. The model can't use a dropped tool at all, so drop with caution\.\n\n1 tool currently adds 40 tokens on every request, saved by dropping tools:\n\n\| Tool \| Dropped \|\n/)
+  const text = toolsText(['clock.sleep'], [], { own: 40, blocked: 0, more: 40 }, 'drop')
+  assert.match(text, /^Codex can't defer tools with ChatGPT sign-in, only drop them\. The model can't use a dropped tool at all, so drop with caution\.\n\n1 tool currently adds 40 tokens on every request\.\nCurrent status:\n\n\| Tool \| Dropped \|\n[^]*Dropping 'all' would save 40 more tokens on every request\.$/)
   const tools = { harness: { name: 'codex' }, action: 'drop' as const, names: ['clock.sleep'], chosen: [], text }
   assert.match(toolsAsked('k', tools)!.reply, /Which tools should be dropped\?/)
   const rules = toolRulesOf(rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', file({}), '/p').text), 'codex')
@@ -58,9 +74,9 @@ test("where tools can't be deferred, dropping is offered with a warning, and the
 })
 
 test('the header counts every skill in the table', () => {
-  assert.equal(optimizing(22, 4226), '22 skills currently add 4,226 tokens on every request. Optimizing...\n\n')
-  assert.equal(optimizing(1, 90), '1 skill currently adds 90 tokens on every request. Optimizing...\n\n')
-  assert.equal(optimizing(1, undefined), '1 skill is listed. Optimizing...\n\n')
+  assert.equal(optimizing(22, { own: 4226, blocked: 1500 }), '22 skills currently add 4,226 tokens on every request.\nShaver already saves 1,500 additional tokens.\nOptimizing...\n\n')
+  assert.equal(optimizing(1, { own: 90, blocked: 0 }), '1 skill currently adds 90 tokens on every request.\nOptimizing...\n\n')
+  assert.equal(optimizing(1, undefined), '1 skill is listed.\nOptimizing...\n\n')
 })
 
 test('the first question is about tools, if there are any to defer', () => {

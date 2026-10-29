@@ -115,43 +115,46 @@ const cell = (s: string) => s.replace(/\|/g, '\\|')
 // What the reply says at once, while the tools are measured.
 export const ANALYZING_TOOLS = 'Analyzing tools...\n\n'
 
+// The tokens `count` skills or tools add to every request as sent, `own`,
+// and those the policy keeps out of it already, `blocked` (said only if
+// any).
+export type Measured = { own: number; blocked: number }
+const adding = (count: number, noun: string, { own, blocked }: Measured) =>
+  `${counted(count, noun)} currently add${count === 1 ? 's' : ''} ${n(own)} tokens on every request.${blocked > 0 ? `\nShaver already saves ${n(blocked)} additional tokens.` : ''}`
+// What the line after a table says doing `verb` to every item saves, `more`.
+const would = (verb: string, more: number) => `\n\n${verb} 'all' would save ${n(more)} more tokens on every request.`
+
 // What the skills part says while the lines are asked for: first at once,
-// then once the skills' tokens are known, `own` (undefined if measuring
-// failed).
+// then once the skills' tokens are known (undefined if measuring failed).
 export const ANALYZING = 'Analyzing skills...\n\n'
-export const optimizing = (skills: number, own: number | undefined) =>
-  `${counted(skills, 'skill')} ${own === undefined ? `${skills === 1 ? 'is' : 'are'} listed` : `currently add${skills === 1 ? 's' : ''} ${n(own)} tokens on every request`}. Optimizing...\n\n`
+export const optimizing = (skills: number, measured: Measured | undefined) =>
+  `${measured ? adding(skills, 'skill', measured) : `${counted(skills, 'skill')} ${skills === 1 ? 'is' : 'are'} listed.`}\nOptimizing...\n\n`
 
 // The skills part of the offer: a table of `lined`, each with its line in
-// `lines` and whether it is trimmed already, headed by the tokens the lines
-// save, `saved` (or why it is unknown). If every line was sent already
-// (`fresh` false), it says only how many skills use one. Each number is in
+// `lines` and whether it is trimmed already, then the tokens trimming all
+// saves, `saved` (or why it is unknown), unless all are. Each number is in
 // its skill's cell, not a column of its own, so the table fits a terminal
 // 63 columns wide; narrower than it fits, Claude Code shows it as a list.
-export function skillsText(lined: readonly Skill[], lines: Record<string, string>, trimmed: ReadonlySet<string>, saved: number | Error, fresh: boolean): string {
-  return [
-    saved instanceof Error
-      ? `Couldn't measure the savings (sending the base failed: ${saved.message}). Short skill descriptions:`
-      : fresh
-        ? `Can save ${n(saved)} tokens using short skill descriptions:`
-        : `${counted(lined.length, 'skill')} use short descriptions:`,
+export function skillsText(lined: readonly Skill[], lines: Record<string, string>, trimmed: ReadonlySet<string>, saved: number | Error): string {
+  const table = [
+    saved instanceof Error ? `Couldn't measure the savings (sending the base failed: ${saved.message}). Short skill descriptions:` : 'Current status:',
     '',
     '| Skill | Trimmed | Trimmed Description |',
     '| --- | --- | --- |',
     ...lined.map((s, i) => `| ${i + 1}. ${cell(s.name)} | ${trimmed.has(s.name) ? 'Yes' : 'No'} | ${cell(lines[s.name])} |`),
   ].join('\n')
+  return saved instanceof Error || trimmed.size === lined.length ? table : table + would('Trimming', saved)
 }
 
-// The tools part of the offer: a table of `names`, each with `action` done to
-// it already or not, headed by the tokens doing it to them all saves, `saved`
-// (or why it is unknown). If it is done to all, it says only that. Dropping
-// is offered where tools can't be deferred, and warned of.
-export function toolsText(names: readonly string[], chosen: readonly string[], saved: number | Error, action: 'defer' | 'drop' = 'defer'): string {
+// The tools part of the offer: the tokens `names` add and those blocked
+// already, a table of them, each with `action` done to it already or not,
+// then the tokens doing it to all saves, `more`, unless it is done to all.
+// Dropping is offered where tools can't be deferred, and warned of.
+export function toolsText(names: readonly string[], chosen: readonly string[], measured: (Measured & { more: number }) | Error, action: 'defer' | 'drop' = 'defer'): string {
   const drop = action === 'drop'
   const table = [`| Tool | ${drop ? 'Dropped' : 'Deferred'} |`, '| --- | --- |', ...names.map((name, i) => `| ${i + 1}. ${cell(name)} | ${chosen.includes(name) ? 'Yes' : 'No'} |`)].join('\n')
   const warning = drop ? "Codex can't defer tools with ChatGPT sign-in, only drop them. The model can't use a dropped tool at all, so drop with caution.\n\n" : ''
-  if (saved instanceof Error) return `${warning}Couldn't measure the savings (sending the base failed: ${saved.message}). Tools:\n\n${table}`
-  const head = chosen.length === names.length ? `${counted(names.length, 'tool')} ${drop ? 'are dropped' : 'load only when the model needs them'}:`
-    : `${counted(names.length - chosen.length, 'tool')} currently add${names.length - chosen.length === 1 ? 's' : ''} ${n(saved)} tokens on every request, saved by ${drop ? 'dropping tools' : 'deferring tools until the model needs them'}:`
-  return `${warning}${head}\n\n${table}`
+  if (measured instanceof Error) return `${warning}Couldn't measure the savings (sending the base failed: ${measured.message}). Tools:\n\n${table}`
+  const more = chosen.length === names.length ? '' : would(drop ? 'Dropping' : 'Deferring', measured.more)
+  return `${warning}${adding(names.length, 'tool', measured)}\nCurrent status:\n\n${table}${more}`
 }
