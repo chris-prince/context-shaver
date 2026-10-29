@@ -74,9 +74,13 @@ test("where tools can't be deferred, dropping is offered with a warning, and the
 })
 
 test('the header counts every skill in the table', () => {
-  assert.equal(optimizing(22, { own: 4226, blocked: 1500 }), '22 skills currently add 4,226 tokens on every request.\nShaver already saves 1,500 additional tokens.\nOptimizing...\n\n')
-  assert.equal(optimizing(1, { own: 90, blocked: 0 }), '1 skill currently adds 90 tokens on every request.\nOptimizing...\n\n')
-  assert.equal(optimizing(1, undefined), '1 skill is listed.\nOptimizing...\n\n')
+  assert.equal(optimizing(22, { own: 4226, blocked: 1500 }, true), '22 skills currently add 4,226 tokens on every request.\nShaver already saves 1,500 additional tokens.\n\nGenerating optimized skill descriptions...\n\n')
+  assert.equal(optimizing(1, { own: 90, blocked: 0 }, true), '1 skill currently adds 90 tokens on every request.\n\nGenerating optimized skill descriptions...\n\n')
+  assert.equal(optimizing(1, undefined, true), '1 skill is listed.\n\nGenerating optimized skill descriptions...\n\n')
+})
+
+test('the header says nothing of generating when every line is already written', () => {
+  assert.equal(optimizing(22, { own: 4226, blocked: 1500 }, false), '22 skills currently add 4,226 tokens on every request.\nShaver already saves 1,500 additional tokens.\n')
 })
 
 test('the first question is about tools, if there are any to defer', () => {

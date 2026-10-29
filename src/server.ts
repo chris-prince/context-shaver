@@ -1058,7 +1058,7 @@ async function linesFor(proto: Protocol, h: Harness | undefined, key: string, bo
     return lines
   })()
   const measured = await Promise.all([old(), without, whole]).then(([o, w, n]) => ({ own: o.tokens - w.tokens, blocked: n.tokens - o.tokens }), () => undefined)
-  say(optimizing(shown.length, measured))
+  say(optimizing(shown.length, measured, skills.length > 0))
   return asked
 }
 

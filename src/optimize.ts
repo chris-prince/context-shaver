@@ -125,10 +125,11 @@ const adding = (count: number, noun: string, { own, blocked }: Measured) =>
 const would = (verb: string, more: number) => `\n\n${verb} 'all' would save ${n(more)} more tokens on every request.`
 
 // What the skills part says while the lines are asked for: first at once,
-// then once the skills' tokens are known (undefined if measuring failed).
+// then once the skills' tokens are known (undefined if measuring failed),
+// and that lines are being written only if some are, `generating`.
 export const ANALYZING = 'Analyzing skills...\n\n'
-export const optimizing = (skills: number, measured: Measured | undefined) =>
-  `${measured ? adding(skills, 'skill', measured) : `${counted(skills, 'skill')} ${skills === 1 ? 'is' : 'are'} listed.`}\nOptimizing...\n\n`
+export const optimizing = (skills: number, measured: Measured | undefined, generating: boolean) =>
+  `${measured ? adding(skills, 'skill', measured) : `${counted(skills, 'skill')} ${skills === 1 ? 'is' : 'are'} listed.`}\n${generating ? '\nGenerating optimized skill descriptions...\n\n' : ''}`
 
 // The skills part of the offer: a table of `lined`, each with its line in
 // `lines` and whether it is trimmed already, then the tokens trimming all
