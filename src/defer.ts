@@ -3,8 +3,9 @@
 // are added to the deferred tools it lists in its environment message, so the
 // model loads them with ToolSearch like the others; with tool search off there
 // is no list, nothing could load the tool, and the request is left as it came.
-// Where the protocol has a search tool for the client to answer (Codex's), it
-// is added instead. Gives the bytes of the definitions it deferred.
+// Where the protocol has a search tool its backend runs (Responses'), it is
+// added instead, unless the client sends a search of its own, which finds only
+// the tools it deferred. Gives the bytes of the definitions it deferred.
 
 import { matches } from './skills.ts'
 
@@ -60,14 +61,14 @@ export function withDeferred(rules: readonly ToolRule[], shown: readonly string[
 
 export function forceDefer(body: Body, rules: readonly ToolRule[], searchTool?: Record<string, unknown>): number {
   if (!searchOn(body, searchTool)) return 0
+  if (searchTool && body.tools?.some((t) => t.type === searchTool.type)) return 0
   const env = envOf(body)
   const defer = new Set(deferrable(body, rules))
   if (!defer.size) return 0
   const bytes = (body.tools ?? []).filter((t) => defer.has(t.name)).reduce((n, t) => n + JSON.stringify(t).length, 0)
   body.tools = body.tools?.map((t) => (defer.has(t.name) ? { ...t, defer_loading: true } : t))
-  if (searchTool) {
-    if (!body.tools?.some((t) => t.type === searchTool.type)) body.tools?.push(searchTool)
-  } else {
+  if (searchTool) body.tools?.push(searchTool)
+  else {
     const list = (t: string) => t.replace(HEAD, HEAD + [...defer].join('\n') + '\n')
     for (const m of env) m.content = typeof m.content === 'string' ? list(m.content) : m.content.map((b) => (b.text?.includes(HEAD) ? { ...b, text: list(b.text) } : b))
   }

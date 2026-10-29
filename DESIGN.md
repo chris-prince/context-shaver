@@ -226,9 +226,11 @@ writes priced as input. `positionsOf` models that as one breakpoint at the end,
 with entries at each user message's end. Summary forks work on both: each
 protocol builds its own summary fork request and reads its answer. The anchor
 breakpoint is Messages-only. Tool deferral works in Claude Code, whose
-`ToolSearch` loads deferred tools, and in Codex, where the proxy adds a
-`tool_search` tool that Codex answers. One tool list serves both, so the tools
-the others are loaded by or run through (Claude's core tools, Codex's
+`ToolSearch` loads deferred tools, and in Codex with an API key, where the
+proxy adds a `tool_search` tool the backend runs. Codex answers searches only
+for the tools it deferred, and ChatGPT's backend, which Codex signed in with
+ChatGPT uses, runs none itself, so there nothing is deferred. One tool list
+serves both, so the tools the others are loaded by or run through (Claude's core tools, Codex's
 `functions.exec` and `functions.wait`) are never deferred.
 
 `bin/opencode-via-shaver` and `bin/codex-via-shaver` run OpenCode and Codex
@@ -303,7 +305,9 @@ any, and `defer`, true or false; the first matching rule wins, and a tool no
 rule matches stays. A harness with no list defers nothing. A deferred tool is
 marked `defer_loading`. On Claude Code it is added to the deferred tools listed
 in the environment message, so the model loads it with `ToolSearch`; on Codex
-the proxy adds the `tool_search` tool. The tools the others are loaded by or
+the proxy adds a `tool_search` tool the backend runs, and moves the tool out
+of the `additional_tools` input item, where the backend ignores
+`defer_loading`, to the top-level tools. The tools the others are loaded by or
 run through (`ToolSearch` on Claude Code, `functions.exec` and `functions.wait`
 on Codex) are never deferred, whatever the rules say. The older forms, a flat
 `tool_list` or `tools_not_deferred` (tools to keep with every other deferred),

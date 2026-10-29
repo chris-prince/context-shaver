@@ -393,7 +393,11 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
     type: 'function', name: 'shaver_probe_confirm', description: 'Confirms this tool-search probe.', defer_loading: true,
     parameters: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'], additionalProperties: false },
   }
-  const searchTool = RESPONSES.searchTool
+  // A search the client answers, which both of Codex's routes accept.
+  const searchTool = {
+    type: 'tool_search', execution: 'client', description: 'Find tools to use for the current task.',
+    parameters: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'], additionalProperties: false },
+  }
   const usage: Record<string, Record<string, number>> = {}
   const send = async (stage: string, body: Record<string, unknown>) => {
     const response = await fetch(context.target, {
@@ -481,7 +485,7 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
     const { body, render, rules } = context.real
     const tools = (body.tools ?? []).map(({ defer_loading, ...t }) => t)
     const deferred = { ...body, tools: [...tools] }
-    if (!forceDefer(deferred, rules, RESPONSES.searchTool)) return { result: 'inconclusive', detail: 'The policy defers none of this request\'s tools.' }
+    if (!forceDefer(deferred, rules, searchTool)) return { result: 'inconclusive', detail: 'The policy defers none of this request\'s tools.' }
     const names = (deferred.tools ?? []).filter((t) => t.defer_loading).map((t) => t.name)
     const loaded = { ...deferred, tools: (deferred.tools ?? []).map(({ defer_loading, ...t }) => t) }
     const asked = (c: Canonical, text: string) => render({ ...c, messages: [{ role: 'user', content: [{ type: 'text', text }] }] }) as any
@@ -496,33 +500,14 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
       const r = await send(stage, { ...wire, store: false, stream: true, max_output_tokens: 48 })
       return r.response.ok ? usage[stage]?.input_tokens : { http: r.response.status, error: r.data?.error?.message ?? r.text.slice(0, 1000) }
     }
-    // The same with each deferred tool moved out of additional_tools into the
-    // top-level tools, in a namespace of the same name.
-    const moved = (wire: any) => {
-      const out: any[] = []
-      const pull = (list: any[], parent?: any): any[] => list.flatMap((t) => {
-        if (t.type === 'namespace' && t.tools) {
-          const kept = pull(t.tools, t)
-          return kept.length ? [{ ...t, tools: kept }] : []
-        }
-        if (!t.defer_loading) return [t]
-        const home = parent && out.find((o) => o.type === 'namespace' && o.name === parent.name)
-        if (!parent) out.push(t)
-        else if (home) home.tools.push(t)
-        else out.push({ ...parent, tools: [t] })
-        return []
-      })
-      const input = (wire.input ?? []).map((it: any) => (it.type === 'additional_tools' ? { ...it, tools: pull(it.tools ?? []) } : it))
-      return { ...wire, input, tools: [...(wire.tools ?? []), ...out] }
-    }
     const call = async (stage: string, wire: any) => {
       const r = await send(stage, { ...wire, store: false, stream: true, max_output_tokens: 400 })
       return r.response.ok ? r.data?.output?.map((item: any) => ({ type: item.type, name: item.name, namespace: item.namespace, execution: item.execution })) : { http: r.response.status, error: r.data?.error?.message ?? r.text.slice(0, 1000) }
     }
     const ask = `Call your ${names[0]} tool now, with any valid arguments.`
     try {
-      const input_tokens = { deferred: await tokens('real_deferred', sent), loaded: await tokens('real_loaded', asked(loaded, 'Reply with ok.')), moved: await tokens('real_moved', moved(sent)) }
-      const asked_for = { tool: names[0], deferred: await call('real_asked', asked(deferred, ask)), moved: await call('real_moved_asked', moved(asked(deferred, ask))) }
+      const input_tokens = { deferred: await tokens('real_deferred', sent), loaded: await tokens('real_loaded', asked(loaded, 'Reply with ok.')) }
+      const asked_for = { tool: names[0], deferred: await call('real_asked', asked(deferred, ask)) }
       return { deferred: names, where, input_tokens, asked_for, detail: 'Deferral works if its input tokens are well below loaded, and asked_for starts with a tool_search_call.' }
     } catch (error) {
       return { result: 'error', detail: error instanceof Error ? error.message : String(error) }
@@ -543,8 +528,12 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
 }
 
 // The protocol a path is, after any /via/; Messages for any other path, which
-// is passed through.
-const protocolOf = (url: string) => [MESSAGES, CHAT, RESPONSES].find((p) => p.serves(url.split('?')[0])) ?? MESSAGES
+// is passed through. ChatGPT's backend for Codex runs no tool search itself,
+// so nothing is deferred there.
+const protocolOf = (url: string, upstream = '') => {
+  const p = [MESSAGES, CHAT, RESPONSES].find((p) => p.serves(url.split('?')[0])) ?? MESSAGES
+  return p === RESPONSES && /^https:\/\/chatgpt\.com(\/|$)/.test(upstream) ? { ...p, defers: false } : p
+}
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const arrived = Date.now()
@@ -554,7 +543,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const original = zstd ? zstdDecompressSync(await readBody(req)) : await readBody(req)
   let raw = original
   const r = route(req.url ?? '/', a.upstream)
-  const proto = protocolOf('error' in r ? '/' : r.url)
+  const proto = 'error' in r ? protocolOf('/') : protocolOf(r.url, r.upstream)
   if (!localHost(req.headers.host)) return refuse(res, proto, 403, `shaver proxy: refused a request for Host ${req.headers.host}`)
   if ('error' in r) return refuse(res, proto, 400, `shaver proxy: ${r.error}`)
   const { upstream, url } = r
@@ -998,6 +987,8 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
 // The tools `:shaver optimize` asks about deferring, those the policy defers
 // already, and the rules deferring them all, or why there are none.
 function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { names: string[]; deferred: string[]; all: ToolRule[] } | string {
+  // Responses with deferring off is ChatGPT's backend for Codex (protocolOf).
+  if (proto.searchTool && !proto.defers) return "Shaver can't defer Codex's tools when Codex signs in with ChatGPT, only with an API key: ChatGPT's backend doesn't run tool searches itself."
   if (!proto.defers || !h?.defers) return "Shaver can't defer tools in this harness yet."
   if (!searchOn(body, proto.searchTool)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
   const now = toolRulesOf(policy, h.name) ?? []

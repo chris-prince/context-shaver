@@ -67,20 +67,17 @@ test('a request becomes the core shape', () => {
   assert.equal((body.messages[2].content as Block[])[0].tool_use_id, 'c1')
 })
 
-test('Codex tool search deferral renders nested function tools and adds the client tool; exec stays loaded', () => {
-  const clock = { type: 'namespace', name: 'clock', tools: [{ type: 'function', name: 'sleep' }] }
+test('Codex tool search deferral moves deferred tools out of additional_tools, in their namespace, and adds the backend\'s search; exec stays loaded', () => {
+  const clock = { type: 'namespace', name: 'clock', description: 'Time tools.', tools: [{ type: 'function', name: 'sleep' }, { type: 'function', name: 'now' }] }
   const w = { ...wire, input: [{ ...wire.input[0], tools: [...(wire.input[0].tools as object[]), clock] }, ...wire.input.slice(1)] }
   const c = canonical(w)
-  forceDefer(c.body, [{ name: '*', defer: true }], RESPONSES.searchTool)
+  forceDefer(c.body, [{ name: 'clock.now', defer: false }, { name: '*', defer: true }], RESPONSES.searchTool)
   const sent = c.render(c.body) as typeof wire
   assert.deepEqual(sent.input[0], {
     type: 'additional_tools', role: 'developer',
-    tools: [{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec' }] }, { ...clock, tools: [{ type: 'function', name: 'sleep', defer_loading: true }] }],
+    tools: [{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec' }] }, { ...clock, tools: [{ type: 'function', name: 'now' }] }],
   })
-  assert.deepEqual(sent.tools, [{
-    type: 'tool_search', execution: 'client', description: 'Find tools to use for the current task.',
-    parameters: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'], additionalProperties: false },
-  }])
+  assert.deepEqual(sent.tools, [{ ...clock, tools: [{ type: 'function', name: 'sleep', defer_loading: true }] }, { type: 'tool_search' }])
 })
 
 test('tool_search calls and outputs become tool blocks and render back with their Responses shape', () => {
@@ -230,4 +227,7 @@ test('a stream is held from response.completed, and text added is a message item
   const searching = RESPONSES.holdClose(() => {})
   searching.push(Buffer.from(event('response.completed', { response: { output: [{ type: 'tool_search_call', call_id: 's1' }] } })))
   assert.equal(searching.ended, false)
+  const searched = RESPONSES.holdClose(() => {})
+  searched.push(Buffer.from(event('response.completed', { response: { output: [{ type: 'tool_search_call', call_id: 's1' }, { type: 'tool_search_output', call_id: 's1' }, item] } })))
+  assert.equal(searched.ended, true)
 })

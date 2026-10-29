@@ -205,15 +205,30 @@ export function canonical(wire: Record<string, unknown>): Wire {
       if (!changed?.defer_loading) return t
       return { ...t, defer_loading: true }
     })
+    // The backend ignores defer_loading in additional_tools, so a tool deferred
+    // there moves to the top-level tools, in a copy of its namespace.
+    const moved: Tool[] = []
+    const pull = (list: Tool[], parent?: Tool): Tool[] => list.flatMap((t) => {
+      if (t.type === 'namespace' && t.tools) {
+        const kept = pull(t.tools, t)
+        return kept.length ? [{ ...t, tools: kept }] : []
+      }
+      if (!t.defer_loading) return [t]
+      const home = parent && moved.find((o) => o.type === 'namespace' && o.name === parent.name)
+      if (!parent) moved.push(t)
+      else if (home) home.tools!.push(t)
+      else moved.push({ ...parent, tools: [t] })
+      return []
+    })
     const input = h.head.map((it) => it.type === 'additional_tools' && Array.isArray(it.tools)
-      ? { ...it, tools: renderTools(it.tools as Tool[]) }
+      ? { ...it, tools: pull(renderTools(it.tools as Tool[])) }
       : it)
     const wireTools = renderTools((wire.tools ?? []) as Tool[])
     const additions = canonicalTools.filter((t) => t.type === 'tool_search' && !originalNames.has(String(t.name ?? t.type)))
     return {
       ...wire,
       ...(h.instructions !== undefined && { instructions: h.instructions }),
-      ...(wire.tools !== undefined || additions.length ? { tools: [...wireTools, ...additions] } : {}),
+      ...(wire.tools !== undefined || moved.length || additions.length ? { tools: [...wireTools, ...moved, ...additions] } : {}),
       input: [...input, ...c.messages.flatMap(renderMsg)],
     }
   }
@@ -290,7 +305,9 @@ function holdClose(write: (s: string) => void): Held {
   return {
     ...h,
     get ended() {
-      return !!output && !output.some((it) => CALLS.has(it.type) || it.type === 'tool_search_call' || it.type === 'local_shell_call')
+      // A search the backend ran has its output in the response too.
+      const searched = (it: Item) => output!.some((o) => o.type === 'tool_search_output' && o.call_id === it.call_id)
+      return !!output && !output.some((it) => CALLS.has(it.type) || (it.type === 'tool_search_call' && !searched(it)) || it.type === 'local_shell_call')
     },
     add(text) {
       const item = { id: `msg_proxy_${Date.now()}_${next}`, type: 'message', status: 'completed', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text, annotations: [] }] }
@@ -317,12 +334,9 @@ export const RESPONSES: Protocol = {
   limits: /^x-codex-(?!turn-state)/,
   automatic: true,
   defers: true,
-  // Run by the client, which answers its tool_search_call with a
-  // tool_search_output holding the tools it loads.
-  searchTool: {
-    type: 'tool_search', execution: 'client', description: 'Find tools to use for the current task.',
-    parameters: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'], additionalProperties: false },
-  },
+  // Run by the backend, which loads the tools it finds itself: Codex answers
+  // searches only for the tools it deferred.
+  searchTool: { type: 'tool_search' },
   // The summary fork's question is a user message of its own after the
   // request's items. ChatGPT's backend only streams, so it stays as it was.
   summaryFork: (sent, text) => ({ ...sent, input: [...(sent.input as Item[]), { type: 'message', role: 'user', content: [{ type: 'input_text', text }] }] }),

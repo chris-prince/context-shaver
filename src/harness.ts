@@ -50,7 +50,7 @@ const CLAUDE: Harness = {
 
 // Codex's tools are run from JavaScript, by one custom exec tool, so no call's
 // input has fields of its own to stub, nor a shell command apart. It loads
-// deferred tools with a client tool_search. It sends its session's ID as
+// the tools it defers with a client tool_search. It sends its session's ID as
 // prompt_cache_key and as the session-id header.
 const CODEX: Harness = {
   name: 'codex',
