@@ -8,7 +8,7 @@
 
 import { withPicked } from './defer.ts'
 import type { Harness } from './harness.ts'
-import { olderTools, parsePolicy, toolListsOf, withList } from './policy.ts'
+import { parsePolicy, withList } from './policy.ts'
 import { withLines, type Skill } from './skills.ts'
 import { counted } from './stats.ts'
 
@@ -83,9 +83,8 @@ export function skillsAsked(shown: Proposal, skills: Skills): { reply: string; n
 // `text` at `file`: the reply, the file's text after it, and what is asked
 // next, if anything. An answer names every item to have trimmed, deferred or
 // dropped, so those not named are turned back; `keep` leaves them all as they are. A
-// tool answer changes only its harness's rules, and puts tool rules in an
-// older form in the current one, whatever it changes. Its `next` asks about
-// skills, whose question skillsAsked adds.
+// tool answer changes only its harness's rules. Its `next` asks about skills,
+// whose question skillsAsked adds.
 export function afterAnswer(shown: Proposal, answer: string, text: string, file: string): { reply: string; text: string; next?: Proposal } {
   const tools = typeof shown.tools === 'string' ? { harness: { name: '', core: [] }, action: 'defer' as const, names: [], chosen: [] } : shown.tools
   const items = shown.asking === 'skills' ? shown.skills.map((s) => s.name) : tools.names
@@ -96,16 +95,13 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
   const changes = items.filter((name) => picked.has(name) !== on.has(name)).length
   let written = text
   const policy = parsePolicy(JSON.parse(text))
-  if (shown.asking === 'skills') {
-    if (changes) {
-      const lines = Object.fromEntries([...picked].map((name) => [name, shown.lines[name]]))
-      written = withList(text, 'skill_list', withLines(policy.skill_list ?? [], shown.skills, lines))
-    }
-  } else if (changes || olderTools(policy)) {
-    const lists = toolListsOf(policy)
+  if (changes && shown.asking === 'skills') {
+    const lines = Object.fromEntries([...picked].map((name) => [name, shown.lines[name]]))
+    written = withList(text, 'skill_shaver_rules', withLines(policy.skill_shaver_rules ?? [], shown.skills, lines))
+  } else if (changes) {
     const { name, core } = tools.harness
-    if (changes) lists[name] = withPicked(lists[name] ?? [], items, picked, core, tools.action)
-    written = withList(text, 'tool_list', lists, 'tools_not_deferred')
+    const lists = { ...policy.tool_shaver_rules, [name]: withPicked(policy.tool_shaver_rules?.[name] ?? [], items, picked, core, tools.action) }
+    written = withList(text, 'tool_shaver_rules', lists)
   }
   const done = [`Modified ${counted(changes, shown.asking === 'skills' ? 'skill' : 'tool')} in shaver policy file.`, file]
   const changed = shown.changed + changes

@@ -261,19 +261,29 @@ is ignored by git, so edit it freely. To go back to the default, delete it and
 restart the proxy (`bin/run-proxy --restart`). To pass every request through
 untrimmed, make it `{}`.
 
-The policy file gives each kind of content a list of rules. A rule is due once
-its item's step (`"on": "step"`) or turn (`"on": "turn"`) is among the
-completed ones, leaving out the latest `wait`; the strongest due rule wins,
+The policy file has three sections: `conversation_shaver_rules` for the parts
+of the conversation, `tool_shaver_rules` for the tools and
+`skill_shaver_rules` for the skill list. A file in an older form (the part
+rules and thresholds at the top level, `tool_list`, `tools_not_deferred`,
+`skill_list`) is rewritten in this one when the proxy starts, the old text
+kept beside it as `policy.json.old`.
+
+`conversation_shaver_rules` gives each kind of part a list of rules. A rule is
+due once its item's step (`"on": "step"`) or turn (`"on": "turn"`) is among
+the completed ones, leaving out the latest `wait`; the strongest due rule wins,
 drop over stub. A kind with no rules is never trimmed.
 
 ```json
 {
-  "tool": [
-    { "on": "step", "wait": 1, "action": "stub" },
-    { "on": "step", "wait": 10, "action": "drop" }
-  ],
-  "skill": [{ "on": "turn", "wait": 0, "action": "drop" }],
-  "reasoning": [{ "on": "turn", "wait": 0, "action": "drop" }]
+  "conversation_shaver_rules": {
+    "tool": [
+      { "on": "step", "wait": 1, "action": "stub" },
+      { "on": "step", "wait": 10, "action": "drop" }
+    ],
+    "skill": [{ "on": "turn", "wait": 0, "action": "drop" }],
+    "reasoning": [{ "on": "turn", "wait": 0, "action": "drop" }],
+    "prompt_and_assistant_text": { "summary_threshold_tokens": 20000 }
+  }
 }
 ```
 
@@ -297,7 +307,7 @@ A stub replaces the lines, a drop the whole Read; the rest of the message (the
 skills list, the environment block) stays. In the base, before the first
 response, it is left alone.
 
-`tool_list` says which tools each harness sends in full to defer, keyed by the
+`tool_shaver_rules` says which tools each harness sends in full to defer, keyed by the
 harness's name (`claude`, `codex`), since tool names and a `*` rule mean
 something different in each. Each rule has a `name`, a tool name or `*` for
 any, and an `action`, `keep`, `defer` or `drop`; the first matching rule wins, and a tool no
@@ -311,10 +321,10 @@ the proxy adds a `tool_search` tool the backend runs, and moves the tool out
 of the `additional_tools` input item, where the backend ignores
 `defer_loading`, to the top-level tools. The tools the others are loaded by or
 run through (`ToolSearch` on Claude Code, `functions.exec` and `functions.wait`
-on Codex) are never deferred or dropped, whatever the rules say. The older forms, a flat
-`tool_list` or `tools_not_deferred` (tools to keep with every other deferred),
-are read as Claude Code's, since only it deferred tools then, and a rule's older
-`defer`, true or false, as its action. A tool answer rewrites them. With tool search
+on Codex) are never deferred or dropped, whatever the rules say. Of the older
+forms, a flat `tool_list` or `tools_not_deferred` (tools to keep with every
+other deferred) becomes Claude Code's rules, since only it deferred tools then,
+and a rule's `defer`, true or false, its action. With tool search
 off (no `ENABLE_TOOL_SEARCH` on Claude Code) nothing is deferred. Changing the
 rules rewrites the cache of open sessions once.
 
@@ -331,15 +341,14 @@ answered; the skills' base keeps the tool rules the offer began with. Where
 tools can't be deferred it offers dropping instead, the same way, warning that
 the model can't use a dropped tool.
 Deferring all writes those rules, some
-adds a deferring rule for each, in the asking harness's list only. Any answer,
-`keep` too, rewrites an older form as keyed lists.
+adds a deferring rule for each, in the asking harness's list only.
 With tool search off it says how to turn it on.
 
-`skill_list` shortens the list of skills Claude Code gives the model in its
+`skill_shaver_rules` shortens the list of skills Claude Code gives the model in its
 environment message, or Codex in its developer message (`### Available
 skills`, each entry ending with where its SKILL.md is, which stays). On
 Responses the core sees the head as the system, and a part it changed there is
-sent with its new text, every other item as it came. Each rule has a `match`, a skill name with `*` for any
+sent with its new text, every other item as it came. Each rule has a `name`, a skill name with `*` for any
 run of characters, and an `action`: `keep`, `drop`, or `stub` with `sentences`,
 which keeps that many sentences of the description. Each skill takes the first
 rule that matches it, so `keep` rules go before a broader `stub` or `drop`; a
@@ -377,13 +386,16 @@ deferred, the rest are not, and `keep` leaves the policy as it is. Skills
 already trimmed keep their lines; the others get new ones. The policy changes
 in memory and in the policy file, and every session gets them from its next
 request. The file is read
-again, and only its top-level `skill_list` value is rewritten, so edits by hand
+again, and only its top-level `skill_shaver_rules` value is rewritten, so edits by hand
 elsewhere in it stay as they were. Probes found 6-word lines made the model
 pick the right skill more often than the full descriptions, at about a tenth of
 their tokens. Its requests' cost counts against the skill list's saving. A
 session's stats start again only with a new conversation, so a change asks
 for `/clear` in every active session on the machine.
 
+The prompts and the assistant's text are never stubbed or dropped, only
+summarized, so their entry in `conversation_shaver_rules`,
+`prompt_and_assistant_text`, holds two thresholds rather than rules.
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens
 before the frontier. The default is 20000; a model can set its own

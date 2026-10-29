@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { deferrable, dropTools, forceDefer, offerable, withPicked, type ToolRule } from '../src/defer.ts'
-import { toolRulesOf } from '../src/policy.ts'
+import { toolRulesOf, upgraded } from '../src/policy.ts'
 import { RESPONSES } from '../src/responses.ts'
 
 const HEAD = 'Use ToolSearch with query "select:<name>[,<name>...]" to load tool schemas before calling them:\n'
@@ -27,18 +27,17 @@ test('each tool takes the first rule matching it, and one no rule matches is sen
 })
 
 test("each harness has its own tool rules; the older forms are Claude Code's, a tool_list winning over tools_not_deferred", () => {
-  const lists = { tool_list: { claude: keepBash, codex: [{ name: '*', action: 'keep' }] } }
+  const lists = { tool_shaver_rules: { claude: keepBash, codex: [{ name: '*', action: 'keep' as const }] } }
   assert.deepEqual(toolRulesOf(lists, 'claude'), keepBash)
   assert.deepEqual(toolRulesOf(lists, 'codex'), [{ name: '*', action: 'keep' }])
   assert.equal(toolRulesOf(lists, 'opencode'), undefined)
   assert.equal(toolRulesOf(lists, undefined), undefined)
-  assert.deepEqual(toolRulesOf({ tools_not_deferred: ['Bash'] }, 'claude'), keepBash)
-  assert.equal(toolRulesOf({ tools_not_deferred: ['Bash'] }, 'codex'), undefined)
-  assert.deepEqual(toolRulesOf({ tool_list: keepBash }, 'claude'), keepBash)
-  assert.equal(toolRulesOf({ tool_list: keepBash }, 'codex'), undefined)
-  assert.deepEqual(toolRulesOf({ tools_not_deferred: ['Bash'], tool_list: [] }, 'claude'), [])
-  assert.deepEqual(toolRulesOf({ tool_list: { claude: [{ name: 'Bash', defer: false }, { name: '*', defer: true }] } }, 'claude'), keepBash)
   assert.equal(toolRulesOf({}, 'claude'), undefined)
+  const now = (v: Record<string, unknown>) => upgraded(v)?.tool_shaver_rules
+  assert.deepEqual(now({ tools_not_deferred: ['Bash'] }), { claude: keepBash })
+  assert.deepEqual(now({ tool_list: keepBash }), { claude: keepBash })
+  assert.deepEqual(now({ tools_not_deferred: ['Bash'], tool_list: [] }), { claude: [] })
+  assert.deepEqual(now({ tool_list: { claude: [{ name: 'Bash', defer: false }, { name: '*', defer: true }], codex: [] } }), { claude: keepBash, codex: [] })
 })
 
 test('picked tools are deferred and the others shown kept, whatever the rules did before; the core tools stay loaded', () => {

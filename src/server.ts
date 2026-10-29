@@ -34,7 +34,7 @@ import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion,
 import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
-import { loadPolicy, parsePolicy, seedPolicy, toolRulesOf, type Policy } from './policy.ts'
+import { loadPolicy, parsePolicy, seedPolicy, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
 import { coveredBy, summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
@@ -58,6 +58,8 @@ if (a.policy === repoPolicy) seedPolicy(repoPolicy, path.resolve(import.meta.dir
 const loaded = loadPolicy(a.policy)
 if (!loaded) console.error(`shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
 const policy = loaded ?? {}
+const parts = policy.conversation_shaver_rules ?? {}
+const { summary_threshold_tokens: summaryAt, memoir_threshold_tokens: memoirAt } = textRules(policy)
 const ttlMs = Number(a['cache-ttl-seconds']) * 1000
 const stateDir = path.join(a.dir, 'state')
 const logRoot = path.join(a.dir, LOG_DIR)
@@ -82,7 +84,7 @@ type State = { applied: Clock; entries?: Record<string, number>; thinking?: Reco
 // warm the ones it has, so new ones don't rewrite it, unless lines from
 // `:shaver optimize` were applied since; else the policy's.
 const skillListOf = (s: State | undefined, warm: boolean, now: number): SkillList | undefined =>
-  s?.skillList && warm && s.skillList.at > skillsForcedAt ? s.skillList : policy.skill_list && { rules: policy.skill_list, at: now }
+  s?.skillList && warm && s.skillList.at > skillsForcedAt ? s.skillList : policy.skill_shaver_rules && { rules: policy.skill_shaver_rules, at: now }
 
 // A state saved before the applied clock, with a frontier, is read as none.
 function load(key: string): State | undefined {
@@ -190,13 +192,13 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const thinking = new Map(Object.entries(s?.thinking ?? {}))
   // The records it sends, and how many of them as the memoir: as sent before,
   // and on a cold cache, all there are.
-  const file = policy.summary_threshold_tokens ? loadSummaries(key) : undefined
+  const file = summaryAt ? loadSummaries(key) : undefined
   const chain = file ? validChain(file.chain, msgs) : []
   const before = Math.min(s?.summarized ?? 0, chain.length)
   const mergedBefore = Math.min(s?.merged ?? 0, before)
   let records = before
   let merged = mergedBefore
-  let keep = summarized(apply(msgs, policy, held, conv), msgs, chain.slice(0, records), merged)
+  let keep = summarized(apply(msgs, parts, held, conv), msgs, chain.slice(0, records), merged)
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   const allMerged = Math.min(file?.merged ?? 0, chain.length)
   let covers: string[] | undefined
@@ -204,11 +206,11 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     if (records < chain.length) covers = coveredBy(keep, msgs, chain, records).map(keyOf)
     records = chain.length
     merged = allMerged
-    keep = summarized(apply(msgs, policy, held, conv), msgs, chain, merged)
+    keep = summarized(apply(msgs, parts, held, conv), msgs, chain, merged)
   }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
-  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, policy, conv), msgs, chain.slice(0, records), merged).msgs, seed, thinking)
+  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, parts, conv), msgs, chain.slice(0, records), merged).msgs, seed, thinking)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
   const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
   const freed = spare > 0 ? undefined : freedSystem(body.system)
@@ -227,7 +229,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   let d: Decision | undefined
   const horizon = model.horizon(latestOf(key)?.requests ?? 0)
   if (clock.steps > held.steps || clock.turns > held.turns) {
-    next = summarized(apply(msgs, policy, clock, conv), msgs, chain.slice(0, records), merged)
+    next = summarized(apply(msgs, parts, clock, conv), msgs, chain.slice(0, records), merged)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
   }
@@ -239,7 +241,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const r = readThrough(pos, live, model.lookback)
   const touched = pos.filter((q, i) => q.breakpoint || (auto && !q.joined) || i === r).map((q) => q.prefix)
   // Where trimming ends in the messages as sent, which drops shorten.
-  const ends = trimmedEnd(msgs, policy, applied)
+  const ends = trimmedEnd(msgs, parts, applied)
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
@@ -258,7 +260,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   described.parts.filter((q) => q.kinds.memoir).forEach((q) => (q.born = bornFrom(latestOf(key), msgs, starts[0])))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornFrom(latestOf(key), msgs, starts[merged + k])))
   if (suggestion) described.suggestion = true
-  const after = policy.summary_threshold_tokens && (model.summaryThreshold ?? policy.summary_threshold_tokens)
+  const after = summaryAt && (model.summaryThreshold ?? summaryAt)
   // Whether to send a summary fork is known once the response's counts are in.
   const summaryFork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m)) : undefined
   const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
@@ -318,7 +320,7 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   const toolRules = toolRulesOf(policy, h?.name)
   if (toolRules) dropTools(sent, toolRules)
   if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, proto.searchTool)
-  const trimmed = policy.skill_list ? shaveSkills(sent, policy.skill_list).trimmed : undefined
+  const trimmed = policy.skill_shaver_rules ? shaveSkills(sent, policy.skill_shaver_rules).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
   // `:shaver optimize` requests made here are charged to the skill list.
@@ -845,7 +847,7 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     if (record) {
       const s = loadSummaries(key)
       const chain = [...s.chain.filter((r) => r.endsBefore <= f.start), record]
-      merged = policy.memoir_threshold_tokens ? mergedOf(chain, s.merged ?? 0, policy.memoir_threshold_tokens) : 0
+      merged = memoirAt ? mergedOf(chain, s.merged ?? 0, memoirAt) : 0
       writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain, merged }))
     }
     if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record?.arcs?.length, merged, usage })
@@ -940,12 +942,9 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
       const now = parsePolicy(JSON.parse(written))
       writeFileSync(a.policy, written)
       if (shown.asking === 'skills') {
-        policy.skill_list = now.skill_list
+        policy.skill_shaver_rules = now.skill_shaver_rules
         skillsForcedAt = Date.now()
-      } else {
-        policy.tool_list = now.tool_list
-        delete policy.tools_not_deferred
-      }
+      } else policy.tool_shaver_rules = now.tool_shaver_rules
     }
     proposal = next
     const later = skillsLater?.key === key ? skillsLater : undefined
@@ -1009,11 +1008,11 @@ async function skillsStage(proto: Protocol, h: Harness | undefined, key: string,
   const none = (text: string) => ({ text, skills: [], lines: {}, trimmed: [] })
   const listed = skillsOf(body)
   if (!listed.length) return none('No skills found in this session.')
-  const shown = keptWhole(listed, policy.skill_list ?? [])
+  const shown = keptWhole(listed, policy.skill_shaver_rules ?? [])
   if (!shown.length) return none('All skills are already trimmed in shaver policy file, no changes needed.')
   const current: Record<string, string> = {}
   for (const s of shown) {
-    const line = lineOf(s, policy.skill_list ?? [])
+    const line = lineOf(s, policy.skill_shaver_rules ?? [])
     if (line !== undefined) current[s.name] = line
   }
   const generated = await linesFor(proto, h, key, body, render, target, headers, say, old, measure, shown, shown.filter((s) => current[s.name] === undefined))
@@ -1022,7 +1021,7 @@ async function skillsStage(proto: Protocol, h: Harness | undefined, key: string,
   const lined = shown.filter((s) => lines[s.name])
   // Only if both answers were no JSON object or had every line too long.
   if (!lined.length) return none('Shaver skill optimization failed.')
-  const saved = await Promise.all([old(), measure(withLines(policy.skill_list ?? [], lined, lines))]).then(([o, w]) => o.tokens - w.tokens, (err: Error) => err)
+  const saved = await Promise.all([old(), measure(withLines(policy.skill_shaver_rules ?? [], lined, lines))]).then(([o, w]) => o.tokens - w.tokens, (err: Error) => err)
   const trimmed = lined.filter((s) => current[s.name] !== undefined).map((s) => s.name)
   return { text: skillsText(lined, lines, new Set(trimmed), saved, Object.keys(generated).length > 0), skills: lined, lines, trimmed }
 }
@@ -1034,7 +1033,7 @@ async function linesFor(proto: Protocol, h: Harness | undefined, key: string, bo
   say(ANALYZING)
   // The lines are asked for while the skills' own tokens are measured: the
   // base as sent, and without those skills' entries.
-  const without = measure([...shown.map((s) => ({ match: s.name, action: 'drop' as const })), ...(sessionRules(key, body) ?? [])])
+  const without = measure([...shown.map((s) => ({ name: s.name, action: 'drop' as const })), ...(sessionRules(key, body) ?? [])])
   const asked = (async (): Promise<Record<string, string> | string> => {
     let lines: Record<string, string> = {}
     // A model's answer can leave skills out, so those are asked for once more.

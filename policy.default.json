@@ -1,19 +1,22 @@
 {
-  "tool": [
-    { "on": "step", "wait": 4, "action": "drop" },
-    { "on": "turn", "wait": 2, "action": "drop" }
-  ],
-  "skill": [
-    { "on": "step", "wait": 10, "action": "stub" },
-    { "on": "step", "wait": 100, "action": "drop" }
-  ],
-  "tool_search": [
-    { "on": "turn", "wait": 10, "action": "drop" }
-  ],
-  "reasoning": [
-    { "on": "turn", "wait": 0, "action": "drop" }
-  ],
-  "tool_list": {
+  "conversation_shaver_rules": {
+    "tool": [
+      { "on": "step", "wait": 4, "action": "drop" },
+      { "on": "turn", "wait": 2, "action": "drop" }
+    ],
+    "skill": [
+      { "on": "step", "wait": 10, "action": "stub" },
+      { "on": "step", "wait": 100, "action": "drop" }
+    ],
+    "tool_search": [
+      { "on": "turn", "wait": 10, "action": "drop" }
+    ],
+    "reasoning": [
+      { "on": "turn", "wait": 0, "action": "drop" }
+    ],
+    "prompt_and_assistant_text": { "summary_threshold_tokens": 20000, "memoir_threshold_tokens": 15000 }
+  },
+  "tool_shaver_rules": {
     "claude": [
       { "name": "Bash", "action": "keep" },
       { "name": "Edit", "action": "keep" },
@@ -22,9 +25,7 @@
       { "name": "*", "action": "defer" }
     ]
   },
-  "skill_list": [
-    { "match": "*", "action": "keep" }
-  ],
-  "summary_threshold_tokens": 20000,
-  "memoir_threshold_tokens": 15000
+  "skill_shaver_rules": [
+    { "name": "*", "action": "keep" }
+  ]
 }

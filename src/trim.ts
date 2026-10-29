@@ -10,7 +10,7 @@
 import type { Model } from './models.ts'
 import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
-import { treatment, type Action, type Policy } from './policy.ts'
+import { treatment, type Action, type PartRules } from './policy.ts'
 
 // Where trimming ends in the messages: the index of the first message past
 // the steps (or turns) the furthest-reaching rule covers, for tool calls and
@@ -105,14 +105,14 @@ export type Applied = {
 // - Dropped reasoning is the message's thinking, unless that would leave it
 //   empty: an empty message is refused. One left empty by dropped calls is
 //   removed; the API joins the neighbours that leaves in the same role.
-export function apply(msgs: readonly ApiMsg[], policy: Policy, clock: Clock, conv: Conventions = CLAUDE_CODE): Applied {
+export function apply(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock, conv: Conventions = CLAUDE_CODE): Applied {
   return applyAt(msgs, policy, heldTo(clock, msgs), conv)
 }
 
 // The messages trimmed as far as the policy ever takes them: every rule due.
-export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: Policy, conv: Conventions = CLAUDE_CODE) => applyAt(msgs, policy, { steps: Infinity, turns: Infinity }, conv)
+export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: PartRules, conv: Conventions = CLAUDE_CODE) => applyAt(msgs, policy, { steps: Infinity, turns: Infinity }, conv)
 
-function applyAt(msgs: readonly ApiMsg[], policy: Policy, c: Clock, conv: Conventions): Applied {
+function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Conventions): Applied {
   const items = new Map(itemsOf(msgs, conv).map((it) => [it.id, it]))
   const undroppable = new Set<unknown>()
   for (;;) {
@@ -135,7 +135,7 @@ function pairsOf(m: ApiMsg | undefined, to: Set<unknown>) {
     else if (b.type === 'tool_result') to.add(b.tool_use_id)
 }
 
-function applyKeeping(msgs: readonly ApiMsg[], policy: Policy, c: Clock, items: Map<string, Item>, undroppable: ReadonlySet<unknown>, conv: Conventions): Applied {
+function applyKeeping(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, items: Map<string, Item>, undroppable: ReadonlySet<unknown>, conv: Conventions): Applied {
   const due = new Map<unknown, Action>()
   for (const it of items.values()) {
     const rules = policy[it.kind]
@@ -228,11 +228,11 @@ export function transitions(before: Applied, after: Applied): Record<string, num
 
 // Where trimming ends at a clock. Behind it, content has had at least its
 // first treatment.
-export function trimmedEnd(msgs: readonly ApiMsg[], policy: Policy, clock: Clock): Ends {
+export function trimmedEnd(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock): Ends {
   const c = heldTo(clock, msgs)
   const { stepOf } = stepsOf(msgs)
   const { turnOf } = turnsOf(msgs)
-  const end = (rules: Policy[Kind]) =>
+  const end = (rules: PartRules[Kind]) =>
     Math.max(
       0,
       ...(rules ?? []).map((r) => {

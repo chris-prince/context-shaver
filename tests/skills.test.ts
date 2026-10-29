@@ -15,11 +15,11 @@ const textOf = (b: ReturnType<typeof request>) => (b.messages[1].content as { te
 test('each skill takes the first rule matching its name; one matching none is kept', () => {
   const b = request()
   const rules: SkillRule[] = [
-    { match: 'claude-api', action: 'keep' },
-    { match: 'artifact-*', action: 'drop' },
-    { match: 'anthropic-skills:*', action: 'drop' },
-    { match: 'claude-*', action: 'drop' },
-    { match: 'i*', action: 'stub', sentences: 1 },
+    { name: 'claude-api', action: 'keep' },
+    { name: 'artifact-*', action: 'drop' },
+    { name: 'anthropic-skills:*', action: 'drop' },
+    { name: 'claude-*', action: 'drop' },
+    { name: 'i*', action: 'stub', sentences: 1 },
   ]
   const before = textOf(b).length
   const out = shaveSkills(b, rules)
@@ -29,7 +29,7 @@ test('each skill takes the first rule matching its name; one matching none is ke
 
 test('a stub keeps the first sentences of a description, its later lines too', () => {
   const b = request()
-  const out = shaveSkills(b, [{ match: '*', action: 'stub', sentences: 1 }])
+  const out = shaveSkills(b, [{ name: '*', action: 'stub', sentences: 1 }])
   assert.equal(textOf(b), `env\n\n${HEAD}- init: Initialize a CLAUDE.md file.\n- claude-api: Reference for the Claude API.\n- artifact-design: Design guidance.\n- anthropic-skills:docs: docs (editable docs).\n\nmore`)
   // Every entry but init's, unchanged, as JSON counts them.
   const shortened = ['- claude-api: Reference for the Claude API.', '- artifact-design: Design guidance.', '- anthropic-skills:docs: docs (editable docs).']
@@ -38,14 +38,14 @@ test('a stub keeps the first sentences of a description, its later lines too', (
 
 test('with every skill dropped the heading goes too', () => {
   const b = request()
-  shaveSkills(b, [{ match: '*', action: 'drop' }])
+  shaveSkills(b, [{ name: '*', action: 'drop' }])
   assert.equal(textOf(b), 'env\n\nmore')
 })
 
 test('a list quoted outside a system message is left alone', () => {
   const b = request()
   b.messages[1].role = 'user'
-  assert.equal(shaveSkills(b, [{ match: '*', action: 'drop' }]).cut, 0)
+  assert.equal(shaveSkills(b, [{ name: '*', action: 'drop' }]).cut, 0)
   assert.equal(textOf(b), textOf(request()))
 })
 
@@ -55,8 +55,8 @@ test("a written line stands in for the description it replaces, and only that on
   const api = skills.find((s) => s.name === 'claude-api')!
   const b = request()
   shaveSkills(b, [
-    { match: 'init', action: 'stub', text: 'Make CLAUDE.md', replaces: descriptionHash(init.description) },
-    { match: 'claude-api', action: 'stub', text: 'Claude API reference', replaces: descriptionHash('an older description') },
+    { name: 'init', action: 'stub', text: 'Make CLAUDE.md', replaces: descriptionHash(init.description) },
+    { name: 'claude-api', action: 'stub', text: 'Claude API reference', replaces: descriptionHash('an older description') },
   ])
   assert.ok(textOf(b).includes('- init: Make CLAUDE.md\n'))
   assert.ok(textOf(b).includes(`- claude-api: ${api.description}\n`))
@@ -65,7 +65,7 @@ test("a written line stands in for the description it replaces, and only that on
 test('a written line that replaces * stands in for any description, if shorter', () => {
   const b = request()
   const { description } = skillsOf(b).find((s) => s.name === 'claude-api')!
-  shaveSkills(b, [{ match: 'claude-api', action: 'stub', text: 'Claude API reference', replaces: '*' }, { match: 'init', action: 'stub', text: 'x'.repeat(500), replaces: '*' }])
+  shaveSkills(b, [{ name: 'claude-api', action: 'stub', text: 'Claude API reference', replaces: '*' }, { name: 'init', action: 'stub', text: 'x'.repeat(500), replaces: '*' }])
   assert.ok(textOf(b).includes('- claude-api: Claude API reference\n'))
   assert.ok(!textOf(b).includes(description))
   assert.ok(textOf(b).includes('- init: Initialize'))
@@ -74,7 +74,7 @@ test('a written line that replaces * stands in for any description, if shorter',
 test('a written line no shorter than its description leaves the description', () => {
   const b = request()
   const { description } = skillsOf(b).find((s) => s.name === 'artifact-design')!
-  shaveSkills(b, [{ match: 'artifact-design', action: 'stub', text: description + ' More.', replaces: descriptionHash(description) }])
+  shaveSkills(b, [{ name: 'artifact-design', action: 'stub', text: description + ' More.', replaces: descriptionHash(description) }])
   assert.equal(textOf(b), textOf(request()))
 })
 
@@ -98,10 +98,10 @@ test('a skill listed again later takes its later entry, and the base ends at the
 test('lines are written for the skills kept whole, lines written before aside', () => {
   const skills = skillsOf(request())
   const rules: SkillRule[] = [
-    { match: 'init', action: 'stub', text: 'old', replaces: 'x' },
-    { match: 'claude-*', action: 'keep' },
-    { match: 'artifact-*', action: 'drop' },
-    { match: 'anthropic-*', action: 'stub', sentences: 1 },
+    { name: 'init', action: 'stub', text: 'old', replaces: 'x' },
+    { name: 'claude-*', action: 'keep' },
+    { name: 'artifact-*', action: 'drop' },
+    { name: 'anthropic-*', action: 'stub', sentences: 1 },
   ]
   assert.deepEqual(keptWhole(skills, rules).map((s) => s.name), ['init', 'claude-api'])
 })
@@ -132,8 +132,8 @@ test("Codex's list is read and shortened in the system, each entry keeping where
   ])
   assert.equal(listMessage(b), -1)
   const out = shaveSkills(b, [
-    { match: 'imagegen', action: 'stub', text: 'Make images', replaces: descriptionHash(skills[0].description) },
-    { match: 'r2:*', action: 'drop' },
+    { name: 'imagegen', action: 'stub', text: 'Make images', replaces: descriptionHash(skills[0].description) },
+    { name: 'r2:*', action: 'drop' },
   ])
   assert.equal(out.trimmed, '- imagegen: Make images (file: /s/imagegen/SKILL.md)'.length)
   assert.equal(b.system[0].text, 'You are Codex.')
@@ -142,18 +142,18 @@ test("Codex's list is read and shortened in the system, each entry keeping where
 
 test('written lines go ahead of the other rules, in place of lines written before', () => {
   const skills = skillsOf(request())
-  const rules: SkillRule[] = [{ match: 'claude-api', action: 'stub', text: 'old', replaces: 'x' }, { match: 'artifact-*', action: 'drop' }]
+  const rules: SkillRule[] = [{ name: 'claude-api', action: 'stub', text: 'old', replaces: 'x' }, { name: 'artifact-*', action: 'drop' }]
   const out = withLines(rules, skills, { init: 'Set up project memory' })
-  assert.deepEqual(out, [{ match: 'init', action: 'stub', text: 'Set up project memory', replaces: '*' }, { match: 'artifact-*', action: 'drop' }])
+  assert.deepEqual(out, [{ name: 'init', action: 'stub', text: 'Set up project memory', replaces: '*' }, { name: 'artifact-*', action: 'drop' }])
   // A skill not among those given, trimmed already or listed elsewhere, keeps its line.
   assert.deepEqual(withLines(rules, skills.filter((s) => s.name === 'init'), { init: 'Set up project memory' }).slice(1), rules)
 })
 
 test("a skill's line counts as sent only while its rule is the first to match and the line is still its description's", () => {
   const [init] = skillsOf(request())
-  const line: SkillRule = { match: 'init', action: 'stub', text: 'Set up project memory', replaces: descriptionHash(init.description) }
+  const line: SkillRule = { name: 'init', action: 'stub', text: 'Set up project memory', replaces: descriptionHash(init.description) }
   assert.equal(lineOf(init, [line]), 'Set up project memory')
-  assert.equal(lineOf(init, [{ match: 'in*', action: 'keep' }, line]), undefined)
+  assert.equal(lineOf(init, [{ name: 'in*', action: 'keep' }, line]), undefined)
   assert.equal(lineOf(init, [{ ...line, replaces: 'changed' }]), undefined)
   assert.equal(lineOf(init, []), undefined)
 })

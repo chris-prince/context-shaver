@@ -1,7 +1,7 @@
 // Shortens the skill list Claude Code sends in its environment message, or
 // Codex in its developer message, by the
-// policy's `skill_list` (policy.ts): each listed skill takes the first rule
-// whose pattern matches its name, and is kept, stubbed, or dropped from the
+// policy's `skill_shaver_rules` (policy.ts): each listed skill takes the first
+// rule whose `name` pattern matches its name, and is kept, stubbed, or dropped from the
 // list. With no rule matching it is kept. A stub is the first sentences of the
 // description, or a line `:shaver optimize` wrote for it (server.ts), which
 // `replaces` names by the hash of the description it was written from, or `*`
@@ -20,7 +20,7 @@ const FORMATS: Format[] = [
   { head: '### Available skills\n', end: /\n(?!- )/g, tail: / \(file: [^()]*\)$/ },
 ]
 
-export type SkillRule = { match: string; action: 'keep' | 'stub' | 'drop'; sentences?: number; text?: string; replaces?: string }
+export type SkillRule = { name: string; action: 'keep' | 'stub' | 'drop'; sentences?: number; text?: string; replaces?: string }
 export type Skill = { name: string; description: string }
 
 // The hash a written line's `replaces` holds.
@@ -80,7 +80,7 @@ function shave(text: string, rules: readonly SkillRule[]): { text: string; trimm
   let trimmed = 0
   const kept = list.entries.flatMap((entry) => {
     const skill = entryOf(entry, list.format)
-    const rule = skill && rules.find((r) => matches(r.match, skill.name))
+    const rule = skill && rules.find((r) => matches(r.name, skill.name))
     if (rule?.action === 'drop') return []
     if (rule?.action !== 'stub') return [entry]
     const stub = `- ${skill!.name}: ` + stubOf(skill!.description, rule) + skill!.tail
@@ -129,7 +129,7 @@ export function skillsOf(body: Body): Skill[] {
 // lines it wrote before don't count, so it writes those again.
 export const keptWhole = (skills: readonly Skill[], rules: readonly SkillRule[]): Skill[] =>
   skills.filter((s) => {
-    const rule = rules.find((r) => r.text === undefined && matches(r.match, s.name))
+    const rule = rules.find((r) => r.text === undefined && matches(r.name, s.name))
     return !rule || rule.action === 'keep'
   })
 
@@ -179,7 +179,7 @@ export function linesOf(answer: string, skills: readonly Skill[]): Record<string
 // The line the rules send for the skill in place of its description, if one
 // written for it is.
 export function lineOf(skill: Skill, rules: readonly SkillRule[]): string | undefined {
-  const rule = rules.find((r) => matches(r.match, skill.name))
+  const rule = rules.find((r) => matches(r.name, skill.name))
   if (rule?.action === 'stub' && rule.text !== undefined && stubOf(skill.description, rule) === rule.text) return rule.text
 }
 
@@ -188,6 +188,6 @@ export function lineOf(skill: Skill, rules: readonly SkillRule[]): string | unde
 // whatever the description becomes. Lines for other skills, trimmed already or
 // listed only elsewhere, stay.
 export const withLines = (rules: readonly SkillRule[], skills: readonly Skill[], lines: Record<string, string>): SkillRule[] => [
-  ...skills.filter((s) => lines[s.name]).map((s) => ({ match: s.name, action: 'stub' as const, text: lines[s.name], replaces: '*' })),
-  ...rules.filter((r) => r.text === undefined || !skills.some((s) => s.name === r.match)),
+  ...skills.filter((s) => lines[s.name]).map((s) => ({ name: s.name, action: 'stub' as const, text: lines[s.name], replaces: '*' })),
+  ...rules.filter((r) => r.text === undefined || !skills.some((s) => s.name === r.name)),
 ]

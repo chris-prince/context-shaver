@@ -63,7 +63,7 @@ type Proxy = { url: string; policy: string; child: ChildProcess; err: () => stri
 async function proxy(up: string): Promise<Proxy> {
   const dir = mkdtempSync(path.join(tmpdir(), 'optimize-e2e-'))
   const policy = path.join(dir, 'policy.json')
-  writeFileSync(policy, JSON.stringify({ skill_list: [{ match: '*', action: 'keep' }] }, null, 2) + '\n')
+  writeFileSync(policy, JSON.stringify({ skill_shaver_rules: [{ name: '*', action: 'keep' }] }, null, 2) + '\n')
   const port = await freePort()
   const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', String(port), '--upstream', up, '--dir', dir, '--policy', policy], { stdio: ['ignore', 'ignore', 'pipe'] })
   let err = ''
@@ -135,7 +135,7 @@ async function converse(p: Proxy, prompts: string[], search: boolean): Promise<s
   return replies
 }
 
-const stubbed = (policy: string) => JSON.parse(readFileSync(policy, 'utf8')).skill_list.filter((r: { text?: string }) => r.text).map((r: { match: string }) => r.match)
+const stubbed = (policy: string) => JSON.parse(readFileSync(policy, 'utf8')).skill_shaver_rules.filter((r: { text?: string }) => r.text).map((r: { name: string }) => r.name)
 const listSent = (up: Upstream) => JSON.stringify(up.bodies.at(-1).messages.find((m: { role: string }) => m.role === 'system'))
 
 async function scenario(prompts: string[], search = false) {
@@ -187,8 +187,8 @@ test('with tool search on, tools are asked about first and the skills, worked ou
   assert.match(replies[2], /Which skills should be trimmed\?/)
   assert.match(replies[3], /^Modified 2 skills/)
   assert.deepEqual(picked, ['alpha', 'gamma'])
-  assert.deepEqual(Object.keys(policy.tool_list), ['claude'])
-  assert.equal(policy.tool_list.claude.at(-1).name, '*')
+  assert.deepEqual(Object.keys(policy.tool_shaver_rules), ['claude'])
+  assert.equal(policy.tool_shaver_rules.claude.at(-1).name, '*')
   assert.equal(tools.find((t: { name: string }) => t.name === 'Agent').defer_loading, true)
 })
 
