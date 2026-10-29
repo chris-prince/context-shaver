@@ -126,8 +126,8 @@ function price(base: number, pos: Position[], r: number, warm: boolean) {
 
 type Run = { cost: number; rd: number; wr: number; ctx: number; advanced: number; mismatch: number; firstMiss?: string }
 function run(policy: Policy | 'sent', actual?: Policy): Run {
-  let applied: Clock = { steps: 0, turns: 0 }
-  let found: Clock = { steps: 0, turns: 0 }
+  let applied: Clock = { requests: 0, turns: 0 }
+  let found: Clock = { requests: 0, turns: 0 }
   const entries = new Map<string, number>()
   // The tools and system are cached already when the first request read them.
   let lastAt = reqs[0].cachedTokens >= 0.9 * defsTokens(reqs[0], sent[0]) ? Date.parse(reqs[0].time) : -Infinity
@@ -147,8 +147,8 @@ function run(policy: Policy | 'sent', actual?: Policy): Run {
         const want = JSON.stringify(sent[n].map(strip))
         let ok = false
         for (let tu = found.turns; tu <= c.turns && !ok; tu++)
-          for (let st = 0; st <= c.steps && !ok; st++)
-            if (JSON.stringify(apply(msgs, actual, heldTo({ steps: st, turns: tu }, msgs)).msgs.map(strip)) === want) [ok, found] = [true, { steps: st, turns: tu }]
+          for (let rq = 0; rq <= c.requests && !ok; rq++)
+            if (JSON.stringify(apply(msgs, actual, heldTo({ requests: rq, turns: tu }, msgs)).msgs.map(strip)) === want) [ok, found] = [true, { requests: rq, turns: tu }]
         if (!ok && !out.mismatch++) out.firstMiss = `#${n} ${e.time}`
       }
     } else {
@@ -156,7 +156,7 @@ function run(policy: Policy | 'sent', actual?: Policy): Run {
       const clock = clockOf(msgs)
       const keep = apply(msgs, policy, held)
       body = keep.msgs
-      if (clock.steps > held.steps || clock.turns > held.turns) {
+      if (clock.requests > held.requests || clock.turns > held.turns) {
         const next = apply(msgs, policy, clock)
         const d = decide(keep.msgs, next.msgs, live, 's', e.model, thinking)
         if (d.advanced) { body = next.msgs; applied = clock; if (d.savedChars) out.advanced++ }

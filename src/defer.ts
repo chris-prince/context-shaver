@@ -33,7 +33,7 @@ export const toolListMessage = (body: Body): number => (body.messages ?? []).fin
 
 // The tools never deferred, whatever the rules say: those that load the
 // others, Codex's exec, which runs every other, with the wait that resumes
-// its cells, and those a Claude Code session uses on most steps.
+// its cells, and those a Claude Code session uses on most requests.
 const ALWAYS_LOADED = ['ToolSearch', 'functions.exec', 'functions.wait', 'Bash', 'Edit', 'Read', 'Write']
 const loaded = (t: { type?: string; name?: string }) => t.type === 'tool_search' || ALWAYS_LOADED.includes(t.name ?? '')
 

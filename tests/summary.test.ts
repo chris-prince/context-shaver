@@ -19,7 +19,7 @@ const session = (): ApiMsg[] => [
     { role: 'assistant', content: [{ type: 'text', text: `reply ${t}` }] },
   ]),
 ]
-const none = (msgs: ApiMsg[]) => apply(msgs, {}, { steps: 0, turns: 0 })
+const none = (msgs: ApiMsg[]) => apply(msgs, {}, { requests: 0, turns: 0 })
 // Each message's count as the stats have it: a tool result 1,000 tokens, the rest 100.
 const counts = (msgs: ApiMsg[]) => msgs.map((m) => (JSON.stringify(m).includes('tool_result') ? 1000 : 100))
 const summaryForkAt = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000, tokens = counts(msgs)) => summaryForkOf(none(msgs), msgs, chain, offered, threshold, new Map(), tokens)

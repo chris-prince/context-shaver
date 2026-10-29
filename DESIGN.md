@@ -278,11 +278,11 @@ is never trimmed.
 {
   "conversation_shaver_rules": {
     "tool": [
-      { "after": "1 request", "action": "stub" },
-      { "after": "10 request", "action": "drop" }
+      { "action": "stub", "after": "1 request" },
+      { "action": "drop", "after": "10 request" }
     ],
-    "skill": [{ "after": "0 turn", "action": "drop" }],
-    "reasoning": [{ "after": "0 turn", "action": "drop" }],
+    "skill": [{ "action": "drop", "after": "0 turn" }],
+    "reasoning": [{ "action": "drop", "after": "0 turn" }],
     "prompt_and_assistant_text": { "summary_threshold_tokens": 20000 }
   }
 }
@@ -323,7 +323,7 @@ of the `additional_tools` input item, where the backend ignores
 `defer_loading`, to the top-level tools. The tools the others are loaded by or
 run through (`ToolSearch` on Claude Code, `functions.exec` and `functions.wait`
 on Codex) are never deferred or dropped, whatever the rules say, nor are those
-a Claude Code session uses on most steps (Bash, Edit, Read, Write). Of the older
+a Claude Code session uses on most requests (Bash, Edit, Read, Write). Of the older
 forms, a flat `tool_list` or `tools_not_deferred` (tools to keep with every
 other deferred) becomes Claude Code's rules, since only it deferred tools then,
 and a rule's `defer`, true or false, its action. With tool search
@@ -417,7 +417,7 @@ A conversation is a series of parts, the message history the client sends,
 which the proxy drops, trims and summarizes as it goes. The client re-sends
 the whole series with every request and only adds to its end, so the series
 continues until the client starts a new one. Each conversation has its own
-state: the applied clock below counts steps and turns into it, its summaries
+state: the applied clock below counts requests and turns into it, its summaries
 and trims stand for its parts, and its cache entries are prefixes of it, so
 none of it carries over to another series. Its key has to stay the same for
 as long as the series continues, and only then. It is `claude-`, the session
@@ -453,8 +453,8 @@ hash. An unknown harness's starts with its protocol's name (`messages-`,
 `chat-` or `responses-`), and has the body's `prompt_cache_key` or `user` as
 its session if it sends one.
 
-A step is an assistant message with the tool results that answer it. The
-latest step, the one the model is answering, is never touched. A turn starts
+A request is an assistant message with the tool results that answer it. The
+latest request, the one the model is answering, is never touched. A turn starts
 at a prompt (user text that is not a tool result, a `<system-reminder>` or a
 command row). The current turn, from the last prompt on, is never touched.
 Claude Code's prompt suggestion is not a prompt: it comes after a reply that
@@ -486,7 +486,7 @@ The API constrains what can go:
   refused. One left empty by dropped calls is removed.
 
 Each conversation has an applied clock, saved in
-`proxy-data/state/<key>.json`: the completed steps and turns the policy was
+`proxy-data/state/<key>.json`: the completed requests and turns the policy was
 last applied at. Every request is trimmed at it, so they all send the same
 prefix and the prompt cache keeps reading it. The clock only moves forward.
 
@@ -538,7 +538,7 @@ prompt, two in the messages). Then the added one replaces the system
 prompt's first, which ends after the identity line. A request reads that
 entry only when the system prompt changed but the tools did not, which the
 logs show 3 times in 2,740 requests. Claude Code's message breakpoints stay,
-because a step that adds more than 20 blocks puts the previous request's
+because a request that adds more than 20 blocks puts the previous request's
 entry out of the last one's lookback, and the one before it still reaches
 it. A request where the swap would leave less read from the cache goes
 without it. `decide` prices both candidates with it.
@@ -789,11 +789,11 @@ Scripts:
 - `python3 scripts/reruns.py [conversation dir]` lists tool calls that fetched again
   output trimming had taken from the model: at least half their result lines
   were in earlier results stubbed or removed from the request they answered,
-  and in none still whole. With each, the step wait that would have avoided it,
+  and in none still whole. With each, the request wait that would have avoided it,
   and a histogram of those: what trimming too much costs.
 - `python3 scripts/prompt-cost.py "<prompt start>" <session id> ...` compares one
   user prompt across sessions, such as runs of the same prompt under different
-  policies: from the prompt to the next one, its steps, duration, cost, tool
+  policies: from the prompt to the next one, its requests, duration, cost, tool
   calls, trims applied and peak context.
 - `bin/node-wrapper scripts/read-codex-stops.ts [conversation dir ...]` shows, for
   each Codex request logged with its items' IDs, where the cache read stopped

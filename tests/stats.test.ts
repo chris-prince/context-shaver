@@ -58,7 +58,7 @@ test('a prompt suggestion does not end the turn before it', () => {
   const r2: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'started a task' }] }
   const ask: ApiMsg = { role: 'user', content: '[SUGGESTION MODE: Suggest what the user might naturally type next]' }
   const turn2 = clockOf([p1, r1, p2])
-  assert.deepEqual(clockOf(withoutSuggestion([p1, r1, p2, r2, ask])), { ...turn2, steps: 1 })
+  assert.deepEqual(clockOf(withoutSuggestion([p1, r1, p2, r2, ask])), { ...turn2, requests: 1 })
   // A background task's notice resumes the agent within the same turn.
   const notice: ApiMsg = { role: 'user', content: '<system-reminder>\nA background task finished.\n</system-reminder>' }
   assert.deepEqual(clockOf(withoutSuggestion([p1, r1, p2, r2, notice])), clockOf(withoutSuggestion([p1, r1, p2, r2, ask])))

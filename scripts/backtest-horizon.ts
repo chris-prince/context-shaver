@@ -98,7 +98,7 @@ function rebuild(dir: string): Conv {
     orig.push(s.map(strip))
   })
   if (process.env.DEBUG_REBUILD) {
-    orig.forEach((o, n) => { if (n && all[n].time >= '2026-10-15T16:3') { const a = clockOf(orig[n - 1]), b = clockOf(o); if (b.steps - a.steps !== 1) console.log('jump', n, all[n].time, a.steps, '->', b.steps, 'msgs', orig[n - 1].length, '->', o.length) } })
+    orig.forEach((o, n) => { if (n && all[n].time >= '2026-10-15T16:3') { const a = clockOf(orig[n - 1]), b = clockOf(o); if (b.requests - a.requests !== 1) console.log('jump', n, all[n].time, a.requests, '->', b.requests, 'msgs', orig[n - 1].length, '->', o.length) } })
     const sigs = (ms: ApiMsg[]) => new Set(ms.flatMap((m) => (typeof m.content === 'string' ? [] : m.content.filter((x) => x.type === 'thinking').map((x) => String(x.signature).slice(0, 16)))))
     sent.forEach((s, n) => { const o = sigs(orig[n]); const lost = [...sigs(s)].filter((x) => !o.has(x)); if (lost.length) console.log('lost', n, all[n].time, lost.length) })
   }
@@ -143,7 +143,7 @@ const rates = (m: Model, auto: boolean) => ({ read: m.price ? m.price.read / m.p
 
 function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => number, trace?: (n: number, q: Req, d?: Logged) => void): Tally {
   const conv = h?.conventions ?? NO_CONVENTIONS
-  let applied: Clock = { steps: 0, turns: 0 }
+  let applied: Clock = { requests: 0, turns: 0 }
   let sentRecords = 0
   const entries = new Map<string, number>()
   const out: Tally = { cost: 0, trims: 0, costs: [] }
@@ -174,7 +174,7 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => nu
       return reads(x) >= reads(m) ? x : m
     }
     let body = anchor(keep.msgs)
-    if (horizon(n) >= 0 && (clock.steps > held.steps || clock.turns > held.turns)) {
+    if (horizon(n) >= 0 && (clock.requests > held.requests || clock.turns > held.turns)) {
       const next = summarized(apply(q.msgs, policy, clock, conv), q.msgs, chain.slice(0, records))
       const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', q.model, thinking, q.auto, horizon(n))
       if (process.env.DEBUG_N === String(n) && trace) {

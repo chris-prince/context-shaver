@@ -1,9 +1,9 @@
 // The logical view of a Messages API request that a policy is written against:
-// its clock, the steps and turns completed, and its items, each placed in its
-// step and turn.
+// its clock, the requests and turns completed, and its items, each placed in
+// its request and turn.
 //
-// A step is an assistant message with the tool results that answer it, counted
-// from 1; every step but the latest is completed. A turn runs from a prompt,
+// A request is an assistant message with the tool results that answer it,
+// counted from 1; every request but the latest is completed. A turn runs from a prompt,
 // counted from 1; every turn but the current one is completed.
 
 export type Block = { type: string; [k: string]: unknown }
@@ -32,25 +32,29 @@ export function turnsOf(msgs: readonly ApiMsg[]): { turnOf: number[]; completed:
   return { turnOf, completed: Math.max(0, t - 1) }
 }
 
-// Each message's step, counting assistant messages from 1, so a tool result
-// shares the step of the call it answers; messages before the first are step
-// 0. Every step but the latest is completed.
-export function stepsOf(msgs: readonly ApiMsg[]): { stepOf: number[]; completed: number } {
-  let s = 0
-  const stepOf = msgs.map((m) => (m.role === 'assistant' ? ++s : s))
-  return { stepOf, completed: Math.max(0, s - 1) }
+// Each message's request, counting assistant messages from 1, so a tool result
+// shares the request of the call it answers; messages before the first are
+// request 0. Every request but the latest is completed.
+export function requestsOf(msgs: readonly ApiMsg[]): { requestOf: number[]; completed: number } {
+  let r = 0
+  const requestOf = msgs.map((m) => (m.role === 'assistant' ? ++r : r))
+  return { requestOf, completed: Math.max(0, r - 1) }
 }
 
-// The completed steps and turns.
-export type Clock = { steps: number; turns: number }
+// The completed requests and turns.
+export type Clock = { requests: number; turns: number }
 
-export const clockOf = (msgs: readonly ApiMsg[]): Clock => ({ steps: stepsOf(msgs).completed, turns: turnsOf(msgs).completed })
+// A clock saved when requests were called steps.
+export const clockNow = (c: Clock & { steps?: number }): Clock =>
+  c.requests === undefined && c.steps !== undefined ? { requests: c.steps, turns: c.turns } : c
+
+export const clockOf = (msgs: readonly ApiMsg[]): Clock => ({ requests: requestsOf(msgs).completed, turns: turnsOf(msgs).completed })
 
 // A clock held to the conversation's, so one rewound to an earlier point never
-// has its latest step or current turn trimmed.
+// has its latest request or current turn trimmed.
 export function heldTo(c: Clock, msgs: readonly ApiMsg[]): Clock {
   const now = clockOf(msgs)
-  return { steps: Math.min(c.steps, now.steps), turns: Math.min(c.turns, now.turns) }
+  return { requests: Math.min(c.requests, now.requests), turns: Math.min(c.turns, now.turns) }
 }
 
 // What a policy decides about:
@@ -62,7 +66,7 @@ export function heldTo(c: Clock, msgs: readonly ApiMsg[]): Clock {
 //   (their definitions go with it);
 // - reasoning: an assistant message's thinking, by the message's index.
 export type Kind = 'tool' | 'skill' | 'tool_search' | 'reasoning'
-export type Item = { kind: Kind; id: string; step: number; turn: number }
+export type Item = { kind: Kind; id: string; request: number; turn: number }
 
 export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'redacted_thinking'
 export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
@@ -101,13 +105,13 @@ export const READ = /^(Called the Read tool with the following input: [^\n]*\nRe
 export const readsOf = (m: ApiMsg): number => blocks(m).reduce((n, b) => n + (b.type === 'text' ? String(b.text).match(READ)?.length ?? 0 : 0), 0)
 
 export function itemsOf(msgs: readonly ApiMsg[], conv: Conventions = CLAUDE_CODE): Item[] {
-  const { stepOf } = stepsOf(msgs)
+  const { requestOf } = requestsOf(msgs)
   const { turnOf } = turnsOf(msgs)
   const out: Item[] = []
   msgs.forEach((m, i) => {
-    const at = { step: stepOf[i], turn: turnOf[i] }
+    const at = { request: requestOf[i], turn: turnOf[i] }
     // Before the first response, a system message is the base.
-    if (m.role === 'system' && at.step > 0) for (let n = 0; n < readsOf(m); n++) out.push({ kind: 'tool', id: `read:${i}:${n}`, ...at })
+    if (m.role === 'system' && at.request > 0) for (let n = 0; n < readsOf(m); n++) out.push({ kind: 'tool', id: `read:${i}:${n}`, ...at })
     if (m.role !== 'assistant' || typeof m.content === 'string') return
     if (m.content.some(isThinking)) out.push({ kind: 'reasoning', id: String(i), ...at })
     for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: conv.kinds[String(b.name)] ?? 'tool', id: String(b.id), ...at })

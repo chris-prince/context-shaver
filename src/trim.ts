@@ -2,18 +2,18 @@
 // trimming more pays. Pure functions over the request body.
 //
 // A conversation is trimmed as its policy says (policy.ts) at its applied
-// clock: the completed steps and turns the policy was last applied at. The
+// clock: the completed requests and turns the policy was last applied at. The
 // clock only moves forward, so every request of the conversation sends the same
 // trimmed prefix and the prompt cache keeps reading it; decide says when moving
-// it pays. The latest step and the current turn are never touched.
+// it pays. The latest request and the current turn are never touched.
 
 import type { Model } from './models.ts'
-import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
+import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, requestsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
 import { afterOf, treatment, type Action, type PartRules } from './policy.ts'
 
 // Where trimming ends in the messages: the index of the first message past
-// the steps (or turns) the furthest-reaching rule covers, for tool calls and
+// the requests (or turns) the furthest-reaching rule covers, for tool calls and
 // for reasoning.
 type Ends = { tools: number; reasoning: number }
 
@@ -110,7 +110,7 @@ export function apply(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock, 
 }
 
 // The messages trimmed as far as the policy ever takes them: every rule due.
-export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: PartRules, conv: Conventions = CLAUDE_CODE) => applyAt(msgs, policy, { steps: Infinity, turns: Infinity }, conv)
+export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: PartRules, conv: Conventions = CLAUDE_CODE) => applyAt(msgs, policy, { requests: Infinity, turns: Infinity }, conv)
 
 function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Conventions): Applied {
   const items = new Map(itemsOf(msgs, conv).map((it) => [it.id, it]))
@@ -230,14 +230,14 @@ export function transitions(before: Applied, after: Applied): Record<string, num
 // first treatment.
 export function trimmedEnd(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock): Ends {
   const c = heldTo(clock, msgs)
-  const { stepOf } = stepsOf(msgs)
+  const { requestOf } = requestsOf(msgs)
   const { turnOf } = turnsOf(msgs)
   const end = (rules: PartRules[Kind]) =>
     Math.max(
       0,
       ...(rules ?? []).map((r) => {
         const { on, wait } = afterOf(r)!
-        const [of, n] = on === 'request' ? [stepOf, c.steps - wait] : [turnOf, c.turns - wait]
+        const [of, n] = on === 'request' ? [requestOf, c.requests - wait] : [turnOf, c.turns - wait]
         return n > 0 ? of.findIndex((x) => x > n) : 0
       }),
     )

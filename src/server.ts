@@ -6,7 +6,7 @@
 // What is trimmed, and when, is the policy file's (policy.ts); with none, it
 // passes requests through. Each conversation (keyed by its first message, so a
 // subagent is its own) has an applied clock, saved under proxy-data/state/: the
-// completed steps and turns every request is trimmed at. On each request the
+// completed requests and turns every request is trimmed at. On each request the
 // cost rule (trim.ts, decide) says whether moving it up to the conversation's
 // clock pays: always on a cold cache, and on a warm one when what it saves
 // outweighs what it rewrites, priced against the cache entries the
@@ -19,7 +19,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
 import { hash, kinds, LOG_DIR, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
-import { blocks, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
+import { blocks, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
@@ -86,11 +86,13 @@ type State = { applied: Clock; entries?: Record<string, number>; thinking?: Reco
 const skillListOf = (s: State | undefined, warm: boolean, now: number): SkillList | undefined =>
   s?.skillList && warm && s.skillList.at > skillsForcedAt ? s.skillList : policy.skill_shaver_rules && { rules: policy.skill_shaver_rules, at: now }
 
-// A state saved before the applied clock, with a frontier, is read as none.
+// A state saved before the applied clock, with a frontier, is read as none;
+// one whose clock counts steps has them read as requests.
 function load(key: string): State | undefined {
   try {
     const s: State = JSON.parse(readFileSync(path.join(stateDir, `${key}.json`), 'utf8'))
     if (s.skillList) s.skillList.rules = skillRulesNow(s.skillList.rules)
+    if (s.applied) s.applied = clockNow(s.applied)
     return s.applied ? s : undefined
   } catch {
     return undefined
@@ -177,7 +179,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const s = load(key)
   const suggestion = isSuggestion(msgs)
   const own = withoutSuggestion(msgs)
-  const held = heldTo(s?.applied ?? { steps: 0, turns: 0 }, own)
+  const held = heldTo(s?.applied ?? { requests: 0, turns: 0 }, own)
   const clock = clockOf(own)
   const marked = markedTtl(body)
   const model = { ...modelOf(body.model, body.provider), ...(marked && { ttl: marked }) }
@@ -229,7 +231,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   let next = keep
   let d: Decision | undefined
   const horizon = model.horizon(latestOf(key)?.requests ?? 0)
-  if (clock.steps > held.steps || clock.turns > held.turns) {
+  if (clock.requests > held.requests || clock.turns > held.turns) {
     next = summarized(apply(msgs, parts, clock, conv), msgs, chain.slice(0, records), merged)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
@@ -278,7 +280,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
         savedChars: d.savedChars,
         rewriteChars: d.rewriteChars,
         extraChars: d.extraChars,
-        steps: clock.steps,
+        requests: clock.requests,
         turns: clock.turns,
         transitions: transitions(keep, next),
         context,
@@ -299,7 +301,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
 
 // A conversation's key, which names its state, journal and log dir. A
 // conversation is one message history that only grows: the proxy's applied
-// clock counts steps and turns into it, and its cache entries are prefixes of
+// clock counts requests and turns into it, and its cache entries are prefixes of
 // it, so neither means anything for another history. The protocol makes the
 // key unique among the conversations it serves (harness.ts, conversationId).
 

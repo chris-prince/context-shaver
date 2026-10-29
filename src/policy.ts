@@ -11,7 +11,7 @@ export type Action = 'stub' | 'drop'
 // Due once the item's request (or turn) is among the completed ones, leaving
 // out the latest few: `after` is "4 request" or "2 turn", the unit also taken
 // plural.
-type Rule = { after: string; action: Action }
+type Rule = { action: Action; after: string }
 const AFTER = /^(\d+) (request|turn)s?$/
 
 // A rule's `after` as its unit and count; none if it is neither.
@@ -99,7 +99,7 @@ export function upgraded(v: Record<string, unknown>): Record<string, unknown> | 
   const onWait = (r: unknown) => isObject(r) && 'on' in r
   const timedOlder = [...kinds.map((k) => v[k]), ...Object.values(conv)].some((rs) => Array.isArray(rs) && rs.some(onWait))
   if (!kinds.length && !timedOlder && !old.some((k) => k in v)) return undefined
-  const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { after: `${r.wait} ${r.on === 'step' ? 'request' : r.on}`, action: r.action } : r)) : rs)
+  const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { action: r.action, after: `${r.wait} ${r.on === 'step' ? 'request' : r.on}` } : r)) : rs)
   type Older = { name: string; defer?: boolean; action?: string }
   const now = (rs: Older[]) => rs.map((r) => (r.defer === undefined ? r : { name: r.name, action: r.defer ? 'defer' : 'keep' }))
   const tools = v.tool_list
@@ -205,7 +205,7 @@ export function loadPolicy(file: string): Policy | undefined {
 export function treatment(rules: readonly Rule[] = [], it: Item, c: Clock): Action | undefined {
   const due = rules.filter((r) => {
     const { on, wait } = afterOf(r)!
-    return on === 'request' ? it.step && it.step <= c.steps - wait : it.turn && it.turn <= c.turns - wait
+    return on === 'request' ? it.request && it.request <= c.requests - wait : it.turn && it.turn <= c.turns - wait
   })
   return due.some((r) => r.action === 'drop') ? 'drop' : due.length ? 'stub' : undefined
 }
