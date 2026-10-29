@@ -95,9 +95,7 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
   if (shown.asking === 'skills') {
     if (changes) {
       const lines = Object.fromEntries([...picked].map((name) => [name, shown.lines[name]]))
-      // Lines for skills this session doesn't list stay.
-      const elsewhere = new Set((policy.skill_list ?? []).filter((r) => r.text !== undefined && !items.includes(r.match)).map((r) => r.match))
-      written = withList(text, 'skill_list', withLines(policy.skill_list ?? [], shown.skills, lines, elsewhere))
+      written = withList(text, 'skill_list', withLines(policy.skill_list ?? [], shown.skills, lines))
     }
   } else if (changes || olderTools(policy)) {
     const lists = toolListsOf(policy)
