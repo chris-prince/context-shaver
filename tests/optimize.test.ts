@@ -45,12 +45,12 @@ test('the skill table numbers every skill and says which are trimmed', () => {
 })
 
 test('the tool table numbers every tool and says which are deferred', () => {
-  assert.match(toolsText(['Agent', 'WebFetch'], ['WebFetch'], 900), /^Can save 900 tokens by deferring tools until the model needs them:\n\n\| Tool \| Deferred \|\n\| --- \| --- \|\n\| 1\. Agent \| No \|\n\| 2\. WebFetch \| Yes \|$/)
+  assert.match(toolsText(['Agent', 'WebFetch'], ['WebFetch'], 900), /^1 tool currently adds 900 tokens on every request, saved by deferring tools until the model needs them:\n\n\| Tool \| Deferred \|\n\| --- \| --- \|\n\| 1\. Agent \| No \|\n\| 2\. WebFetch \| Yes \|$/)
 })
 
 test("where tools can't be deferred, dropping is offered with a warning, and the question asks which to drop", () => {
   const text = toolsText(['clock.sleep'], [], 40, 'drop')
-  assert.match(text, /^Codex can't defer tools with ChatGPT sign-in, only drop them\. The model can't use a dropped tool at all, so drop with caution\.\n\nCan save 40 tokens by dropping tools:\n\n\| Tool \| Dropped \|\n/)
+  assert.match(text, /^Codex can't defer tools with ChatGPT sign-in, only drop them\. The model can't use a dropped tool at all, so drop with caution\.\n\n1 tool currently adds 40 tokens on every request, saved by dropping tools:\n\n\| Tool \| Dropped \|\n/)
   const tools = { harness: { name: 'codex' }, action: 'drop' as const, names: ['clock.sleep'], chosen: [], text }
   assert.match(toolsAsked('k', tools)!.reply, /Which tools should be dropped\?/)
   const rules = toolRulesOf(rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', file({}), '/p').text), 'codex')

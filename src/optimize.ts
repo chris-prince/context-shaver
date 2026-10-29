@@ -152,6 +152,6 @@ export function toolsText(names: readonly string[], chosen: readonly string[], s
   const warning = drop ? "Codex can't defer tools with ChatGPT sign-in, only drop them. The model can't use a dropped tool at all, so drop with caution.\n\n" : ''
   if (saved instanceof Error) return `${warning}Couldn't measure the savings (sending the base failed: ${saved.message}). Tools:\n\n${table}`
   const head = chosen.length === names.length ? `${counted(names.length, 'tool')} ${drop ? 'are dropped' : 'load only when the model needs them'}:`
-    : `Can save ${n(saved)} tokens by ${drop ? 'dropping tools' : 'deferring tools until the model needs them'}:`
+    : `${counted(names.length - chosen.length, 'tool')} currently add${names.length - chosen.length === 1 ? 's' : ''} ${n(saved)} tokens on every request, saved by ${drop ? 'dropping tools' : 'deferring tools until the model needs them'}:`
   return `${warning}${head}\n\n${table}`
 }
