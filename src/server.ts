@@ -384,8 +384,9 @@ function refuse(res: ServerResponse, proto: Protocol, status: 400 | 403, message
   res.end(proto.error(status, message))
 }
 
-// A tiny, standalone client-executed Responses tool-search round trip. The
-// latest Codex request supplies only route/auth/model; its prompt is not reused.
+// Tiny, standalone Responses tool-search probes: the client-executed round
+// trip, a search the backend runs, and deferral inside a namespace. The latest
+// Codex request supplies only route/auth/model; its prompt is not reused.
 async function probeCodexToolSearch(context: { target: string; headers: Record<string, string>; model: string }): Promise<Record<string, unknown>> {
   const functionTool = {
     type: 'function', name: 'shaver_probe_confirm', description: 'Confirms this tool-search probe.', defer_loading: true,
@@ -422,32 +423,65 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
     }
     return { response, text, data }
   }
-  try {
-    const first = await send('search', {
-      model: context.model, store: false, stream: true, parallel_tool_calls: false, max_output_tokens: 48, reasoning: { context: 'all_turns' },
-      input: [{ role: 'user', content: [{ type: 'input_text', text: 'Find the harmless probe function so I can confirm tool search works.' }] }],
-      tools: [searchTool, functionTool], tool_choice: 'required',
-    })
-    if (!first.response.ok) return { result: 'rejected', stage: 'search', status: first.response.status, error: first.data?.error?.message ?? first.text.slice(0, 1000), usage }
-    const searchCall = first.data?.output?.find((item: any) => item.type === 'tool_search_call' && item.execution === 'client')
-    if (!searchCall?.call_id) return { result: 'inconclusive', stage: 'search', detail: 'Response did not contain a client tool_search_call.', usage }
-    // The call as the backend sent it, which Codex answers: it names the field
-    // the search is asked in.
-    const search_call = Object.fromEntries(Object.entries(searchCall).filter(([k]) => !['id', 'call_id'].includes(k)))
-    const second = await send('confirmation', {
-      model: context.model, store: false, stream: true, parallel_tool_calls: false, max_output_tokens: 48, reasoning: { context: 'all_turns' },
-      input: [
-        ...first.data.output,
-        { type: 'tool_search_output', execution: 'client', call_id: searchCall.call_id, status: 'completed', tools: [functionTool] },
-        { role: 'user', content: [{ type: 'input_text', text: 'Call shaver_probe_confirm now with marker set to probe.' }] },
-      ],
-      tool_choice: { type: 'function', name: 'shaver_probe_confirm' },
-    })
-    if (!second.response.ok) return { result: 'rejected', stage: 'confirmation', status: second.response.status, error: second.data?.error?.message ?? second.text.slice(0, 1000), search_call, usage }
-    const confirmed = second.data?.output?.some((item: any) => item.type === 'function_call' && item.name === 'shaver_probe_confirm')
-    return { result: confirmed ? 'supported' : 'inconclusive', detail: confirmed ? 'Client tool-search round trip returned the probe function call; it was not executed.' : 'Follow-up did not return the probe function call.', response_status: second.data?.status, incomplete_details: second.data?.incomplete_details, error: second.data?.error, output: second.data?.output?.map((item: any) => ({ type: item.type, name: item.name, status: item.status })), search_call, usage }
-  } catch (error) {
-    return { result: 'error', detail: error instanceof Error ? error.message : String(error), usage }
+  const base = { model: context.model, store: false, stream: true, parallel_tool_calls: false, max_output_tokens: 48, reasoning: { context: 'all_turns' } }
+  const ask = (text: string) => [{ role: 'user', content: [{ type: 'input_text', text }] }]
+  // A search the backend runs itself, with no client round trip: execution
+  // left off, and asked for as server.
+  const hosted = async (stage: string, tool: Record<string, unknown>) => {
+    try {
+      const r = await send(stage, { ...base, input: ask('Find the harmless probe function and call it with marker set to probe.'), tools: [tool, functionTool], tool_choice: 'required' })
+      if (!r.response.ok) return { http: r.response.status, error: r.data?.error?.message ?? r.text.slice(0, 1000) }
+      return { output: r.data?.output?.map((item: any) => ({ type: item.type, name: item.name, execution: item.execution, status: item.status })) }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  // Whether a deferred function inside a namespace, as Codex sends its tools,
+  // is hidden: its input tokens should match the request without it.
+  const nested = async (stage: string, tools: unknown[]) => {
+    try {
+      const r = await send(stage, { ...base, input: ask('Reply with ok.'), tools: [searchTool, ...tools] })
+      return r.response.ok ? usage[stage]?.input_tokens : { http: r.response.status, error: r.data?.error?.message ?? r.text.slice(0, 1000) }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  // The search the client answers, as Codex does.
+  const client = async (): Promise<Record<string, unknown>> => {
+    try {
+      const first = await send('search', { ...base, input: ask('Find the harmless probe function so I can confirm tool search works.'), tools: [searchTool, functionTool], tool_choice: 'required' })
+      if (!first.response.ok) return { result: 'rejected', stage: 'search', status: first.response.status, error: first.data?.error?.message ?? first.text.slice(0, 1000) }
+      const searchCall = first.data?.output?.find((item: any) => item.type === 'tool_search_call' && item.execution === 'client')
+      if (!searchCall?.call_id) return { result: 'inconclusive', stage: 'search', detail: 'Response did not contain a client tool_search_call.' }
+      // The call as the backend sent it, which Codex answers: it names the field
+      // the search is asked in.
+      const search_call = Object.fromEntries(Object.entries(searchCall).filter(([k]) => !['id', 'call_id'].includes(k)))
+      const second = await send('confirmation', {
+        ...base,
+        input: [
+          ...first.data.output,
+          { type: 'tool_search_output', execution: 'client', call_id: searchCall.call_id, status: 'completed', tools: [functionTool] },
+          ...ask('Call shaver_probe_confirm now with marker set to probe.'),
+        ],
+        tool_choice: { type: 'function', name: 'shaver_probe_confirm' },
+      })
+      if (!second.response.ok) return { result: 'rejected', stage: 'confirmation', status: second.response.status, error: second.data?.error?.message ?? second.text.slice(0, 1000), search_call }
+      const confirmed = second.data?.output?.some((item: any) => item.type === 'function_call' && item.name === 'shaver_probe_confirm')
+      return { result: confirmed ? 'supported' : 'inconclusive', detail: confirmed ? 'Client tool-search round trip returned the probe function call; it was not executed.' : 'Follow-up did not return the probe function call.', response_status: second.data?.status, incomplete_details: second.data?.incomplete_details, error: second.data?.error, output: second.data?.output?.map((item: any) => ({ type: item.type, name: item.name, status: item.status })), search_call }
+    } catch (error) {
+      return { result: 'error', detail: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  const loadedTool = { ...functionTool, defer_loading: undefined }
+  const space = (tool: unknown) => ({ type: 'namespace', name: 'shaver_probe', description: 'Probe tools.', tools: [tool] })
+  return {
+    client: await client(),
+    hosted: { bare: await hosted('hosted_bare', { type: 'tool_search' }), server: await hosted('hosted_server', { type: 'tool_search', execution: 'server' }) },
+    namespace: {
+      input_tokens: { none: await nested('nested_none', []), deferred: await nested('nested_deferred', [space(functionTool)]), loaded: await nested('nested_loaded', [space(loadedTool)]) },
+      detail: 'Deferral inside a namespace works if deferred is near none and well below loaded.',
+    },
+    usage,
   }
 }
 
