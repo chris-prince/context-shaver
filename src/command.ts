@@ -1,6 +1,6 @@
-// `:shaver info`, `:shaver info all`, `:shaver policy` and `:shaver optimize`,
+// `shaver info`, `shaver info all`, `shaver policy` and `shaver optimize`,
 // typed as a prompt, are answered by the proxy and never reach the model, nor
-// does the answer to a question `:shaver optimize` asks. Claude Code keeps the command and the proxy's
+// does the answer to a question `shaver optimize` asks. Claude Code keeps the command and the proxy's
 // reply in its history and sends them again with every
 // later request, so the proxy strips each command, the system messages after
 // it and the reply from every request it forwards. Dropping them leaves what
@@ -30,7 +30,7 @@ import { PICK, pickWords } from './optimize.ts'
 
 export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize', ':shaver probe-codex-tool-search']
 
-// A reply to `:shaver optimize`'s question (PICK), as the command it is.
+// A reply to `shaver optimize`'s question (PICK), as the command it is.
 const answerOf = (text: string) => `:shaver optimize ${pickWords(text)}`
 
 type Block = { type: string; text?: string; content?: unknown; cache_control?: unknown }
@@ -134,7 +134,7 @@ function withoutMidTurn<M extends Msg>(m: M): { m?: M; control?: unknown } {
 }
 
 // Whether `msgs[i]` comes right after a reply that ends asking PICK, the system
-// messages aside: `:shaver optimize`'s, an answer's, or a turn's that ended
+// messages aside: `shaver optimize`'s, an answer's, or a turn's that ended
 // with one of those.
 function offeredAt(msgs: Msg[], i: number): boolean {
   const r = msgs.findLastIndex((m, j) => j < i && m.role !== 'system')

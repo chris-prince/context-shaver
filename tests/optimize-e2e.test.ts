@@ -1,4 +1,4 @@
-// `:shaver optimize` end to end: the real proxy, started as its own process,
+// `shaver optimize` end to end: the real proxy, started as its own process,
 // in front of a stand-in upstream, sent Claude Code's requests for the offer,
 // the answer and the next prompt. It checks what unit tests can't: the
 // conversation's key, the stripped commands and the offer held between them.

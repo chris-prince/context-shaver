@@ -29,9 +29,9 @@ export type PartRules = Partial<Record<Kind, Rule[]>> & { prompt_and_assistant_t
 // `conversation_shaver_rules` says, by kind, when the proxy stubs or drops a part of
 // the conversation (trim.ts), and when it summarizes the rest.
 // `tool_shaver_rules` says, by harness name, which tools it sends in full the
-// proxy defers or drops, first matching rule winning (defer.ts); `:shaver
+// proxy defers or drops, first matching rule winning (defer.ts); `shaver
 // optimize` writes it. `skill_shaver_rules` shortens the skills the harness
-// lists to the model, first matching rule winning (skills.ts); `:shaver
+// lists to the model, first matching rule winning (skills.ts); `shaver
 // optimize` writes stubs into it. A file in an older form is put in this one
 // when loaded (upgraded).
 export type Policy = { conversation_shaver_rules?: PartRules; tool_shaver_rules?: Record<string, ToolRule[]>; skill_shaver_rules?: SkillRule[] }

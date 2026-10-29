@@ -183,7 +183,7 @@ test('a command sent mid-turn as a system message waits, and the message goes', 
   assert.deepEqual(stripCommands([user('a'), call, tools, asked]), [user('a'), call, tools, asked])
 })
 
-test("an answer answers `:shaver optimize` sent mid-turn once the turn ends with its reply", () => {
+test("an answer answers `shaver optimize` sent mid-turn once the turn ends with its reply", () => {
   const ended = { role: 'assistant', content: [{ type: 'text', text: 'done' }, { type: 'text', text: answeredMidTurn(':shaver optimize') + asked }] }
   const before = [user('a'), call, { role: 'user', content: [result, midTurn('shaver optimize')] }, ended]
   assert.equal(pendingCommand([...before, user('all')]), ':shaver optimize all')
@@ -208,7 +208,7 @@ test('a command right after tool results was sent mid-turn by Codex or OpenCode,
   assert.equal(pendingCommand([user('a'), assistant('done'), sent]), ':shaver info')
 })
 
-test("an answer added to the model's text is cut from it, and a pick still answers `:shaver optimize`", () => {
+test("an answer added to the model's text is cut from it, and a pick still answers `shaver optimize`", () => {
   const tools = { role: 'user', content: [result] }
   const ended = { role: 'assistant', content: [{ type: 'text', text: 'done\n\n' + answeredMidTurn(':shaver optimize') + asked }] }
   const before = [user('a'), call, tools, user('shaver optimize'), ended]

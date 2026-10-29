@@ -19,7 +19,8 @@ import type { Usage } from '../src/cost.ts'
 
 const WINDOW = 120_000
 const SLOW = 30 * 60_000
-// A :shaver command, which once could be typed with a space after the colon.
+// A `shaver` command typed with a leading colon, as it once had to be, with
+// space allowed after the colon.
 const COMMAND = /^\s*:\s*shaver\b/
 const STATE = join(import.meta.dirname, '..', 'proxy-data', 'state')
 
@@ -73,7 +74,7 @@ function codex(): Call[] {
     // A token_usage_record is one per call, by its response id. Rollouts too
     // old to have them give a token_count per call, but Codex sends it again,
     // unchanged, when a task starts, so only one whose running total moved counts.
-    // A :shaver command's reply, which the proxy gives itself, is recorded as
+    // A `shaver` command's reply, which the proxy gives itself, is recorded as
     // a call too, so it's told apart by the prompt before it.
     const records = es.some((e) => e.type === 'token_usage_record')
     const seen = new Set<string>()

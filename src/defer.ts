@@ -39,7 +39,7 @@ const loaded = (t: { type?: string; name?: string }, always: readonly string[]) 
 export const deferrable = (body: Body, rules: readonly ToolRule[], always: readonly string[]): string[] =>
   (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t, always) && deferredBy(rules, t.name) ? [t.name] : []))
 
-// The tools sent in full that `:shaver optimize` asks about deferring: all but
+// The tools sent in full that `shaver optimize` asks about deferring: all but
 // those always loaded.
 export const offerable = (body: Body, always: readonly string[]): string[] =>
   (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t, always) ? [t.name] : []))

@@ -118,7 +118,7 @@ export function harnessOf(declared: string | undefined, headers: IncomingHttpHea
 // message changes exactly when the history is a new one.
 //
 // The first message is hashed as the client sent it, before the proxy strips
-// `:shaver` commands from it or moves a breakpoint onto it: the client sends
+// `shaver` commands from it or moves a breakpoint onto it: the client sends
 // it the same way on every request, so only the client can change the key.
 // Its breakpoints are left out, so a client that marks the last message,
 // which on a conversation's first request is the first, keeps the key.

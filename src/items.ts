@@ -84,7 +84,7 @@ export const isMemoir = (b: Block) => b.type === 'text' && typeof b.text === 'st
 // "Protocols"): which tools' calls are skills and tool loads; which inputs of
 // which tools are long text a stub can stand in for; and which tool runs shell
 // commands, whose here-documents can be stubbed.
-// `promptHeadings` cut the system prompt into the sections `:shaver info`
+// `promptHeadings` cut the system prompt into the sections `shaver info`
 // shows (log.ts, sections); with none it is one row, `system-prompt`.
 export type Conventions = { kinds: Record<string, Kind>; stubbedInputs: Record<string, string[]>; shell: string; promptHeadings: Array<[string, string]> }
 

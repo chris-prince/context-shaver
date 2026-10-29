@@ -9,7 +9,7 @@
 //
 // Stop the proxy first: it holds each conversation's latest stats and writes
 // its next line as a change from them. The journal is kept as
-// <key>.journal.jsonl.pre-backfill, which `:shaver info all` doesn't read.
+// <key>.journal.jsonl.pre-backfill, which `shaver info all` doesn't read.
 //
 // Usage: bin/node-wrapper scripts/backfill-suggestions.ts <key>…
 

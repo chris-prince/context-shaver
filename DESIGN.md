@@ -313,7 +313,7 @@ harness's name (`claude`, `codex`), since tool names and a `*` rule mean
 something different in each. Each rule has a `name`, a tool name or `*` for
 any, and an `action`, `keep`, `defer` or `drop`; the first matching rule wins, and a tool no
 rule matches stays. A dropped tool is taken out of every request, so the model
-can't use it at all; `:shaver optimize` offers dropping only on Codex with
+can't use it at all; `shaver optimize` offers dropping only on Codex with
 ChatGPT sign-in, whose backend won't run tool searches, so nothing can be
 deferred there. A harness with no list defers nothing. A deferred tool is
 marked `defer_loading`. On Claude Code it is added to the deferred tools listed
@@ -332,7 +332,7 @@ and a rule's `defer`, true or false, its action. With tool search
 off (no `ENABLE_TOOL_SEARCH` on Claude Code) nothing is deferred. Changing the
 rules rewrites the cache of open sessions once.
 
-`:shaver optimize` offers tool rules before the skill lines: the policy's own
+`shaver optimize` offers tool rules before the skill lines: the policy's own
 rules first, then `*` deferring the rest. A policy that already has a `*` rule is left as it is, so
 nothing is offered. It names the tools that would newly
 be deferred and the tokens deferring them saves, measured as for the skill
@@ -363,7 +363,7 @@ A `stub` can instead carry `text`, a line written for the skill, and
 `replaces`: `*`, so the line stands in for any description, or the hash of the
 description it was written from, so it stands in for that one only and a skill
 whose description changed shows it whole until a new line is written. Either
-way the line is used only when shorter. `:shaver optimize` writes these lines,
+way the line is used only when shorter. `shaver optimize` writes these lines,
 with `*`: for each skill the rules keep whole, or gave a line before, it asks
 the session's own model for one of at most 6 words that tells the skill from
 the others, asking once more for any it left out. The question is a fork of the
@@ -427,7 +427,7 @@ ID, the agent ID and a hash of its first message
 (`claude-<session>-<agent or main>-<hash>`); OpenCode's and Codex's start
 `opencode-` and `codex-` with their session's ID (Protocols).
 
-`:shaver` commands and their answers are part of the history as the harness
+`shaver` commands and their answers are part of the history as the harness
 sees it: the client keeps them and sends them again with every request, though
 the proxy strips them before forwarding, so the model never sees them. The
 first message is hashed as the client sent it, command included, before that
@@ -586,7 +586,7 @@ record is kept apart from sending it.
   response after the preamble's headings. Assistant messages fit
   after them where a user one can't, since they can end with a system message.
   Every request after sends the same records, so the cache keeps reading them.
-  In `:shaver info` each record counts as `summary` and is dated by the first
+  In `shaver info` each record counts as `summary` and is dated by the first
   message it replaced, so several records can fall in several age rows.
 - **Merged into the memoir once they hold too much.** Each time a record is
   kept, if the records hold more than `memoir_threshold_tokens` by their output
@@ -597,9 +597,9 @@ record is kept apart from sending it.
   session transcripts and what follows is the active work. Like a new record,
   it is sent once the cache is cold. A record without arc headings (made before
   they were asked for) stops the merge, along with every record after it. In
-  `:shaver info` the memoir counts as `memoir`.
+  `shaver info` the memoir counts as `memoir`.
 
-A summary fork's cost is in the session's actual cost in `:shaver info`, which
+A summary fork's cost is in the session's actual cost in `shaver info`, which
 also shows how many summary forks have been sent, answered or not, and what
 became of them: their records the prompt now sends (applied), those still to
 answer or waiting for a cold cache (pending), and the rest, which failed,
@@ -642,7 +642,7 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
 
 Scripts:
 
-- Typing `:shaver info` as a prompt shows the session's latest request,
+- Typing `shaver info` as a prompt shows the session's latest request,
   logged or not, in three sections: the base, the conversation before the
   frontier (by type, then by age, newest first), and the frontier. Every percentage is of
   the whole request. After each request the proxy counts its parts' tokens
@@ -674,10 +674,10 @@ Scripts:
   close: one more text block on Messages, more of the reply's text on Chat
   Completions, and one more message item on Responses. The answer and the
   command are stripped from every later request too, and an answer after a
-  mid-turn `:shaver optimize` answers it as usual.
-  `:shaver policy` shows the policy file the same way, as it is on disk now.
-  `:shaver info all` adds up the costs of every conversation with a journal
-  (`src/totals.ts`), replaying each as its own `:shaver info` does, then one
+  mid-turn `shaver optimize` answers it as usual.
+  `shaver policy` shows the policy file the same way, as it is on disk now.
+  `shaver info all` adds up the costs of every conversation with a journal
+  (`src/totals.ts`), replaying each as its own `shaver info` does, then one
   entry per harness and model. Requests that weren't journaled (side requests
   and requests cut off before 2026-10-24, and suggestion mode before
   2026-10-23) aren't counted.
@@ -712,7 +712,7 @@ Scripts:
   request is logged too. A line writes null for a field that has gone, so
   replay drops it (before 2026-10-24 it was left out, so replay kept the
   old value). The proxy counts each request answered that wrote no line,
-  logs it to `proxy.log` and shows the count in `:shaver info`; there
+  logs it to `proxy.log` and shows the count in `shaver info`; there
   should be none. `scripts/audit-journal.ts` checks the journals against
   the harnesses' own records of their API calls (Codex's rollouts,
   OpenCode's database, Claude Code's transcripts) and lists the calls with
@@ -776,7 +776,7 @@ Scripts:
   are left out, as the journal leaves them out.
 - `bin/node-wrapper scripts/stats-from-logs.ts <conversation dir> [--request N]
   [--check-journal]` replays a logged conversation through `src/stats.ts`
-  and prints what `:shaver info` would have said. `--check-journal` also
+  and prints what `shaver info` would have said. `--check-journal` also
   checks that the journal replays to the same stats after every
   request.
 - `bin/node-wrapper scripts/backfill-suggestions.ts <key>…`, with the proxy

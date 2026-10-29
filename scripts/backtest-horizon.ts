@@ -124,7 +124,7 @@ function isSearch({ reqs }: Conv): boolean {
 
 // The records renumbered to the rebuilt messages' prompts, each matched by its
 // prompt's hash after the previous one's: the client counts turns the proxy
-// answered itself (:shaver commands), which no logged request holds.
+// answered itself (`shaver` commands), which no logged request holds.
 function renumbered(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary[] {
   const prompts = promptsOf(msgs)
   const out: Summary[] = []

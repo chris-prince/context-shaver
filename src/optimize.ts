@@ -1,4 +1,4 @@
-// `:shaver optimize`'s questions, answers and replies, apart from what the
+// `shaver optimize`'s questions, answers and replies, apart from what the
 // proxy measures and asks the model for, the policy file's I/O and the offer
 // it holds (server.ts), so each rule here can be tested alone. It offers
 // deferring the tools sent in full but those always loaded, or dropping them where
@@ -52,7 +52,7 @@ export type Tools = { harness: Pick<Harness, 'name'>; action: 'defer' | 'drop'; 
 // none, the skills in its table, a line for each and those already trimmed.
 export type Skills = { text: string; skills: Skill[]; lines: Record<string, string>; trimmed: string[] }
 
-// What `:shaver optimize` asked about, in the conversation `key`: its tools,
+// What `shaver optimize` asked about, in the conversation `key`: its tools,
 // then its skills, empty until they are shown. `changed` counts the items
 // answers changed so far.
 export type Proposal = {

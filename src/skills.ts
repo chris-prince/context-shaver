@@ -3,7 +3,7 @@
 // policy's `skill_shaver_rules` (policy.ts): each listed skill takes the first
 // rule whose `name` pattern matches its name, and is kept, stubbed, or dropped from the
 // list. With no rule matching it is kept. A stub is the first sentences of the
-// description, or a line `:shaver optimize` wrote for it (server.ts), which
+// description, or a line `shaver optimize` wrote for it (server.ts), which
 // `replaces` names by the hash of the description it was written from, or `*`
 // for any; a description since changed from a hashed one is kept whole. A dropped skill can still be run as
 // `/name`; the model just isn't told of it. Gives the bytes it took out.
@@ -112,7 +112,7 @@ export function shaveSkills(body: Body, rules: readonly SkillRule[]): { cut: num
 
 // The message holding a request's skill list, the first in its system
 // messages, or -1 with none, as when the list is in the system: where its base
-// ends, for `:shaver optimize`'s fork. Claude Code lists a skill again later in
+// ends, for `shaver optimize`'s fork. Claude Code lists a skill again later in
 // the conversation when its description changes, so a later list is history.
 export const listMessage = (body: Body): number => (body.messages ?? []).findIndex((m) => m.role === 'system' && textsOf(m.content).some((t) => listAt(t)))
 
@@ -125,7 +125,7 @@ export function skillsOf(body: Body): Skill[] {
   return [...out.values()]
 }
 
-// The skills the rules keep whole, which `:shaver optimize` writes lines for;
+// The skills the rules keep whole, which `shaver optimize` writes lines for;
 // lines it wrote before don't count, so it writes those again.
 export const keptWhole = (skills: readonly Skill[], rules: readonly SkillRule[]): Skill[] =>
   skills.filter((s) => {
@@ -137,7 +137,7 @@ export const keptWhole = (skills: readonly Skill[], rules: readonly SkillRule[])
 // best in the probes (local/notes.md).
 export const LINE_WORDS = 6
 
-// What `:shaver optimize` asks a model for: a line for each skill, as a JSON
+// What `shaver optimize` asks a model for: a line for each skill, as a JSON
 // object of lines by name.
 export function linesPrompt(skills: readonly Skill[]): string {
   return [

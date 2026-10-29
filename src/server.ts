@@ -76,13 +76,13 @@ const commit = (() => {
 // hash (trim.ts, sizeOf); how many of its records it sends (summary.ts), how
 // many of those as the memoir, and the turn the last summary fork was offered
 // at; the skill rules its list was last shortened by, and when it took them.
-// Its stats, for `:shaver info`, are in its journal.
+// Its stats, for `shaver info`, are in its journal.
 type SkillList = { rules: SkillRule[]; at: number }
 type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList }
 
 // The skill rules a conversation's list is shortened by: while its cache is
 // warm the ones it has, so new ones don't rewrite it, unless lines from
-// `:shaver optimize` were applied since; else the policy's.
+// `shaver optimize` were applied since; else the policy's.
 const skillListOf = (s: State | undefined, warm: boolean, now: number): SkillList | undefined =>
   s?.skillList && warm && s.skillList.at > skillsForcedAt ? s.skillList : policy.skill_shaver_rules && { rules: policy.skill_shaver_rules, at: now }
 
@@ -142,7 +142,7 @@ function currentOf(key: string): Current {
 }
 
 // The requests answered since the proxy started that no journal line was
-// written for, which `:shaver info` and proxy.log report.
+// written for, which `shaver info` and proxy.log report.
 let missed = 0
 
 // Journals a request the API answered, a client's or a fork's, and reports it
@@ -305,7 +305,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
 // it, so neither means anything for another history. The protocol makes the
 // key unique among the conversations it serves (harness.ts, conversationId).
 
-// The answer to `:shaver policy`: the policy file as it is now, which may differ
+// The answer to `shaver policy`: the policy file as it is now, which may differ
 // from what was loaded at startup if it was edited since.
 function policyText(): string {
   try {
@@ -315,7 +315,7 @@ function policyText(): string {
   }
 }
 
-// The answer to `:shaver info`: the conversation's latest answered request,
+// The answer to `shaver info`: the conversation's latest answered request,
 // from its journal (stats.ts), or before there is one, this request estimated
 // as it will be sent once the command is answered, tools deferred.
 function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canonical): string {
@@ -326,7 +326,7 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   const trimmed = policy.skill_shaver_rules ? shaveSkills(sent, policy.skill_shaver_rules).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
-  // `:shaver optimize` requests made here are charged to the skill list.
+  // `shaver optimize` requests made here are charged to the skill list.
   const lines = [...forks(journalOf(key))].reduce((n, f) => n + (f.kind === 'optimize' && f.usage ? spent(f.model, f.provider, f.usage) : 0), 0)
   const withSummaryForks = c && { ...c, actual: c.actual + summaryForks + lines, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks, 'skills-shaved': (c.saved['skills-shaved'] ?? 0) - lines } }
   // Each summary request is running, or left a record or none. A record no
@@ -583,7 +583,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   let key: string | undefined
   const served = req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length > 0
   if (served) {
-    // `:shaver` commands are answered here; answered ones are stripped (command.ts).
+    // `shaver` commands are answered here; answered ones are stripped (command.ts).
     try {
       c = proto.canonical(JSON.parse(raw.toString('utf8')))
     } catch (err) {
@@ -595,7 +595,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       if (c && body && key) {
         const msgs = stripCommands(body.messages)
-        // Read before stripping: an answer to `:shaver optimize` is one only after its reply.
+        // Read before stripping: an answer to `shaver optimize` is one only after its reply.
         const command = body.tools?.length && pendingCommand(body.messages)
         if (command) {
           const r = proto.replying(body.model, !!body.stream, latestOf(key)?.inputTokens ?? 0)
@@ -691,7 +691,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     })
   }
   // A response ending the turn gets the answers to the commands sent during
-  // it, after the request is journaled, so `:shaver info` counts it.
+  // it, after the request is journaled, so `shaver info` counts it.
   const write = (s: string | Uint8Array) => res.destroyed || res.write(s)
   const held = turnEnd && proto.holdClose(write)
   try {
@@ -862,7 +862,7 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
   }
 }
 
-// `:shaver optimize` (optimize.ts) measures here, asks the session's own model
+// `shaver optimize` (optimize.ts) measures here, asks the session's own model
 // for the skills' lines, and puts the items picked in the policy, in memory
 // and on disk, for every session the proxy serves, at once.
 
@@ -993,7 +993,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   return reply
 }
 
-// The tools `:shaver optimize` asks about deferring, or dropping where they
+// The tools `shaver optimize` asks about deferring, or dropping where they
 // can't be deferred, those the policy does that to already, and the rules
 // doing it to them all, or why there are none.
 function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { action: 'defer' | 'drop'; names: string[]; chosen: string[]; all: ToolRule[] } | string {
@@ -1008,7 +1008,7 @@ function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { 
   return { action, names, chosen: names.filter((name) => actionOf(now, name) === action), all: withPicked(now, names, new Set(names), action, h.alwaysLoaded) }
 }
 
-// The skills part of `:shaver optimize`'s answer, with the skills in its
+// The skills part of `shaver optimize`'s answer, with the skills in its
 // table, a line for each, and those whose line is sent already. Lines are
 // asked for only for the others.
 async function skillsStage(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>): Promise<Skills> {

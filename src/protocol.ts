@@ -125,7 +125,7 @@ export type Protocol = {
   // reads that usage, for the stats and the cache model to use over estimates.
   canonical(wire: Record<string, unknown>): Wire
   usageReader(): UsageReader
-  // A response holding just text, as Claude Code's `:shaver` answers are made
+  // A response holding just text, as Claude Code's `shaver` answers are made
   // (command.ts), with `context` reported as the input read.
   replying(model: string, stream: boolean, context: number): Replying
   // A stream held at its close, for the answers to commands sent mid-turn.

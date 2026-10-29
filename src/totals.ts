@@ -1,10 +1,10 @@
-// `:shaver info all`: what every conversation the proxy has a journal for cost,
-// and would have without it, replayed from each journal as `:shaver info`
+// `shaver info all`: what every conversation the proxy has a journal for cost,
+// and would have without it, replayed from each journal as `shaver info`
 // replays one (cost.ts), so each conversation adds what its own info shows.
 // The cost is summed request by request, so it can be cut by environment:
 // harness (the key's first part) and model together. A summary fork counts for the model its journal
 // line gives; spend from before forks were journaled, for the conversation's
-// last model. Either is charged to the summaries' saving; a `:shaver optimize`
+// last model. Either is charged to the summaries' saving; a `shaver optimize`
 // request, to the skill list's.
 //
 // Not counted: requests that weren't journaled (side requests without tools,
