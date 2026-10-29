@@ -14,7 +14,7 @@
     "reasoning": [
       { "action": "drop", "after": "0 turns" }
     ],
-    "prompt_and_assistant_text": { "summary_threshold_tokens": 20000, "memoir_threshold_tokens": 15000 }
+    "user_and_assistant_text": { "summary_threshold_tokens": 20000, "memoir_threshold_tokens": 15000 }
   },
   "tool_shaver_rules": {
     "claude": [

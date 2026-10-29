@@ -19,13 +19,13 @@ export function afterOf(r: Rule): { on: 'request' | 'turn'; wait: number } | und
   const m = typeof r?.after === 'string' ? AFTER.exec(r.after) : null
   return m ? { on: m[2] as 'request' | 'turn', wait: Number(m[1]) } : undefined
 }
-// Of the prompts and the assistant's text: `summary_threshold_tokens` is how
+// Of the user's and the assistant's text: `summary_threshold_tokens` is how
 // many tokens of completed turns a record leaves uncovered before the proxy
 // asks for the next (summary.ts); without it, none is made or applied.
 // `memoir_threshold_tokens` is how many tokens the records can hold before the
 // oldest are merged into the memoir (summary.ts); without it, none are.
 type Text = { summary_threshold_tokens?: number; memoir_threshold_tokens?: number }
-export type PartRules = Partial<Record<Kind, Rule[]>> & { prompt_and_assistant_text?: Text }
+export type PartRules = Partial<Record<Kind, Rule[]>> & { user_and_assistant_text?: Text }
 // `conversation_shaver_rules` says, by kind, when the proxy stubs or drops a part of
 // the conversation (trim.ts), and when it summarizes the rest.
 // `tool_shaver_rules` says, by harness name, which tools it sends in full the
@@ -37,7 +37,7 @@ export type PartRules = Partial<Record<Kind, Rule[]>> & { prompt_and_assistant_t
 export type Policy = { conversation_shaver_rules?: PartRules; tool_shaver_rules?: Record<string, ToolRule[]>; skill_shaver_rules?: SkillRule[] }
 
 // The policy's summary and memoir thresholds, if any.
-export const textRules = (p: Policy): Text => p.conversation_shaver_rules?.prompt_and_assistant_text ?? {}
+export const textRules = (p: Policy): Text => p.conversation_shaver_rules?.user_and_assistant_text ?? {}
 
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
@@ -50,10 +50,10 @@ export function parsePolicy(v: unknown): Policy {
     if (key === 'conversation_shaver_rules') {
       if (!isObject(value)) throw new Error('policy: conversation_shaver_rules is not rule lists by kind')
       for (const [kind, rules] of Object.entries(value)) {
-        if (kind === 'prompt_and_assistant_text') {
-          if (!isObject(rules)) throw new Error('policy: prompt_and_assistant_text is not an object of token counts')
+        if (kind === 'user_and_assistant_text') {
+          if (!isObject(rules)) throw new Error('policy: user_and_assistant_text is not an object of token counts')
           for (const [k, n] of Object.entries(rules)) {
-            if (k !== 'summary_threshold_tokens' && k !== 'memoir_threshold_tokens') throw new Error(`policy: unknown prompt_and_assistant_text key ${k}`)
+            if (k !== 'summary_threshold_tokens' && k !== 'memoir_threshold_tokens') throw new Error(`policy: unknown user_and_assistant_text key ${k}`)
             if (!Number.isInteger(n) || (n as number) <= 0) throw new Error(`policy: ${k} is not a positive token count`)
           }
           continue
@@ -91,14 +91,15 @@ export const skillRulesNow = (rules: (SkillRule & { match?: string })[]): SkillR
 // `tool_list`, one list for Claude Code or lists by harness, whose rules may
 // have `defer` true or false for the action; and `tools_not_deferred`, naming
 // the tools Claude Code keeps, every other deferred; and part rules timed by
-// `on` ("step" or "turn") and `wait`, written as `after`, a step as a request.
+// `on` ("step" or "turn") and `wait`, written as `after`, a step as a request;
+// and the thresholds under `prompt_and_assistant_text`.
 export function upgraded(v: Record<string, unknown>): Record<string, unknown> | undefined {
   const old = ['skill_list', 'tool_list', 'tools_not_deferred', 'summary_threshold_tokens', 'memoir_threshold_tokens']
   const kinds = Object.keys(v).filter((k) => Object.hasOwn(ACTIONS, k))
   const conv = isObject(v.conversation_shaver_rules) ? v.conversation_shaver_rules : {}
   const onWait = (r: unknown) => isObject(r) && 'on' in r
   const timedOlder = [...kinds.map((k) => v[k]), ...Object.values(conv)].some((rs) => Array.isArray(rs) && rs.some(onWait))
-  if (!kinds.length && !timedOlder && !old.some((k) => k in v)) return undefined
+  if (!kinds.length && !timedOlder && !('prompt_and_assistant_text' in conv) && !old.some((k) => k in v)) return undefined
   const after = (wait: number, unit: string) => `${wait} ${unit}${wait === 1 ? '' : 's'}`
   const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { action: r.action, after: after(r.wait, r.on === 'step' ? 'request' : r.on) } : r)) : rs)
   type Older = { name: string; defer?: boolean; action?: string }
@@ -107,11 +108,11 @@ export function upgraded(v: Record<string, unknown>): Record<string, unknown> | 
     ? Array.isArray(v.tool_list) ? { claude: now(v.tool_list) } : Object.fromEntries(Object.entries(v.tool_list as Record<string, Older[]>).map(([h, rs]) => [h, now(rs)]))
     : v.tools_not_deferred && { claude: [...(v.tools_not_deferred as string[]).map((name) => ({ name, action: 'keep' })), { name: '*', action: 'defer' }] }
   const skills = v.skill_list && skillRulesNow(v.skill_list as SkillRule[])
-  const { prompt_and_assistant_text: had, ...convKinds } = conv
-  const text = { ...(isObject(had) && had), ...Object.fromEntries(['summary_threshold_tokens', 'memoir_threshold_tokens'].filter((k) => k in v).map((k) => [k, v[k]])) }
+  const { user_and_assistant_text: had, prompt_and_assistant_text: older, ...convKinds } = conv
+  const text = { ...(isObject(older) && older), ...(isObject(had) && had), ...Object.fromEntries(['summary_threshold_tokens', 'memoir_threshold_tokens'].filter((k) => k in v).map((k) => [k, v[k]])) }
   const parts = {
     ...Object.fromEntries([...Object.entries(convKinds), ...kinds.map((k) => [k, v[k]])].map(([k, rs]) => [k, timed(rs)])),
-    ...(Object.keys(text).length && { prompt_and_assistant_text: text }),
+    ...(Object.keys(text).length && { user_and_assistant_text: text }),
   }
   const rest = Object.fromEntries(Object.entries(v).filter(([k]) => !kinds.includes(k) && !old.includes(k) && (k !== 'conversation_shaver_rules' || !isObject(v[k]))))
   return {

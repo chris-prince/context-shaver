@@ -285,7 +285,7 @@ is never trimmed.
     ],
     "skill": [{ "action": "drop", "after": "0 turns" }],
     "reasoning": [{ "action": "drop", "after": "0 turns" }],
-    "prompt_and_assistant_text": { "summary_threshold_tokens": 20000 }
+    "user_and_assistant_text": { "summary_threshold_tokens": 20000 }
   }
 }
 ```
@@ -397,9 +397,10 @@ their tokens. Its requests' cost counts against the skill list's saving. A
 session's stats start again only with a new conversation, so a change asks
 for `/clear` in every active session on the machine.
 
-The prompts and the assistant's text are never stubbed or dropped, only
+The user's and the assistant's text are never stubbed or dropped, only
 summarized, so their entry in `conversation_shaver_rules`,
-`prompt_and_assistant_text`, holds two thresholds rather than rules.
+`user_and_assistant_text` (named for `shaver info`'s `user` and `assistant`),
+holds two thresholds rather than rules.
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens
 before the frontier. The default is 20000; a model can set its own
