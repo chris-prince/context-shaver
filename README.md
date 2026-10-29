@@ -38,10 +38,11 @@ the proxy, leaving the CLI's own config untouched. `claude-via-shaver` works wit
 Claude API keys. If Codex or Claude Code calls are already proxied by a
 wrapper, context-shaver can be chained in front of that proxy (see DESIGN.md).
 
-When running against the proxy, the prompt `shaver info` will return details
-on how context-shaver is doing this session and where your context is being
-spent. `shaver info all` will show your savings across all sessions the
-proxy has seen.
+You can communicate with context-shaver by sending certain built-in commands as prompts:
+
+- `shaver info`: See how context-shaver is doing this session, and where your context is spent.
+- `shaver info all`: Show your savings across all sessions the proxy has seen.
+- `shaver optimize`: Choose which skills and tools to shrink, to save more tokens on every request.
 
 context-shaver requires only bash and Node 24 or newer. (`bin/run-proxy` will
 try to install Node 24 if needed.) It has been tested most thoroughly with
