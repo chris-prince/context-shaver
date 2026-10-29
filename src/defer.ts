@@ -31,20 +31,18 @@ export const searchOn = (body: Body, searchTool?: object): boolean => searchTool
 // The message listing the deferred tools, or -1.
 export const toolListMessage = (body: Body): number => (body.messages ?? []).findIndex(lists)
 
-// The tools never deferred, whatever the rules say: those that load the
-// others, Codex's exec, which runs every other, with the wait that resumes
-// its cells, and those a Claude Code session uses on most requests.
-const ALWAYS_LOADED = ['ToolSearch', 'functions.exec', 'functions.wait', 'Bash', 'Edit', 'Read', 'Write']
-const loaded = (t: { type?: string; name?: string }) => t.type === 'tool_search' || ALWAYS_LOADED.includes(t.name ?? '')
+// The tools never deferred, whatever the rules say: a search tool, and those
+// the harness always keeps loaded (`always`, Harness.alwaysLoaded).
+const loaded = (t: { type?: string; name?: string }, always: readonly string[]) => t.type === 'tool_search' || always.includes(t.name ?? '')
 
 // The tools sent in full that `rules` would defer.
-export const deferrable = (body: Body, rules: readonly ToolRule[]): string[] =>
-  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) && deferredBy(rules, t.name) ? [t.name] : []))
+export const deferrable = (body: Body, rules: readonly ToolRule[], always: readonly string[]): string[] =>
+  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t, always) && deferredBy(rules, t.name) ? [t.name] : []))
 
 // The tools sent in full that `:shaver optimize` asks about deferring: all but
 // those always loaded.
-export const offerable = (body: Body): string[] =>
-  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) ? [t.name] : []))
+export const offerable = (body: Body, always: readonly string[]): string[] =>
+  (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t, always) ? [t.name] : []))
 
 // `rules` placing the `shown` tools: the `picked` ones given `action`, the
 // others kept loaded. Those kept are named first, then come the rules' others
@@ -52,8 +50,8 @@ export const offerable = (body: Body): string[] =>
 // rest; tools are dropped only by name, so none Codex adds later is. A picked
 // tool an earlier rule would still keep loaded is named first too. Rules for
 // tools always loaded, which do nothing, are left out.
-export function withPicked(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, action: 'defer' | 'drop'): ToolRule[] {
-  const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name) && !ALWAYS_LOADED.includes(r.name))
+export function withPicked(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, action: 'defer' | 'drop', always: readonly string[]): ToolRule[] {
+  const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name) && !always.includes(r.name))
   const out: ToolRule[] = [
     ...shown.filter((name) => !picked.has(name)).map((name) => ({ name, action: 'keep' as const })),
     ...others,
@@ -64,18 +62,18 @@ export function withPicked(rules: readonly ToolRule[], shown: readonly string[],
 
 // Takes the tools the rules drop out of `body`, but those always loaded.
 // Gives the bytes of their definitions.
-export function dropTools(body: Body, rules: readonly ToolRule[]): number {
-  const drop = (t: { type?: string; name?: string }) => !!t.name && !loaded(t) && actionOf(rules, t.name) === 'drop'
+export function dropTools(body: Body, rules: readonly ToolRule[], always: readonly string[]): number {
+  const drop = (t: { type?: string; name?: string }) => !!t.name && !loaded(t, always) && actionOf(rules, t.name) === 'drop'
   const bytes = (body.tools ?? []).filter(drop).reduce((n, t) => n + JSON.stringify(t).length, 0)
   if (bytes) body.tools = body.tools?.filter((t) => !drop(t))
   return bytes
 }
 
-export function forceDefer(body: Body, rules: readonly ToolRule[], searchTool?: Record<string, unknown>): number {
+export function forceDefer(body: Body, rules: readonly ToolRule[], always: readonly string[], searchTool?: Record<string, unknown>): number {
   if (!searchOn(body, searchTool)) return 0
   if (searchTool && body.tools?.some((t) => t.type === searchTool.type)) return 0
   const env = envOf(body)
-  const defer = new Set(deferrable(body, rules))
+  const defer = new Set(deferrable(body, rules, always))
   if (!defer.size) return 0
   const bytes = (body.tools ?? []).filter((t) => defer.has(t.name)).reduce((n, t) => n + JSON.stringify(t).length, 0)
   body.tools = body.tools?.map((t) => (defer.has(t.name) ? { ...t, defer_loading: true } : t))

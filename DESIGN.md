@@ -320,10 +320,12 @@ marked `defer_loading`. On Claude Code it is added to the deferred tools listed
 in the environment message, so the model loads it with `ToolSearch`; on Codex
 the proxy adds a `tool_search` tool the backend runs, and moves the tool out
 of the `additional_tools` input item, where the backend ignores
-`defer_loading`, to the top-level tools. The tools the others are loaded by or
-run through (`ToolSearch` on Claude Code, `functions.exec` and `functions.wait`
-on Codex) are never deferred or dropped, whatever the rules say, nor are those
-a Claude Code session uses on most requests (Bash, Edit, Read, Write). Of the older
+`defer_loading`, to the top-level tools. Each harness names the tools it never
+defers or drops, whatever the rules say, so a tool of the same name on another
+harness can still be deferred: the tools the others are loaded by or run
+through (`ToolSearch` on Claude Code, `functions.exec` and `functions.wait` on
+Codex), and those a Claude Code session uses on most requests (Bash, Edit, Read,
+Write) or that the model must see to invoke (Skill). Of the older
 forms, a flat `tool_list` or `tools_not_deferred` (tools to keep with every
 other deferred) becomes Claude Code's rules, since only it deferred tools then,
 and a rule's `defer`, true or false, its action. With tool search

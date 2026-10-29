@@ -19,6 +19,8 @@ export type Harness = {
   // Whether it has a tool that loads deferred tools, so the proxy can defer
   // others where the protocol can (defer.ts).
   defers: boolean
+  // The tools never deferred or dropped, whatever the rules say (defer.ts).
+  alwaysLoaded: readonly string[]
   // Whether it sends again all it sent before, but after compacting, so a
   // request without the last message of the one before follows a compaction
   // (stats.ts, Sent.compacted).
@@ -34,6 +36,9 @@ const CLAUDE: Harness = {
   headers: 'x-claude-code-',
   conventions: CLAUDE_CODE,
   defers: true,
+  // ToolSearch loads the others; the model uses the file and shell tools on
+  // most requests, and leaves Skill uncalled when it's deferred.
+  alwaysLoaded: ['ToolSearch', 'Skill', 'Bash', 'Edit', 'Read', 'Write'],
   // It rewrites its last message's reminders on the next request.
   resends: false,
   session(c, headers) {
@@ -58,6 +63,8 @@ const CODEX: Harness = {
     promptHeadings: [['', 'system-prompt'], ...CODEX_HEADINGS],
   },
   defers: true,
+  // exec runs every other tool, and wait resumes its cells.
+  alwaysLoaded: ['functions.exec', 'functions.wait'],
   // In 265 journaled requests to 2026-10-24, the 3 that left out the last
   // message before were those after its 3 compactions.
   resends: true,
@@ -87,6 +94,7 @@ const OPENCODE: Harness = {
     ],
   },
   defers: false,
+  alwaysLoaded: [],
   // Unchecked: no logged OpenCode session has compacted.
   resends: false,
   session: (_, headers) => headers['x-opencode-session-id'],

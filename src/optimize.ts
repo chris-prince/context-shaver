@@ -100,7 +100,7 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
     written = withList(text, 'skill_shaver_rules', withLines(policy.skill_shaver_rules ?? [], shown.skills, lines))
   } else if (changes) {
     const { name } = tools.harness
-    const lists = { ...policy.tool_shaver_rules, [name]: withPicked(policy.tool_shaver_rules?.[name] ?? [], items, picked, tools.action) }
+    const lists = { ...policy.tool_shaver_rules, [name]: withPicked(policy.tool_shaver_rules?.[name] ?? [], items, picked, tools.action, tools.harness.alwaysLoaded) }
     written = withList(text, 'tool_shaver_rules', lists)
   }
   const done = [`Modified ${counted(changes, shown.asking === 'skills' ? 'skill' : 'tool')} in shaver policy file.`, file]

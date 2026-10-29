@@ -187,8 +187,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const live = new Set(Object.keys(entries))
   // What it takes out of the base: deferred tools, and skills off the list.
   const toolRules = toolRulesOf(policy, h?.name)
-  const dropped = toolRules ? dropTools(body, toolRules) : 0
-  const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules, proto.searchTool) : 0
+  const dropped = h && toolRules ? dropTools(body, toolRules, h.alwaysLoaded) : 0
+  const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules, h.alwaysLoaded, proto.searchTool) : 0
   const skillList = skillListOf(s, live.size > 0, now)
   const { cut: skills, trimmed: skillsTrimmed } = skillList ? shaveSkills(body, skillList.rules) : { cut: 0 }
   const seed = seedOf(body.model, body.tools, body.system)
@@ -321,8 +321,8 @@ function policyText(): string {
 function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canonical): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   const toolRules = toolRulesOf(policy, h?.name)
-  if (toolRules) dropTools(sent, toolRules)
-  if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, proto.searchTool)
+  if (h && toolRules) dropTools(sent, toolRules, h.alwaysLoaded)
+  if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, h.alwaysLoaded, proto.searchTool)
   const trimmed = policy.skill_shaver_rules ? shaveSkills(sent, policy.skill_shaver_rules).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
@@ -395,7 +395,7 @@ function refuse(res: ServerResponse, proto: Protocol, status: 400 | 403, message
 // deferrals, and tiny standalone ones (the client-executed round trip, a
 // search the backend runs, and deferral inside a namespace) that take only
 // its route, auth and model.
-async function probeCodexToolSearch(context: { target: string; headers: Record<string, string>; model: string; real?: { body: Canonical; render: Wire['render']; rules: readonly ToolRule[] } }): Promise<Record<string, unknown>> {
+async function probeCodexToolSearch(context: { target: string; headers: Record<string, string>; model: string; real?: { body: Canonical; render: Wire['render']; rules: readonly ToolRule[]; always: readonly string[] } }): Promise<Record<string, unknown>> {
   const functionTool = {
     type: 'function', name: 'shaver_probe_confirm', description: 'Confirms this tool-search probe.', defer_loading: true,
     parameters: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'], additionalProperties: false },
@@ -489,10 +489,10 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
   // each deferred tool sits, and what the model does when asked for one.
   const real = async (): Promise<Record<string, unknown>> => {
     if (!context.real) return { result: 'skipped' }
-    const { body, render, rules } = context.real
+    const { body, render, rules, always } = context.real
     const tools = (body.tools ?? []).map(({ defer_loading, ...t }) => t)
     const deferred = { ...body, tools: [...tools] }
-    if (!forceDefer(deferred, rules, searchTool)) return { result: 'inconclusive', detail: 'The policy defers none of this request\'s tools.' }
+    if (!forceDefer(deferred, rules, always, searchTool)) return { result: 'inconclusive', detail: 'The policy defers none of this request\'s tools.' }
     const names = (deferred.tools ?? []).filter((t) => t.defer_loading).map((t) => t.name)
     const loaded = { ...deferred, tools: (deferred.tools ?? []).map(({ defer_loading, ...t }) => t) }
     const asked = (c: Canonical, text: string) => render({ ...c, messages: [{ role: 'user', content: [{ type: 'text', text }] }] }) as any
@@ -734,7 +734,7 @@ async function answerOf(command: string, proto: Protocol, h: Harness | undefined
     probeHeaders['content-type'] = 'application/json'
     probeHeaders.accept = 'application/json'
     const rules = toolRulesOf(policy, h.name)
-    const result = await probeCodexToolSearch({ target, headers: probeHeaders, model: body.model, ...(rules && { real: { body, render, rules } }) })
+    const result = await probeCodexToolSearch({ target, headers: probeHeaders, model: body.model, ...(rules && { real: { body, render, rules, always: h.alwaysLoaded } }) })
     return 'Codex tool-search probe:\n```json\n' + JSON.stringify(result, null, 2) + '\n```'
   }
   if (command === ':shaver policy') return policyText()
@@ -894,8 +894,8 @@ let skillsForcedAt = 0
 // the session has cached of it.
 function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules = sessionRules(key, body), tools = toolRulesOf(policy, h?.name)): Record<string, unknown> {
   const fork: Canonical = structuredClone({ ...body, messages: body.messages.slice(0, Math.max(listMessage(body), toolListMessage(body)) + 1) })
-  if (tools) dropTools(fork, tools)
-  if (proto.defers && h?.defers && tools) forceDefer(fork, tools, proto.searchTool)
+  if (h && tools) dropTools(fork, tools, h.alwaysLoaded)
+  if (proto.defers && h?.defers && tools) forceDefer(fork, tools, h.alwaysLoaded, proto.searchTool)
   if (rules) shaveSkills(fork, rules)
   return render(fork) as Record<string, unknown>
 }
@@ -984,7 +984,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   }
   // The base as sent, without the offered tools, with none shaved, and with
   // the action done to all.
-  const dropped = withPicked(now, offer.names, new Set(offer.names), 'drop')
+  const dropped = withPicked(now, offer.names, new Set(offer.names), 'drop', h!.alwaysLoaded)
   const measured = await Promise.all([old(), measure(undefined, dropped), measure(undefined, []), measure(undefined, offer.all)])
     .then(([o, w, whole, all]) => ({ own: o.tokens - w.tokens, blocked: whole.tokens - o.tokens, more: o.tokens - all.tokens }), (err: Error) => err)
   const { reply, next } = toolsAsked(key, { harness: h!, action: offer.action, names: offer.names, chosen: offer.chosen, text: toolsText(offer.names, offer.chosen, measured, offer.action) })!
@@ -1003,9 +1003,9 @@ function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { 
   if ((action === 'defer' && !proto.defers) || !h?.defers) return "Shaver can't defer tools in this harness yet."
   if (action === 'defer' && !searchOn(body, proto.searchTool)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
   const now = toolRulesOf(policy, h.name) ?? []
-  const names = offerable(body)
-  if (!names.length) return `No tools but ${proto.searchTool ? 'exec and wait' : 'ToolSearch, Bash, Edit, Read, Write'} are sent in full, so none can be ${action === 'drop' ? 'dropped' : 'deferred'}.`
-  return { action, names, chosen: names.filter((name) => actionOf(now, name) === action), all: withPicked(now, names, new Set(names), action) }
+  const names = offerable(body, h.alwaysLoaded)
+  if (!names.length) return `No tools but ${h.alwaysLoaded.join(', ')} are sent in full, so none can be ${action === 'drop' ? 'dropped' : 'deferred'}.`
+  return { action, names, chosen: names.filter((name) => actionOf(now, name) === action), all: withPicked(now, names, new Set(names), action, h.alwaysLoaded) }
 }
 
 // The skills part of `:shaver optimize`'s answer, with the skills in its

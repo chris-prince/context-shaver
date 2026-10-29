@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { afterAnswer, optimizing, pickWords, PICK, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal } from '../src/optimize.ts'
 import { parsePolicy, toolRulesOf } from '../src/policy.ts'
+import { harnessOf, type Harness } from '../src/harness.ts'
 
 const skill = (name: string) => ({ name, description: `${name} does a long thing in many words` })
 const skills = [skill('alpha'), skill('beta'), skill('gamma')]
@@ -12,7 +13,7 @@ const stub = (s: { name: string; description: string }, text: string) => ({ name
 
 const proposal = (over: Partial<Proposal> = {}): Proposal => ({
   key: 'k', asking: 'skills', skills, lines, trimmed: [],
-  tools: { harness: { name: 'claude' }, action: 'defer', names: ['Agent', 'WebFetch'], chosen: [], text: 'TOOLS TABLE' },
+  tools: { harness: harnessOf('claude', {}) as Harness, action: 'defer', names: ['Agent', 'WebFetch'], chosen: [], text: 'TOOLS TABLE' },
   changed: 0, ...over,
 })
 
@@ -67,7 +68,7 @@ test('the tool table says what the tools add and save already, numbers every too
 test("where tools can't be deferred, dropping is offered with a warning, and the question asks which to drop", () => {
   const text = toolsText(['clock.sleep'], [], { own: 40, blocked: 0, more: 40 }, 'drop')
   assert.match(text, /^Codex can't defer tools with ChatGPT sign-in, only drop them\. The model can't use a dropped tool at all, so drop with caution\.\n\n1 tool currently adds 40 tokens on every request\.\nCurrent status:\n\n\| Tool \| Dropped \|\n[^]*Dropping 'all' would save 40 more tokens on every request\.$/)
-  const tools = { harness: { name: 'codex' }, action: 'drop' as const, names: ['clock.sleep'], chosen: [], text }
+  const tools = { harness: harnessOf('codex', {}) as Harness, action: 'drop' as const, names: ['clock.sleep'], chosen: [], text }
   assert.match(toolsAsked('k', tools)!.reply, /Which tools should be dropped\?/)
   const rules = toolRulesOf(rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', file({}), '/p').text), 'codex')
   assert.deepEqual(rules, [{ name: 'clock.sleep', action: 'drop' }])
@@ -162,7 +163,7 @@ test('a tool answer writes tool rules, then goes on to skills', () => {
 
 test("a tool answer changes only its harness's rules", () => {
   const codexRules = [{ name: 'clock.sleep', action: 'keep' }]
-  const tools = { harness: { name: 'codex' }, action: 'defer' as const, names: ['clock.sleep'], chosen: [], text: 'T' }
+  const tools = { harness: harnessOf('codex', {}) as Harness, action: 'defer' as const, names: ['clock.sleep'], chosen: [], text: 'T' }
   const before = file({ tool_shaver_rules: { claude: [{ name: 'Agent', action: 'keep' }, { name: '*', action: 'defer' }], codex: codexRules } })
   const all = rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', before, '/p').text)
   assert.deepEqual(toolRulesOf(all, 'claude'), toolRulesOf(rulesIn(before), 'claude'))

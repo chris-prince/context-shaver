@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canonical, RESPONSES, withWrites } from '../src/responses.ts'
 import { forceDefer } from '../src/defer.ts'
+import { harnessOf, type Harness } from '../src/harness.ts'
 import type { ApiMsg, Block } from '../src/items.ts'
 import { wholeReply } from '../src/protocol.ts'
+
+const CODEX_ALWAYS = (harnessOf('codex', {}) as Harness).alwaysLoaded
 
 // Shaped like Codex's requests to ChatGPT's backend.
 const wire = {
@@ -71,7 +74,7 @@ test('Codex tool search deferral moves deferred tools out of additional_tools, i
   const clock = { type: 'namespace', name: 'clock', description: 'Time tools.', tools: [{ type: 'function', name: 'sleep' }, { type: 'function', name: 'now' }] }
   const w = { ...wire, input: [{ ...wire.input[0], tools: [...(wire.input[0].tools as object[]), clock] }, ...wire.input.slice(1)] }
   const c = canonical(w)
-  forceDefer(c.body, [{ name: 'clock.now', action: 'keep' }, { name: '*', action: 'defer' }], RESPONSES.searchTool)
+  forceDefer(c.body, [{ name: 'clock.now', action: 'keep' }, { name: '*', action: 'defer' }], CODEX_ALWAYS, RESPONSES.searchTool)
   const sent = c.render(c.body) as typeof wire
   assert.deepEqual(sent.input[0], {
     type: 'additional_tools', role: 'developer',
