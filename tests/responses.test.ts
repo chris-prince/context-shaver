@@ -71,7 +71,7 @@ test('Codex tool search deferral moves deferred tools out of additional_tools, i
   const clock = { type: 'namespace', name: 'clock', description: 'Time tools.', tools: [{ type: 'function', name: 'sleep' }, { type: 'function', name: 'now' }] }
   const w = { ...wire, input: [{ ...wire.input[0], tools: [...(wire.input[0].tools as object[]), clock] }, ...wire.input.slice(1)] }
   const c = canonical(w)
-  forceDefer(c.body, [{ name: 'clock.now', defer: false }, { name: '*', defer: true }], RESPONSES.searchTool)
+  forceDefer(c.body, [{ name: 'clock.now', action: 'keep' }, { name: '*', action: 'defer' }], RESPONSES.searchTool)
   const sent = c.render(c.body) as typeof wire
   assert.deepEqual(sent.input[0], {
     type: 'additional_tools', role: 'developer',

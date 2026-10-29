@@ -70,10 +70,10 @@ test('a rule is due once its unit is completed, past the wait', () => {
 
 test('a policy file is checked', () => {
   assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'tool_search', 'reasoning', 'tool_list', 'skill_list', 'summary_threshold_tokens', 'memoir_threshold_tokens'])
-  for (const bad of [[], { tools: [] }, { tool: {} }, { tools_not_deferred: [1] }, { tool_list: 'x' }, { tool_list: { claude: {} } }, { tool_list: [{ name: 'x' }] }, { tool_list: { codex: [{ name: 'x', defer: 'yes' }] } }, { tool_list: [{ name: 'x', defer: true, match: 'x' }] },{ summary_threshold_tokens: 0 }, { summary_threshold_tokens: '20k' }, { memoir_threshold_tokens: 0 }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }, { skill_list: {} }, { skill_list: [{ match: 'x', action: 'stub' }] }, { skill_list: [{ match: 'x', action: 'drop', sentences: 1 }] }, { skill_list: [{ action: 'keep' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line', replaces: 'h', sentences: 1 }] }, { skill_list: [{ match: 'x', action: 'drop', text: 'a line', replaces: 'h' }] }])
+  for (const bad of [[], { tools: [] }, { tool: {} }, { tools_not_deferred: [1] }, { tool_list: 'x' }, { tool_list: { claude: {} } }, { tool_list: [{ name: 'x' }] }, { tool_list: { codex: [{ name: 'x', defer: 'yes' }] } }, { tool_list: { codex: [{ name: 'x', action: 'stub' }] } }, { tool_list: { codex: [{ name: 'x', action: 'keep', defer: true }] } }, { tool_list: [{ name: 'x', action: 'defer', match: 'x' }] },{ summary_threshold_tokens: 0 }, { summary_threshold_tokens: '20k' }, { memoir_threshold_tokens: 0 }, { tool: [{ on: 'step', wait: -1, action: 'stub' }] }, { reasoning: [{ on: 'turn', wait: 0, action: 'stub' }] }, { skill_list: {} }, { skill_list: [{ match: 'x', action: 'stub' }] }, { skill_list: [{ match: 'x', action: 'drop', sentences: 1 }] }, { skill_list: [{ action: 'keep' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line' }] }, { skill_list: [{ match: 'x', action: 'stub', text: 'a line', replaces: 'h', sentences: 1 }] }, { skill_list: [{ match: 'x', action: 'drop', text: 'a line', replaces: 'h' }] }])
     assert.throws(() => parsePolicy(bad))
   assert.doesNotThrow(() => parsePolicy({ skill_list: [{ match: 'x', action: 'stub', text: 'a line', replaces: 'h' }] }))
-  assert.doesNotThrow(() => parsePolicy({ tool_list: { claude: [{ name: 'x', defer: true }], codex: [] } }))
+  assert.doesNotThrow(() => parsePolicy({ tool_list: { claude: [{ name: 'x', action: 'defer' }], codex: [] } }))
 })
 
 test('a missing policy file is made from the default, and an edited one is kept', () => {
@@ -482,7 +482,7 @@ test("setting a policy file's skill list changes only that value's text", () => 
 })
 
 test("a policy file's tool list takes the place of its tools_not_deferred, and is set in place once it has one", () => {
-  const rules = [{ name: 'Bash', defer: false }, { name: '*', defer: true }]
+  const rules = [{ name: 'Bash', action: 'keep' }, { name: '*', action: 'defer' }]
   const file = '{\n  "tool": [],\n  "tools_not_deferred": ["Bash", "Read"],\n  "skill_list": []\n}\n'
   const once = withList(file, 'tool_list', rules, 'tools_not_deferred')
   assert.deepEqual(Object.entries(JSON.parse(once)), [['tool', []], ['tool_list', rules], ['skill_list', []]])

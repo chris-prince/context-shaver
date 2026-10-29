@@ -9,7 +9,7 @@ const request = (env: string) => ({
   tools: [{ name: 'Bash' }, { name: 'ToolSearch' }, { name: 'Artifact' }, { name: 'WebFetch', defer_loading: true }],
   messages: [{ role: 'user', content: 'hi' }, { role: 'system', content: [{ type: 'text', text: `env\n\nThe following deferred tools… ${HEAD}WebFetch\n\nmore` }] }].slice(0, env ? 2 : 1),
 })
-const keepBash: ToolRule[] = [{ name: 'Bash', defer: false }, { name: '*', defer: true }]
+const keepBash: ToolRule[] = [{ name: 'Bash', action: 'keep' }, { name: '*', action: 'defer' }]
 // Claude Code's core tools.
 const core = ['Bash', 'Edit', 'Read', 'Write']
 
@@ -22,14 +22,14 @@ test('a tool the rules defer is deferred and listed with the others; ToolSearch 
 
 test('each tool takes the first rule matching it, and one no rule matches is sent as it came', () => {
   const tools = ['Bash', 'BashOutput', 'Artifact', 'mcp__docs__read', 'mcp__docs__write'].map((name) => ({ name }))
-  const rules: ToolRule[] = [{ name: 'mcp__docs__read', defer: false }, { name: 'mcp__*', defer: true }, { name: 'Bash*', defer: true }, { name: 'Bash', defer: false }]
+  const rules: ToolRule[] = [{ name: 'mcp__docs__read', action: 'keep' }, { name: 'mcp__*', action: 'defer' }, { name: 'Bash*', action: 'defer' }, { name: 'Bash', action: 'keep' }]
   assert.deepEqual(deferrable({ tools }, rules), ['Bash', 'BashOutput', 'mcp__docs__write'])
 })
 
 test("each harness has its own tool rules; the older forms are Claude Code's, a tool_list winning over tools_not_deferred", () => {
-  const lists = { tool_list: { claude: keepBash, codex: [{ name: '*', defer: false }] } }
+  const lists = { tool_list: { claude: keepBash, codex: [{ name: '*', action: 'keep' }] } }
   assert.deepEqual(toolRulesOf(lists, 'claude'), keepBash)
-  assert.deepEqual(toolRulesOf(lists, 'codex'), [{ name: '*', defer: false }])
+  assert.deepEqual(toolRulesOf(lists, 'codex'), [{ name: '*', action: 'keep' }])
   assert.equal(toolRulesOf(lists, 'opencode'), undefined)
   assert.equal(toolRulesOf(lists, undefined), undefined)
   assert.deepEqual(toolRulesOf({ tools_not_deferred: ['Bash'] }, 'claude'), keepBash)
@@ -37,13 +37,14 @@ test("each harness has its own tool rules; the older forms are Claude Code's, a 
   assert.deepEqual(toolRulesOf({ tool_list: keepBash }, 'claude'), keepBash)
   assert.equal(toolRulesOf({ tool_list: keepBash }, 'codex'), undefined)
   assert.deepEqual(toolRulesOf({ tools_not_deferred: ['Bash'], tool_list: [] }, 'claude'), [])
+  assert.deepEqual(toolRulesOf({ tool_list: { claude: [{ name: 'Bash', defer: false }, { name: '*', defer: true }] } }, 'claude'), keepBash)
   assert.equal(toolRulesOf({}, 'claude'), undefined)
 })
 
 test('picked tools are deferred and the others shown kept, whatever the rules did before; the core tools stay loaded', () => {
   const tools = ['Bash', 'Edit', 'Read', 'Write', 'ToolSearch', 'Agent', 'Artifact', 'Skill', 'mcp__docs__read'].map((name) => ({ name }))
   const shown = ['Agent', 'Artifact', 'Skill', 'mcp__docs__read']
-  const before: ToolRule[] = [{ name: 'Agent', defer: true }, { name: 'mcp__*', defer: false }, { name: 'Bash', defer: true }, { name: '*', defer: true }]
+  const before: ToolRule[] = [{ name: 'Agent', action: 'defer' }, { name: 'mcp__*', action: 'keep' }, { name: 'Bash', action: 'defer' }, { name: '*', action: 'defer' }]
   for (const picked of [[], ['Artifact'], ['Agent', 'mcp__docs__read'], shown]) {
     const rules = withDeferred(before, shown, new Set(picked), core)
     // A hand rule placing a core tool stays; the other core tools are kept.
@@ -68,7 +69,7 @@ test('with no list in a system message, nothing is deferred, even if the convers
 test('with tool search off, nothing is deferred', () => {
   const b = request('')
   b.tools = b.tools.filter((t) => t.name !== 'ToolSearch')
-  forceDefer(b, [{ name: '*', defer: true }])
+  forceDefer(b, [{ name: '*', action: 'defer' }])
   assert.deepEqual(b.tools, request('').tools.filter((t) => t.name !== 'ToolSearch'))
   assert.equal(b.messages.length, 1)
 })
@@ -76,7 +77,7 @@ test('with tool search off, nothing is deferred', () => {
 test('Responses defers selected tools and adds the backend\'s tool search without a Claude system message; exec and wait never are', () => {
   const b = { tools: [{ name: 'functions.exec' }, { name: 'functions.wait' }, { name: 'clock.sleep' }, { name: 'collaboration.spawn_agent' }] }
   assert.deepEqual(offerable(b, []), ['clock.sleep', 'collaboration.spawn_agent'])
-  const bytes = forceDefer(b, [{ name: '*', defer: true }], RESPONSES.searchTool)
+  const bytes = forceDefer(b, [{ name: '*', action: 'defer' }], RESPONSES.searchTool)
   assert.equal(bytes, JSON.stringify({ name: 'clock.sleep' }).length + JSON.stringify({ name: 'collaboration.spawn_agent' }).length)
   assert.deepEqual(b.tools, [
     { name: 'functions.exec' },
@@ -90,6 +91,6 @@ test('Responses defers selected tools and adds the backend\'s tool search withou
 test('Responses defers nothing when the client sends a tool search of its own, which finds only its own deferred tools', () => {
   const search = { type: 'tool_search', execution: 'client' }
   const b = { tools: [{ name: 'clock.sleep' }, search] }
-  assert.equal(forceDefer(b, [{ name: '*', defer: true }], RESPONSES.searchTool), 0)
+  assert.equal(forceDefer(b, [{ name: '*', action: 'defer' }], RESPONSES.searchTool), 0)
   assert.deepEqual(b.tools, [{ name: 'clock.sleep' }, search])
 })

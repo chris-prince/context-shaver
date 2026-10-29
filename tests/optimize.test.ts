@@ -125,20 +125,20 @@ test('a tool answer writes tool rules in place of tools_not_deferred, then goes 
   const out = afterAnswer(proposal({ asking: 'tools' }), '2', before, '/p')
   assert.ok(!out.text.includes('tools_not_deferred'))
   const rules = toolRulesOf(rulesIn(out.text), 'claude')!
-  assert.deepEqual(rules.find((r) => r.name === 'Agent'), { name: 'Agent', defer: false })
-  assert.deepEqual(rules.at(-1), { name: '*', defer: true })
+  assert.deepEqual(rules.find((r) => r.name === 'Agent'), { name: 'Agent', action: 'keep' })
+  assert.deepEqual(rules.at(-1), { name: '*', action: 'defer' })
   assert.equal(out.reply, 'Modified 1 tool in shaver policy file.\n/p')
   assert.equal(out.next?.asking, 'skills')
   assert.equal(out.next?.changed, 1)
 })
 
 test("a tool answer changes only its harness's rules", () => {
-  const codexRules = [{ name: 'clock.sleep', defer: false }]
+  const codexRules = [{ name: 'clock.sleep', action: 'keep' }]
   const tools = { harness: { name: 'codex', core: [] }, names: ['clock.sleep'], deferred: [], text: 'T' }
-  const before = file({ tool_list: { claude: [{ name: 'Agent', defer: false }, { name: '*', defer: true }], codex: codexRules } })
+  const before = file({ tool_list: { claude: [{ name: 'Agent', action: 'keep' }, { name: '*', action: 'defer' }], codex: codexRules } })
   const all = rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', before, '/p').text)
   assert.deepEqual(toolRulesOf(all, 'claude'), toolRulesOf(rulesIn(before), 'claude'))
-  assert.deepEqual(toolRulesOf(all, 'codex'), [{ name: '*', defer: true }])
+  assert.deepEqual(toolRulesOf(all, 'codex'), [{ name: '*', action: 'defer' }])
   const claudeTools = { ...proposal().tools!, deferred: ['WebFetch'] }
   const none = rulesIn(afterAnswer(proposal({ asking: 'tools', tools: claudeTools }), 'none', before, '/p').text)
   assert.deepEqual(toolRulesOf(none, 'codex'), codexRules)
@@ -147,9 +147,10 @@ test("a tool answer changes only its harness's rules", () => {
 
 test('a tool answer that changes nothing still puts tool rules in an older form in the current one', () => {
   const tools = { harness: { name: 'codex', core: [] }, names: ['clock.sleep'], deferred: [], text: 'T' }
-  for (const before of [file({ tools_not_deferred: ['Bash'] }), file({ tool_list: [{ name: '*', defer: true }] })]) {
+  for (const before of [file({ tools_not_deferred: ['Bash'] }), file({ tool_list: [{ name: '*', action: 'defer' }] }), file({ tool_list: { claude: [{ name: '*', defer: true }] } })]) {
     const out = afterAnswer(proposal({ asking: 'tools', tools }), 'keep', before, '/p')
     assert.ok(!out.text.includes('tools_not_deferred'))
+    assert.ok(!/"defer"\s*:/.test(out.text))
     assert.deepEqual(Object.keys(rulesIn(out.text).tool_list!), ['claude'])
     assert.equal(out.next?.changed, 0)
   }

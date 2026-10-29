@@ -301,7 +301,7 @@ response, it is left alone.
 `tool_list` says which tools each harness sends in full to defer, keyed by the
 harness's name (`claude`, `codex`), since tool names and a `*` rule mean
 something different in each. Each rule has a `name`, a tool name or `*` for
-any, and `defer`, true or false; the first matching rule wins, and a tool no
+any, and an `action`, `keep` or `defer`; the first matching rule wins, and a tool no
 rule matches stays. A harness with no list defers nothing. A deferred tool is
 marked `defer_loading`. On Claude Code it is added to the deferred tools listed
 in the environment message, so the model loads it with `ToolSearch`; on Codex
@@ -311,7 +311,8 @@ of the `additional_tools` input item, where the backend ignores
 run through (`ToolSearch` on Claude Code, `functions.exec` and `functions.wait`
 on Codex) are never deferred, whatever the rules say. The older forms, a flat
 `tool_list` or `tools_not_deferred` (tools to keep with every other deferred),
-are read as Claude Code's, since only it deferred tools then. With tool search
+are read as Claude Code's, since only it deferred tools then, and a rule's older
+`defer`, true or false, as its action. A tool answer rewrites them. With tool search
 off (no `ENABLE_TOOL_SEARCH` on Claude Code) nothing is deferred. Changing the
 rules rewrites the cache of open sessions once.
 

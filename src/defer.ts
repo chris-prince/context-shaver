@@ -13,12 +13,12 @@ const HEAD = 'Use ToolSearch with query "select:<name>[,<name>...]" to load tool
 
 // Each tool takes the first rule whose `name`, with `*` for any run of
 // characters, matches its own; with none matching it is sent as it came.
-export type ToolRule = { name: string; defer: boolean }
+export type ToolRule = { name: string; action: 'keep' | 'defer' }
 
 type Block = { type: string; text?: string }
 type Body = { tools?: { type?: string; name?: string; defer_loading?: boolean; [key: string]: unknown }[]; messages?: { role: string; content: string | Block[] }[] }
 
-export const deferredBy = (rules: readonly ToolRule[], name: string) => rules.find((r) => matches(r.name, name))?.defer === true
+export const deferredBy = (rules: readonly ToolRule[], name: string) => rules.find((r) => matches(r.name, name))?.action === 'defer'
 
 // Whether Claude Code's tool search is on: a system message lists the deferred
 // tools. Only system messages: a conversation that quotes the list is not one.
@@ -51,12 +51,12 @@ export const offerable = (body: Body, core: readonly string[]): string[] =>
 export function withDeferred(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, core: readonly string[]): ToolRule[] {
   const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name))
   const out = [
-    ...shown.filter((name) => !picked.has(name)).map((name) => ({ name, defer: false })),
+    ...shown.filter((name) => !picked.has(name)).map((name) => ({ name, action: 'keep' as const })),
     ...others,
-    ...core.filter((n) => !others.some((r) => matches(r.name, n))).map((name) => ({ name, defer: false })),
-    ...(picked.size ? [{ name: '*', defer: true }] : []),
+    ...core.filter((n) => !others.some((r) => matches(r.name, n))).map((name) => ({ name, action: 'keep' as const })),
+    ...(picked.size ? [{ name: '*', action: 'defer' as const }] : []),
   ]
-  return [...[...picked].filter((name) => !deferredBy(out, name)).map((name) => ({ name, defer: true })), ...out]
+  return [...[...picked].filter((name) => !deferredBy(out, name)).map((name) => ({ name, action: 'defer' as const })), ...out]
 }
 
 export function forceDefer(body: Body, rules: readonly ToolRule[], searchTool?: Record<string, unknown>): number {

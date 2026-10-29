@@ -15,11 +15,11 @@
   ],
   "tool_list": {
     "claude": [
-      { "name": "Bash", "defer": false },
-      { "name": "Edit", "defer": false },
-      { "name": "Read", "defer": false },
-      { "name": "Write", "defer": false },
-      { "name": "*", "defer": true }
+      { "name": "Bash", "action": "keep" },
+      { "name": "Edit", "action": "keep" },
+      { "name": "Read", "action": "keep" },
+      { "name": "Write", "action": "keep" },
+      { "name": "*", "action": "defer" }
     ]
   },
   "skill_list": [

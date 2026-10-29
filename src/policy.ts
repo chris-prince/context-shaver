@@ -13,15 +13,17 @@ export type Action = 'stub' | 'drop'
 type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 // `tool_list` says, by harness name, which tools it sends in full the proxy
 // defers, first matching rule winning (defer.ts); `:shaver optimize` writes
-// it. Its older form, one list, and the older `tools_not_deferred`, naming the
-// tools kept, every other deferred, are read as Claude Code's (toolListsOf). `summary_threshold_tokens` is
+// it. Its older forms, one list or rules with `defer` true or false for the
+// action, and the older `tools_not_deferred`, naming the tools kept, every
+// other deferred, are read as now (toolListsOf). `summary_threshold_tokens` is
 // how many tokens of completed turns a record leaves uncovered before the
 // proxy asks for the next (summary.ts); without it, none is made or applied.
 // `memoir_threshold_tokens` is how many tokens the records can hold before the
 // oldest are merged into the memoir (summary.ts); without it, none are.
 // `skill_list` shortens the skills Claude Code lists to the model, first
 // matching rule winning (skills.ts); `:shaver optimize` writes stubs into it.
-export type Policy = Partial<Record<Kind, Rule[]>> & { tool_list?: ToolRule[] | Record<string, ToolRule[]>; tools_not_deferred?: string[]; summary_threshold_tokens?: number; memoir_threshold_tokens?: number; skill_list?: SkillRule[] }
+type OlderToolRule = { name: string; defer: boolean }
+export type Policy = Partial<Record<Kind, Rule[]>> & { tool_list?: (ToolRule | OlderToolRule)[] | Record<string, (ToolRule | OlderToolRule)[]>; tools_not_deferred?: string[]; summary_threshold_tokens?: number; memoir_threshold_tokens?: number; skill_list?: SkillRule[] }
 
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
@@ -38,7 +40,7 @@ export function parsePolicy(v: unknown): Policy {
       for (const list of Array.isArray(rules) ? [rules] : Object.values(rules)) {
         if (!Array.isArray(list)) throw new Error('policy: tool_list is not rule lists by harness')
         for (const r of list)
-          if (typeof r?.name !== 'string' || typeof r.defer !== 'boolean' || Object.keys(r).length !== 2) throw new Error(`policy: bad tool_list rule ${JSON.stringify(r)}`)
+          if (typeof r?.name !== 'string' || !(typeof r.defer === 'boolean' || ['keep', 'defer'].includes(r.action)) || Object.keys(r).length !== 2) throw new Error(`policy: bad tool_list rule ${JSON.stringify(r)}`)
       }
       continue
     }
@@ -72,16 +74,18 @@ export function seedPolicy(file: string, from: string): void {
 
 // The tool rules a policy gives each harness: its `tool_list`; in the older
 // forms, Claude Code's only, a single list or `tools_not_deferred` as rules
-// keeping those and deferring the rest.
+// keeping those and deferring the rest. A rule's older `defer` is its action.
 export function toolListsOf(p: Policy): Record<string, ToolRule[]> {
-  if (p.tool_list) return Array.isArray(p.tool_list) ? { claude: p.tool_list } : { ...p.tool_list }
-  if (p.tools_not_deferred) return { claude: [...p.tools_not_deferred.map((name) => ({ name, defer: false })), { name: '*', defer: true }] }
+  const now = (rs: (ToolRule | OlderToolRule)[]) => rs.map((r): ToolRule => ('defer' in r ? { name: r.name, action: r.defer ? 'defer' : 'keep' } : r))
+  if (p.tool_list) return Array.isArray(p.tool_list) ? { claude: now(p.tool_list) } : Object.fromEntries(Object.entries(p.tool_list).map(([h, rs]) => [h, now(rs)]))
+  if (p.tools_not_deferred) return { claude: [...p.tools_not_deferred.map((name) => ({ name, action: 'keep' as const })), { name: '*', action: 'defer' }] }
   return {}
 }
 
 // Whether `tool_list` is in one of its older forms, which a tool answer
 // rewrites.
 export const olderTools = (p: Policy) => Array.isArray(p.tool_list) || (!p.tool_list && p.tools_not_deferred !== undefined)
+  || Object.values(p.tool_list ?? {}).some((rs) => rs.some((r: object) => 'defer' in r))
 
 // The tool rules a policy gives `harness`; none without any.
 export const toolRulesOf = (p: Policy, harness: string | undefined): ToolRule[] | undefined => (harness === undefined ? undefined : toolListsOf(p)[harness])
