@@ -66,5 +66,5 @@ if [[ -z $up ]]; then
 elif [[ ! $up =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
   ANTHROPIC_BASE_URL=http://127.0.0.1:$port/harness/claude/via/$(encode "$up")
 fi
-export ANTHROPIC_BASE_URL ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-true}
+export ANTHROPIC_BASE_URL ENABLE_TOOL_SEARCH=true
 exec "${real[@]}" "$@"

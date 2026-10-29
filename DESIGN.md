@@ -13,9 +13,11 @@ then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json` (see
 [Policy](#policy)), and with logging off; to log (see [Logs](#logs)), start the
-proxy first with `bin/run-proxy --log`. It also sets `ENABLE_TOOL_SEARCH=true`:
-Claude Code turns its tool search off when the base URL isn't Anthropic's,
-which sends every tool's definition on every request (about 26k more tokens).
+proxy first with `bin/run-proxy --log`. It also sets `ENABLE_TOOL_SEARCH=true`,
+replacing any value already set: Claude Code turns its tool search off when the
+base URL isn't Anthropic's, and `auto` or `auto:N` keeps it off until the tools
+reach a share of the context window. Either way every tool's definition goes on
+every request (about 26k more tokens).
 
 To pick up changes to the proxy's code, restart it:
 
