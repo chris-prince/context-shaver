@@ -96,6 +96,14 @@ test('with tool search off, nothing is deferred', () => {
   assert.equal(b.messages.length, 1)
 })
 
+test('with the list sent but no ToolSearch to load from it, nothing is deferred', () => {
+  const b = request('env')
+  b.tools = b.tools.filter((t) => t.name !== 'ToolSearch')
+  const before = structuredClone(b)
+  assert.equal(forceDefer(b, [{ name: '*', action: 'defer' }], CLAUDE), 0)
+  assert.deepEqual(b, before)
+})
+
 test('Responses defers selected tools and adds the backend\'s tool search without a Claude system message; exec and wait never are', () => {
   const b = { tools: [{ name: 'functions.exec' }, { name: 'functions.wait' }, { name: 'clock.sleep' }, { name: 'collaboration.spawn_agent' }] }
   assert.deepEqual(offerable(b, CODEX), ['clock.sleep', 'collaboration.spawn_agent'])

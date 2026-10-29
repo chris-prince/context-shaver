@@ -1,8 +1,9 @@
 // Defers the tools sent in full that the policy's rules defer, all but those
 // always loaded: each is marked `defer_loading` in the tool list. Claude Code's
 // are added to the deferred tools it lists in its environment message, so the
-// model loads them with ToolSearch like the others; with tool search off there
-// is no list, nothing could load the tool, and the request is left as it came.
+// model loads them with ToolSearch like the others; with no list, or no
+// ToolSearch sent, nothing could load the tool, and the request is left as it
+// came.
 // Where the protocol has a search tool its backend runs (Responses'), it is
 // added instead, unless the client sends a search of its own, which finds only
 // the tools it deferred. Gives the bytes of the definitions it deferred.
@@ -24,10 +25,12 @@ export const actionOf = (rules: readonly ToolRule[], name: string) => rules.find
 export const deferredBy = (rules: readonly ToolRule[], name: string) => actionOf(rules, name) === 'defer'
 
 // Whether Claude Code's tool search is on: a system message lists the deferred
-// tools. Only system messages: a conversation that quotes the list is not one.
+// tools, and ToolSearch is sent to load them; the list can come without it.
+// Only system messages: a conversation that quotes the list is not one.
 const envOf = (body: Body) => (body.messages ?? []).filter((m) => m.role === 'system')
 const lists = (m: { role: string; content: string | Block[] }) => m.role === 'system' && (typeof m.content === 'string' ? [m.content] : m.content.map((b) => b.text ?? '')).some((t) => t.includes(HEAD))
-export const searchOn = (body: Body, searchTool?: object): boolean => searchTool !== undefined || (body.messages ?? []).some(lists)
+export const searchOn = (body: Body, searchTool?: object): boolean =>
+  searchTool !== undefined || ((body.messages ?? []).some(lists) && !!body.tools?.some((t) => t.name === 'ToolSearch'))
 // The message listing the deferred tools, or -1.
 export const toolListMessage = (body: Body): number => (body.messages ?? []).findIndex(lists)
 
