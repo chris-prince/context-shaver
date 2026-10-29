@@ -30,7 +30,7 @@ import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withou
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitTrimmed, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitShaved, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
 import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -252,7 +252,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const described = { ...describe(body, trimmed, time, d?.advanced || records > before || merged > mergedBefore, conv), turns: msgs.filter(isPrompt).length }
   if (deferred + dropped) described.defs.deferred = deferred + dropped
   if (skills) described.defs.skills = skills
-  if (skillsTrimmed) splitTrimmed(described, skillsTrimmed)
+  if (skillsTrimmed) splitShaved(described, skillsTrimmed)
   if (marked) described.ttl = marked
   if (covers) described.covers = covers
   const last = latestOf(key)
@@ -336,7 +336,7 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
   const summaryRequests = { applied, pending, dropped: requests - applied - pending }
   const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)
-  if (trimmed) splitTrimmed(described, trimmed)
+  if (trimmed) splitShaved(described, trimmed)
   const text = s ? render(s, key, false, withSummaryForks, summaryRequests) : render(estimate(described), key, true, withSummaryForks, summaryRequests)
   const warning = missed ? `\n\nshaver: since it started, the journal missed ${countOf(missed, 'request')}; see proxy.log` : ''
   return '```\n' + text + warning + '\n```'

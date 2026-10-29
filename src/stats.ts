@@ -177,29 +177,29 @@ export function isSuggestion(msgs: readonly ApiMsg[]): boolean {
 export const withoutSuggestion = (msgs: ApiMsg[]): ApiMsg[] => (isSuggestion(msgs) ? msgs.slice(0, -1) : msgs)
 
 // Moves the bytes of the skills the proxy shortened (skills.ts) from the
-// skill list's section to `skills-trimmed`: in the preamble part holding it,
+// skill list's section to `skills-shaved`: in the preamble part holding it,
 // as Claude Code's always is and Codex's after a compaction, else in the
 // system's sections, as Codex's is before one. Claude Code's system has a
 // `skills` section of its own, its instructions for them, not the list.
-export function splitTrimmed(r: Sent, bytes: number): void {
+export function splitShaved(r: Sent, bytes: number): void {
   const move = (from: Record<string, number>, k: string, to: string) => {
     const n = Math.min(bytes, from[k])
     from[k] -= n
     from[to] = (from[to] ?? 0) + n
   }
   const p = r.parts.find((p) => p.kinds['system:skills'])
-  if (p) move(p.kinds, 'system:skills', 'system:skills-trimmed')
-  else if (r.defs.sections?.skills) move(r.defs.sections, 'skills', 'skills-trimmed')
+  if (p) move(p.kinds, 'system:skills', 'system:skills-shaved')
+  else if (r.defs.sections?.skills) move(r.defs.sections, 'skills', 'skills-shaved')
 }
 
 // A part's counted tokens split as its bytes are: the API's counts by kind
 // come from the message again (responses.ts), so know nothing of
-// splitTrimmed's.
+// splitShaved's.
 function splitCounted(kinds: Record<string, number>, counted: Record<string, number>): Record<string, number> {
-  const t = kinds['system:skills-trimmed']
+  const t = kinds['system:skills-shaved']
   if (!t || !counted['system:skills']) return counted
   const n = (counted['system:skills'] * t) / (t + (kinds['system:skills'] ?? 0))
-  return { ...counted, 'system:skills': counted['system:skills'] - n, 'system:skills-trimmed': n }
+  return { ...counted, 'system:skills': counted['system:skills'] - n, 'system:skills-shaved': n }
 }
 
 // The stats once a request is answered with these counts. Where the API
@@ -505,7 +505,8 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.
-  const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections)]
+  // Stats saved before 2026-10-29 name the shaved skills `skills-trimmed`.
+  const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections).map(([k, v]): [string, number] => [k === 'skills-trimmed' ? 'skills-shaved' : k, v])]
   for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by type:')
   for (const k of [...REST_TYPES].sort(byLabel)) if (by[k]) out.push(row(label(k), by[k], total, 2))
