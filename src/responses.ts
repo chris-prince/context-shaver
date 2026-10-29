@@ -45,6 +45,11 @@ function toBlocks(it: Item): Block[] {
     return [{ type: 'tool_use', id: it.call_id, name: it.name, input }]
   }
   if (OUTPUTS.has(it.type)) return [{ type: 'tool_result', tool_use_id: it.call_id, content: it.output ?? '' }]
+  if (it.type === 'tool_search_call') return [{ type: 'tool_use', id: it.call_id, name: 'tool_search', input: { query: it.query ?? it.goal ?? '' } }]
+  if (it.type === 'tool_search_output') {
+    const loaded = toolsOf((it.tools ?? []) as Tool[]).map((t) => ({ type: 'tool_reference', tool_name: t.name }))
+    return [{ type: 'tool_result', tool_use_id: it.call_id, content: loaded }]
+  }
   return [{ type: 'item', item: it }]
 }
 
@@ -68,8 +73,8 @@ export function canonical(wire: Record<string, unknown>): Wire {
   const byCall = new Map<string, Item>()
   const byResult = new Map<string, Item>()
   const blocksOf = (it: Item): Block[] => {
-    if (CALLS.has(it.type)) byCall.set(String(it.call_id), it)
-    if (OUTPUTS.has(it.type)) byResult.set(String(it.call_id), it)
+    if (CALLS.has(it.type) || it.type === 'tool_search_call') byCall.set(String(it.call_id), it)
+    if (OUTPUTS.has(it.type) || it.type === 'tool_search_output') byResult.set(String(it.call_id), it)
     return toBlocks(it).map((b, k) => (srcOf.set(b, { item: it, part: it.type === 'message' ? it.content?.[k] : undefined }), b))
   }
   const messages: ApiMsg[] = []
@@ -129,8 +134,15 @@ export function canonical(wire: Record<string, unknown>): Wire {
       else if (b.type === 'tool_use') {
         const c = byCall.get(String(b.id)) ?? { type: 'function_call', call_id: String(b.id), name: String(b.name) }
         const input = typeof b.input === 'string' ? b.input : JSON.stringify(b.input)
-        out.push(c.type === 'custom_tool_call' ? { ...c, input } : { ...c, arguments: input })
-      } else if (b.type === 'tool_result') out.push({ ...(byResult.get(String(b.tool_use_id)) ?? { type: 'function_call_output', call_id: String(b.tool_use_id) }), output: b.content })
+        if (c.type === 'tool_search_call') {
+          const query = (b.input as { query?: unknown } | undefined)?.query ?? ''
+          out.push({ ...c, ['query' in c ? 'query' : 'goal']: String(query) })
+        } else out.push(c.type === 'custom_tool_call' ? { ...c, input } : { ...c, arguments: input })
+      } else if (b.type === 'tool_result') {
+        const r = byResult.get(String(b.tool_use_id)) ?? { type: 'function_call_output', call_id: String(b.tool_use_id) }
+        // A search's result holds the tools it loaded, which are kept as they came.
+        out.push(r.type === 'tool_search_output' ? r : { ...r, output: b.content })
+      }
       else if (b.type === 'item') out.push(b.item as Item)
     }
     close()
@@ -184,7 +196,27 @@ export function canonical(wire: Record<string, unknown>): Wire {
   }
   const render = (c: Canonical) => {
     const h = headOf(c)
-    return { ...wire, ...(h.instructions !== undefined && { instructions: h.instructions }), input: [...h.head, ...c.messages.flatMap(renderMsg)] }
+    const canonicalTools = (c.tools ?? []) as Tool[]
+    const byName = new Map(canonicalTools.map((t) => [String(t.name ?? t.type), t]))
+    const originalNames = new Set(tools.map((t) => String(t.name ?? t.type)))
+    const renderTools = (source: Tool[], prefix = ''): Tool[] => source.map((t) => {
+      if (t.type === 'namespace' && t.tools) return { ...t, tools: renderTools(t.tools, `${prefix}${t.name}.`) }
+      const fullName = `${prefix}${t.name ?? t.type}`
+      const changed = byName.get(fullName)
+      if (!changed?.defer_loading) return t
+      return { ...t, defer_loading: true }
+    })
+    const input = h.head.map((it) => it.type === 'additional_tools' && Array.isArray(it.tools)
+      ? { ...it, tools: renderTools(it.tools as Tool[]) }
+      : it)
+    const wireTools = renderTools((wire.tools ?? []) as Tool[])
+    const additions = canonicalTools.filter((t) => t.type === 'tool_search' && !originalNames.has(String(t.name ?? t.type)))
+    return {
+      ...wire,
+      ...(h.instructions !== undefined && { instructions: h.instructions }),
+      ...(wire.tools !== undefined || additions.length ? { tools: [...wireTools, ...additions] } : {}),
+      input: [...input, ...c.messages.flatMap(renderMsg)],
+    }
   }
   return { body, render, ids: { head: idsOf(head), of: (m) => idsOf(renderMsg(m)) }, counted }
 }
@@ -259,7 +291,7 @@ function holdClose(write: (s: string) => void): Held {
   return {
     ...h,
     get ended() {
-      return !!output && !output.some((it) => CALLS.has(it.type) || it.type === 'local_shell_call')
+      return !!output && !output.some((it) => CALLS.has(it.type) || it.type === 'tool_search_call' || it.type === 'local_shell_call')
     },
     add(text) {
       const item = { id: `msg_proxy_${Date.now()}_${next}`, type: 'message', status: 'completed', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text, annotations: [] }] }
@@ -285,7 +317,7 @@ export const RESPONSES: Protocol = {
   // Codex's limits and credits; its turn state is the turn's, not the account's.
   limits: /^x-codex-(?!turn-state)/,
   automatic: true,
-  defers: false,
+  defers: true,
   // The summary fork's question is a user message of its own after the
   // request's items. ChatGPT's backend only streams, so it stays as it was.
   summaryFork: (sent, text) => ({ ...sent, input: [...(sent.input as Item[]), { type: 'message', role: 'user', content: [{ type: 'input_text', text }] }] }),

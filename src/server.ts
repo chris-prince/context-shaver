@@ -182,7 +182,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const live = new Set(Object.keys(entries))
   // What it takes out of the base: deferred tools, and skills off the list.
   const toolRules = toolRulesOf(policy)
-  const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules) : 0
+  const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules, proto.name === 'responses') : 0
   const skillList = skillListOf(s, live.size > 0, now)
   const { cut: skills, trimmed: skillsTrimmed } = skillList ? shaveSkills(body, skillList.rules) : { cut: 0 }
   const seed = seedOf(body.model, body.tools, body.system)
@@ -315,7 +315,7 @@ function policyText(): string {
 function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canonical): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   const toolRules = toolRulesOf(policy)
-  if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules)
+  if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, proto.name === 'responses')
   const trimmed = policy.skill_list ? shaveSkills(sent, policy.skill_list).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
@@ -805,7 +805,7 @@ let skillsForcedAt = 0
 // the session has cached of it.
 function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules = sessionRules(key, body), tools = toolRulesOf(policy)): Record<string, unknown> {
   const fork: Canonical = structuredClone({ ...body, messages: body.messages.slice(0, Math.max(listMessage(body), toolListMessage(body)) + 1) })
-  if (proto.defers && h?.defers && tools) forceDefer(fork, tools)
+  if (proto.defers && h?.defers && tools) forceDefer(fork, tools, proto.name === 'responses')
   if (rules) shaveSkills(fork, rules)
   return render(fork) as Record<string, unknown>
 }
@@ -905,13 +905,12 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
 // The tools `:shaver optimize` asks about deferring, those the policy defers
 // already, and the rules deferring them all, or why there are none.
 function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { names: string[]; deferred: string[]; all: ToolRule[] } | string {
-  // Codex goes here: it could defer tools when its tool search probe
-  // (probeCodexToolSearch) finds them supported, and if not, say so.
   if (!proto.defers || !h?.defers) return "Shaver can't defer tools in this harness yet."
-  if (!searchOn(body)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
+  const responses = proto.name === 'responses'
+  if (!searchOn(body, responses)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
   const now = toolRulesOf(policy) ?? []
   const names = offerable(body)
-  if (!names.length) return `No tools but ${CORE_TOOLS.join(', ')} are sent in full, so none can be deferred.`
+  if (!names.length) return `No tools but ${responses ? 'exec and wait' : CORE_TOOLS.join(', ')} are sent in full, so none can be deferred.`
   return { names, deferred: names.filter((name) => deferredBy(now, name)), all: withDeferred(now, names, new Set(names)) }
 }
 

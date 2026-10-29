@@ -225,8 +225,11 @@ providers cache each request's prefix themselves and read the longest part of it
 writes priced as input. `positionsOf` models that as one breakpoint at the end,
 with entries at each user message's end. Summary forks work on both: each
 protocol builds its own summary fork request and reads its answer. The anchor
-breakpoint and tool deferral are Messages-only for now, and deferral is for a
-harness with a tool that loads deferred tools: Claude Code, with ToolSearch.
+breakpoint is Messages-only. Tool deferral works in Claude Code, whose
+`ToolSearch` loads deferred tools, and in Codex, where the proxy adds a
+`tool_search` tool that Codex answers. One tool list serves both, so the tools
+the others are loaded by or run through (Claude's core tools, Codex's
+`functions.exec` and `functions.wait`) are never deferred.
 
 `bin/opencode-via-shaver` and `bin/codex-via-shaver` run OpenCode and Codex
 through the proxy as `claude-via-shaver` runs Claude Code, leaving their

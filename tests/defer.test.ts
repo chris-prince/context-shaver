@@ -61,3 +61,27 @@ test('with tool search off, nothing is deferred', () => {
   assert.deepEqual(b.tools, request('').tools.filter((t) => t.name !== 'ToolSearch'))
   assert.equal(b.messages.length, 1)
 })
+
+test('Responses defers selected tools and adds client tool search without a Claude system message; exec and wait never are', () => {
+  const b = { tools: [{ name: 'functions.exec' }, { name: 'functions.wait' }, { name: 'clock.sleep' }, { name: 'collaboration.spawn_agent' }] }
+  assert.deepEqual(offerable(b), ['clock.sleep', 'collaboration.spawn_agent'])
+  const bytes = forceDefer(b, [{ name: '*', defer: true }], true)
+  assert.equal(bytes, JSON.stringify({ name: 'clock.sleep' }).length + JSON.stringify({ name: 'collaboration.spawn_agent' }).length)
+  assert.deepEqual(b.tools, [
+    { name: 'functions.exec' },
+    { name: 'functions.wait' },
+    { name: 'clock.sleep', defer_loading: true },
+    { name: 'collaboration.spawn_agent', defer_loading: true },
+    {
+      type: 'tool_search', execution: 'client', description: 'Find tools to use for the current task.',
+      parameters: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'], additionalProperties: false },
+    },
+  ])
+})
+
+test('Responses leaves an existing client tool_search definition alone and never defers it', () => {
+  const search = { type: 'tool_search', execution: 'client' }
+  const b = { tools: [{ name: 'clock.sleep' }, search] }
+  forceDefer(b, [{ name: '*', defer: true }], true)
+  assert.deepEqual(b.tools, [{ name: 'clock.sleep', defer_loading: true }, search])
+})

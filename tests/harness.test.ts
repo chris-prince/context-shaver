@@ -60,5 +60,5 @@ test("an unknown harness's conversations are named by protocol, and by a session
 })
 
 test("only a harness with a tool that loads tools has others deferred", () => {
-  assert.deepEqual([of('claude'), of('codex'), of('opencode')].map((h) => h?.defers), [true, false, false])
+  assert.deepEqual([of('claude'), of('codex'), of('opencode')].map((h) => h?.defers), [true, true, false])
 })

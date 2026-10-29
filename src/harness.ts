@@ -45,18 +45,19 @@ const CLAUDE: Harness = {
 }
 
 // Codex's tools are run from JavaScript, by one custom exec tool, so no call's
-// input has fields of its own to stub, nor a shell command apart. It sends its
-// session's ID as prompt_cache_key and as the session-id header.
+// input has fields of its own to stub, nor a shell command apart. It loads
+// deferred tools with a client tool_search. It sends its session's ID as
+// prompt_cache_key and as the session-id header.
 const CODEX: Harness = {
   name: 'codex',
   headers: 'x-codex-',
   conventions: {
-    kinds: {},
+    kinds: { tool_search: 'tool_search' },
     stubbedInputs: {},
     shell: '',
     promptHeadings: [['', 'system-prompt'], ...CODEX_HEADINGS],
   },
-  defers: false,
+  defers: true,
   // In 265 journaled requests to 2026-10-24, the 3 that left out the last
   // message before were those after its 3 compactions.
   resends: true,

@@ -20,7 +20,7 @@ import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Convention
 import type { Cost } from './cost.ts'
 import { modelOf } from './models.ts'
 
-export type Tool = { name?: string; defer_loading?: boolean }
+export type Tool = { type?: string; name?: string; defer_loading?: boolean }
 
 // A request as it was sent, as observe needs it.
 export type Sent = {
