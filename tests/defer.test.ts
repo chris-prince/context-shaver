@@ -49,6 +49,12 @@ test("picked tools are deferred and the others shown kept, whatever the rules di
   assert.ok(!withPicked(before, shown, new Set(), 'defer').some((r) => r.name === '*'))
 })
 
+test('picking drops the rules for tools always loaded, which do nothing, and keeps the others', () => {
+  const before: ToolRule[] = ['Bash', 'Edit', 'Read', 'Write', 'ToolSearch', 'functions.exec'].map((name) => ({ name, action: 'keep' as const }))
+  const rules = withPicked([...before, { name: 'mcp__*', action: 'keep' }], ['Agent'], new Set(['Agent']), 'defer')
+  assert.deepEqual(rules, [{ name: 'mcp__*', action: 'keep' }, { name: '*', action: 'defer' }])
+})
+
 test('picked tools are dropped by name, never by a catch-all, and those always loaded are never dropped', () => {
   const tools = ['functions.exec', 'functions.wait', 'clock.sleep', 'web.run', 'collaboration.ask'].map((name) => ({ type: 'function', name }))
   const rules = withPicked([{ name: 'web.run', action: 'drop' }], ['clock.sleep', 'web.run', 'collaboration.ask'], new Set(['clock.sleep']), 'drop')

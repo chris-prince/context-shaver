@@ -50,9 +50,10 @@ export const offerable = (body: Body): string[] =>
 // others kept loaded. Those kept are named first, then come the rules' others
 // but a catch-all, and with any picked to defer, a catch-all deferring the
 // rest; tools are dropped only by name, so none Codex adds later is. A picked
-// tool an earlier rule would still keep loaded is named first too.
+// tool an earlier rule would still keep loaded is named first too. Rules for
+// tools always loaded, which do nothing, are left out.
 export function withPicked(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, action: 'defer' | 'drop'): ToolRule[] {
-  const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name))
+  const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name) && !ALWAYS_LOADED.includes(r.name))
   const out: ToolRule[] = [
     ...shown.filter((name) => !picked.has(name)).map((name) => ({ name, action: 'keep' as const })),
     ...others,
