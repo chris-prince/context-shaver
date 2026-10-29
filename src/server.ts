@@ -384,10 +384,11 @@ function refuse(res: ServerResponse, proto: Protocol, status: 400 | 403, message
   res.end(proto.error(status, message))
 }
 
-// Tiny, standalone Responses tool-search probes: the client-executed round
-// trip, a search the backend runs, and deferral inside a namespace. The latest
-// Codex request supplies only route/auth/model; its prompt is not reused.
-async function probeCodexToolSearch(context: { target: string; headers: Record<string, string>; model: string }): Promise<Record<string, unknown>> {
+// Responses tool-search probes: this Codex request with the policy's
+// deferrals, and tiny standalone ones (the client-executed round trip, a
+// search the backend runs, and deferral inside a namespace) that take only
+// its route, auth and model.
+async function probeCodexToolSearch(context: { target: string; headers: Record<string, string>; model: string; real?: { body: Canonical; render: Wire['render']; rules: readonly ToolRule[] } }): Promise<Record<string, unknown>> {
   const functionTool = {
     type: 'function', name: 'shaver_probe_confirm', description: 'Confirms this tool-search probe.', defer_loading: true,
     parameters: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'], additionalProperties: false },
@@ -472,9 +473,65 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
       return { result: 'error', detail: error instanceof Error ? error.message : String(error) }
     }
   }
+  // This Codex request as the proxy sends it, with one short message for its
+  // history: the input tokens with the policy's deferrals and without, where
+  // each deferred tool sits, and what the model does when asked for one.
+  const real = async (): Promise<Record<string, unknown>> => {
+    if (!context.real) return { result: 'skipped' }
+    const { body, render, rules } = context.real
+    const tools = (body.tools ?? []).map(({ defer_loading, ...t }) => t)
+    const deferred = { ...body, tools: [...tools] }
+    if (!forceDefer(deferred, rules, RESPONSES.searchTool)) return { result: 'inconclusive', detail: 'The policy defers none of this request\'s tools.' }
+    const names = (deferred.tools ?? []).filter((t) => t.defer_loading).map((t) => t.name)
+    const loaded = { ...deferred, tools: (deferred.tools ?? []).map(({ defer_loading, ...t }) => t) }
+    const asked = (c: Canonical, text: string) => render({ ...c, messages: [{ role: 'user', content: [{ type: 'text', text }] }] }) as any
+    const sent = asked(deferred, 'Reply with ok.')
+    const where: unknown[] = []
+    const walk = (list: any[], at: string, prefix = '') => list.forEach((t) => t.type === 'namespace' && t.tools
+      ? walk(t.tools, at, `${prefix}${t.name}.`)
+      : names.includes(`${prefix}${t.name ?? t.type}`) && where.push({ name: `${prefix}${t.name ?? t.type}`, at, defer_loading: t.defer_loading ?? false }))
+    walk(sent.tools ?? [], 'tools')
+    for (const it of sent.input ?? []) if (it.type === 'additional_tools') walk(it.tools ?? [], 'input additional_tools')
+    const tokens = async (stage: string, wire: any) => {
+      const r = await send(stage, { ...wire, store: false, stream: true, max_output_tokens: 48 })
+      return r.response.ok ? usage[stage]?.input_tokens : { http: r.response.status, error: r.data?.error?.message ?? r.text.slice(0, 1000) }
+    }
+    // The same with each deferred tool moved out of additional_tools into the
+    // top-level tools, in a namespace of the same name.
+    const moved = (wire: any) => {
+      const out: any[] = []
+      const pull = (list: any[], parent?: any): any[] => list.flatMap((t) => {
+        if (t.type === 'namespace' && t.tools) {
+          const kept = pull(t.tools, t)
+          return kept.length ? [{ ...t, tools: kept }] : []
+        }
+        if (!t.defer_loading) return [t]
+        const home = parent && out.find((o) => o.type === 'namespace' && o.name === parent.name)
+        if (!parent) out.push(t)
+        else if (home) home.tools.push(t)
+        else out.push({ ...parent, tools: [t] })
+        return []
+      })
+      const input = (wire.input ?? []).map((it: any) => (it.type === 'additional_tools' ? { ...it, tools: pull(it.tools ?? []) } : it))
+      return { ...wire, input, tools: [...(wire.tools ?? []), ...out] }
+    }
+    const call = async (stage: string, wire: any) => {
+      const r = await send(stage, { ...wire, store: false, stream: true, max_output_tokens: 400 })
+      return r.response.ok ? r.data?.output?.map((item: any) => ({ type: item.type, name: item.name, namespace: item.namespace, execution: item.execution })) : { http: r.response.status, error: r.data?.error?.message ?? r.text.slice(0, 1000) }
+    }
+    const ask = `Call your ${names[0]} tool now, with any valid arguments.`
+    try {
+      const input_tokens = { deferred: await tokens('real_deferred', sent), loaded: await tokens('real_loaded', asked(loaded, 'Reply with ok.')), moved: await tokens('real_moved', moved(sent)) }
+      const asked_for = { tool: names[0], deferred: await call('real_asked', asked(deferred, ask)), moved: await call('real_moved_asked', moved(asked(deferred, ask))) }
+      return { deferred: names, where, input_tokens, asked_for, detail: 'Deferral works if its input tokens are well below loaded, and asked_for starts with a tool_search_call.' }
+    } catch (error) {
+      return { result: 'error', detail: error instanceof Error ? error.message : String(error) }
+    }
+  }
   const loadedTool = { ...functionTool, defer_loading: undefined }
   const space = (tool: unknown) => ({ type: 'namespace', name: 'shaver_probe', description: 'Probe tools.', tools: [tool] })
   return {
+    real: await real(),
     client: await client(),
     hosted: { bare: await hosted('hosted_bare', { type: 'tool_search' }), server: await hosted('hosted_server', { type: 'tool_search', execution: 'server' }) },
     namespace: {
@@ -680,7 +737,8 @@ async function answerOf(command: string, proto: Protocol, h: Harness | undefined
     for (const name of ['accept', 'accept-encoding', 'content-length', 'content-type', 'host', 'connection']) delete probeHeaders[name]
     probeHeaders['content-type'] = 'application/json'
     probeHeaders.accept = 'application/json'
-    const result = await probeCodexToolSearch({ target, headers: probeHeaders, model: body.model })
+    const rules = toolRulesOf(policy, h.name)
+    const result = await probeCodexToolSearch({ target, headers: probeHeaders, model: body.model, ...(rules && { real: { body, render, rules } }) })
     return 'Codex tool-search probe:\n```json\n' + JSON.stringify(result, null, 2) + '\n```'
   }
   if (command === ':shaver policy') return policyText()
