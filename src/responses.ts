@@ -198,12 +198,16 @@ export function canonical(wire: Record<string, unknown>): Wire {
     const canonicalTools = (c.tools ?? []) as Tool[]
     const byName = new Map(canonicalTools.map((t) => [String(t.name ?? t.type), t]))
     const originalNames = new Set(tools.map((t) => String(t.name ?? t.type)))
-    const renderTools = (source: Tool[], prefix = ''): Tool[] => source.map((t) => {
-      if (t.type === 'namespace' && t.tools) return { ...t, tools: renderTools(t.tools, `${prefix}${t.name}.`) }
-      const fullName = `${prefix}${t.name ?? t.type}`
-      const changed = byName.get(fullName)
-      if (!changed?.defer_loading) return t
-      return { ...t, defer_loading: true }
+    // A tool not in the canonical tools was dropped (defer.ts), and a
+    // namespace left with none goes with it.
+    const renderTools = (source: Tool[], prefix = ''): Tool[] => source.flatMap((t) => {
+      if (t.type === 'namespace' && t.tools) {
+        const kept = renderTools(t.tools, `${prefix}${t.name}.`)
+        return kept.length || !t.tools.length ? [{ ...t, tools: kept }] : []
+      }
+      const changed = byName.get(`${prefix}${t.name ?? t.type}`)
+      if (!changed) return []
+      return changed.defer_loading ? [{ ...t, defer_loading: true }] : [t]
     })
     // The backend ignores defer_loading in additional_tools, so a tool deferred
     // there moves to the top-level tools, in a copy of its namespace.

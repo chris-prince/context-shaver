@@ -321,11 +321,12 @@ function sharesOf(p: Stats['parts'][number], tokens: Record<string, number>): Ar
   return Object.entries(by).map(([k, n]) => [k, total ? ((tokens[p.key] ?? 0) * n) / total : 0])
 }
 
-// The types of trim a saving is told by: the base's shaves (cost.ts), and in
+// The types of trim a saving is told by: the base's shaves (cost.ts), its
+// tools deferred or dropped and its skills trimmed, and in
 // the conversation each kind's (log.ts, kinds), with `other` for the rest.
 // The summaries' type holds the records and memoir, and the parts records
 // replace (Sent.covers), so its saving is net of what carrying them costs.
-export const BASE = ['tools-deferred', 'skills-trimmed']
+export const BASE = ['tools-shaved', 'skills-shaved']
 export const SUMMARIES = 'summary+memoir'
 const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages', summary: SUMMARIES, memoir: SUMMARIES }
 

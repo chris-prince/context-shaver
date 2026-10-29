@@ -246,10 +246,10 @@ test('parts the API counted take its counts, and only the rest share what is lef
 })
 
 test('a saving under half a cent is still listed in the breakdown', () => {
-  const c = { without: 0.002, actual: 0.00193, saved: { 'skills-trimmed': 0.00006, 'tools-deferred': 0.00001 }, compactions: 0, waitMs: 0 }
+  const c = { without: 0.002, actual: 0.00193, saved: { 'skills-shaved': 0.00006, 'tools-shaved': 0.00001 }, compactions: 0, waitMs: 0 }
   const lines = costLines(c)
-  assert.ok(lines.includes('    $0.00 ( 3%) base:skills-trimmed'), lines.join('\n'))
-  assert.ok(lines.includes('    $0.00 ( 1%) base:tools-deferred'), lines.join('\n'))
+  assert.ok(lines.includes('    $0.00 ( 3%) base:skills-shaved'), lines.join('\n'))
+  assert.ok(lines.includes('    $0.00 ( 1%) base:tools-shaved'), lines.join('\n'))
   assert.ok(!lines.includes('    none yet'))
   assert.ok(costLines({ ...c, saved: {} }).includes('    none yet'))
 })

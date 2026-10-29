@@ -13,7 +13,7 @@ const stub = (s: { name: string; description: string }, text: string) => ({ matc
 
 const proposal = (over: Partial<Proposal> = {}): Proposal => ({
   key: 'k', asking: 'skills', skills, lines, trimmed: [],
-  tools: { harness: { name: 'claude', core: ['Bash'] }, names: ['Agent', 'WebFetch'], deferred: [], text: 'TOOLS TABLE' },
+  tools: { harness: { name: 'claude', core: ['Bash'] }, action: 'defer', names: ['Agent', 'WebFetch'], chosen: [], text: 'TOOLS TABLE' },
   changed: 0, ...over,
 })
 
@@ -47,6 +47,15 @@ test('the skill table numbers every skill and says which are trimmed', () => {
 
 test('the tool table numbers every tool and says which are deferred', () => {
   assert.match(toolsText(['Agent', 'WebFetch'], ['WebFetch'], 900), /^Can save 900 tokens by deferring tools until the model needs them:\n\n\| Tool \| Deferred \|\n\| --- \| --- \|\n\| 1\. Agent \| No \|\n\| 2\. WebFetch \| Yes \|$/)
+})
+
+test("where tools can't be deferred, dropping is offered with a warning, and the question asks which to drop", () => {
+  const text = toolsText(['clock.sleep'], [], 40, 'drop')
+  assert.match(text, /^Codex can't defer tools with ChatGPT sign-in, only drop them\. The model can't use a dropped tool at all, so drop with caution\.\n\nCan save 40 tokens by dropping tools:\n\n\| Tool \| Dropped \|\n/)
+  const tools = { harness: { name: 'codex', core: [] }, action: 'drop' as const, names: ['clock.sleep'], chosen: [], text }
+  assert.match(toolsAsked('k', tools)!.reply, /Which tools should be dropped\?/)
+  const rules = toolRulesOf(rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', file({}), '/p').text), 'codex')
+  assert.deepEqual(rules, [{ name: 'clock.sleep', action: 'drop' }])
 })
 
 test('the header counts every skill in the table', () => {
@@ -134,19 +143,19 @@ test('a tool answer writes tool rules in place of tools_not_deferred, then goes 
 
 test("a tool answer changes only its harness's rules", () => {
   const codexRules = [{ name: 'clock.sleep', action: 'keep' }]
-  const tools = { harness: { name: 'codex', core: [] }, names: ['clock.sleep'], deferred: [], text: 'T' }
+  const tools = { harness: { name: 'codex', core: [] }, action: 'defer' as const, names: ['clock.sleep'], chosen: [], text: 'T' }
   const before = file({ tool_list: { claude: [{ name: 'Agent', action: 'keep' }, { name: '*', action: 'defer' }], codex: codexRules } })
   const all = rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', before, '/p').text)
   assert.deepEqual(toolRulesOf(all, 'claude'), toolRulesOf(rulesIn(before), 'claude'))
   assert.deepEqual(toolRulesOf(all, 'codex'), [{ name: '*', action: 'defer' }])
-  const claudeTools = { ...proposal().tools!, deferred: ['WebFetch'] }
+  const claudeTools = { ...(proposal().tools as Exclude<Proposal['tools'], string>), chosen: ['WebFetch'] }
   const none = rulesIn(afterAnswer(proposal({ asking: 'tools', tools: claudeTools }), 'none', before, '/p').text)
   assert.deepEqual(toolRulesOf(none, 'codex'), codexRules)
   assert.ok(!toolRulesOf(none, 'claude')!.some((r) => r.name === '*'))
 })
 
 test('a tool answer that changes nothing still puts tool rules in an older form in the current one', () => {
-  const tools = { harness: { name: 'codex', core: [] }, names: ['clock.sleep'], deferred: [], text: 'T' }
+  const tools = { harness: { name: 'codex', core: [] }, action: 'defer' as const, names: ['clock.sleep'], chosen: [], text: 'T' }
   for (const before of [file({ tools_not_deferred: ['Bash'] }), file({ tool_list: [{ name: '*', action: 'defer' }] }), file({ tool_list: { claude: [{ name: '*', defer: true }] } })]) {
     const out = afterAnswer(proposal({ asking: 'tools', tools }), 'keep', before, '/p')
     assert.ok(!out.text.includes('tools_not_deferred'))

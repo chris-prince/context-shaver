@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { deferrable, forceDefer, offerable, withDeferred, type ToolRule } from '../src/defer.ts'
+import { deferrable, dropTools, forceDefer, offerable, withPicked, type ToolRule } from '../src/defer.ts'
 import { toolRulesOf } from '../src/policy.ts'
 import { RESPONSES } from '../src/responses.ts'
 
@@ -46,11 +46,21 @@ test('picked tools are deferred and the others shown kept, whatever the rules di
   const shown = ['Agent', 'Artifact', 'Skill', 'mcp__docs__read']
   const before: ToolRule[] = [{ name: 'Agent', action: 'defer' }, { name: 'mcp__*', action: 'keep' }, { name: 'Bash', action: 'defer' }, { name: '*', action: 'defer' }]
   for (const picked of [[], ['Artifact'], ['Agent', 'mcp__docs__read'], shown]) {
-    const rules = withDeferred(before, shown, new Set(picked), core)
+    const rules = withPicked(before, shown, new Set(picked), core, 'defer')
     // A hand rule placing a core tool stays; the other core tools are kept.
     assert.deepEqual(deferrable({ tools }, rules), tools.map((t) => t.name).filter((n) => n === 'Bash' || picked.includes(n)))
   }
-  assert.ok(!withDeferred(before, shown, new Set(), core).some((r) => r.name === '*'))
+  assert.ok(!withPicked(before, shown, new Set(), core, 'defer').some((r) => r.name === '*'))
+})
+
+test('picked tools are dropped by name, never by a catch-all, and those always loaded are never dropped', () => {
+  const tools = ['functions.exec', 'functions.wait', 'clock.sleep', 'web.run', 'collaboration.ask'].map((name) => ({ type: 'function', name }))
+  const rules = withPicked([{ name: 'web.run', action: 'drop' }], ['clock.sleep', 'web.run', 'collaboration.ask'], new Set(['clock.sleep']), [], 'drop')
+  assert.ok(!rules.some((r) => r.name === '*'))
+  const body = { tools: structuredClone(tools) }
+  // A hand-written catch-all drops none always loaded.
+  assert.equal(dropTools(body, [...rules, { name: '*', action: 'drop' }]), JSON.stringify(tools[2]).length)
+  assert.deepEqual(body.tools.map((t) => t.name), ['functions.exec', 'functions.wait', 'web.run', 'collaboration.ask'])
 })
 
 test('the tools offered are those sent in full, but ToolSearch and the core ones', () => {

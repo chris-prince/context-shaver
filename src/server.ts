@@ -24,7 +24,7 @@ import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from '.
 import { MESSAGES } from './messages.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
-import { deferredBy, forceDefer, offerable, searchOn, toolListMessage, withDeferred, type ToolRule } from './defer.ts'
+import { actionOf, dropTools, forceDefer, offerable, searchOn, toolListMessage, withPicked, type ToolRule } from './defer.ts'
 import { keptWhole, LINE_WORDS, lineOf, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
@@ -182,6 +182,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const live = new Set(Object.keys(entries))
   // What it takes out of the base: deferred tools, and skills off the list.
   const toolRules = toolRulesOf(policy, h?.name)
+  const dropped = toolRules ? dropTools(body, toolRules) : 0
   const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules, proto.searchTool) : 0
   const skillList = skillListOf(s, live.size > 0, now)
   const { cut: skills, trimmed: skillsTrimmed } = skillList ? shaveSkills(body, skillList.rules) : { cut: 0 }
@@ -244,7 +245,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const time = new Date(now).toISOString()
   // A record takes its turns' prompts out of the messages; the stats count them still.
   const described = { ...describe(body, trimmed, time, d?.advanced || records > before || merged > mergedBefore, conv), turns: msgs.filter(isPrompt).length }
-  if (deferred) described.defs.deferred = deferred
+  if (deferred + dropped) described.defs.deferred = deferred + dropped
   if (skills) described.defs.skills = skills
   if (skillsTrimmed) splitTrimmed(described, skillsTrimmed)
   if (marked) described.ttl = marked
@@ -315,13 +316,14 @@ function policyText(): string {
 function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canonical): string {
   const sent = structuredClone({ ...body, messages: withoutPending(body.messages) })
   const toolRules = toolRulesOf(policy, h?.name)
+  if (toolRules) dropTools(sent, toolRules)
   if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, proto.searchTool)
   const trimmed = policy.skill_list ? shaveSkills(sent, policy.skill_list).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
   // `:shaver optimize` requests made here are charged to the skill list.
   const lines = [...forks(journalOf(key))].reduce((n, f) => n + (f.kind === 'optimize' && f.usage ? spent(f.model, f.provider, f.usage) : 0), 0)
-  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks + lines, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks, 'skills-trimmed': (c.saved['skills-trimmed'] ?? 0) - lines } }
+  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks + lines, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks, 'skills-shaved': (c.saved['skills-shaved'] ?? 0) - lines } }
   // Each summary request is running, or left a record or none. A record no
   // longer fitting the messages is dropped, like one replaced or none at all.
   const valid = validChain(chain, sent.messages).length
@@ -887,6 +889,7 @@ let skillsForcedAt = 0
 // the session has cached of it.
 function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules = sessionRules(key, body), tools = toolRulesOf(policy, h?.name)): Record<string, unknown> {
   const fork: Canonical = structuredClone({ ...body, messages: body.messages.slice(0, Math.max(listMessage(body), toolListMessage(body)) + 1) })
+  if (tools) dropTools(fork, tools)
   if (proto.defers && h?.defers && tools) forceDefer(fork, tools, proto.searchTool)
   if (rules) shaveSkills(fork, rules)
   return render(fork) as Record<string, unknown>
@@ -978,23 +981,25 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
     return reply
   }
   const saved = await Promise.all([old(), measure(undefined, offer.all)]).then(([o, d]) => o.tokens - d.tokens, (err: Error) => err)
-  const { reply, next } = toolsAsked(key, { harness: h!, names: offer.names, deferred: offer.deferred, text: toolsText(offer.names, offer.deferred, saved) })!
+  const { reply, next } = toolsAsked(key, { harness: h!, action: offer.action, names: offer.names, chosen: offer.chosen, text: toolsText(offer.names, offer.chosen, saved, offer.action) })!
   proposal = next
   skillsLater = later
   return reply
 }
 
-// The tools `:shaver optimize` asks about deferring, those the policy defers
-// already, and the rules deferring them all, or why there are none.
-function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { names: string[]; deferred: string[]; all: ToolRule[] } | string {
-  // Responses with deferring off is ChatGPT's backend for Codex (protocolOf).
-  if (proto.searchTool && !proto.defers) return "Shaver can't defer Codex's tools when Codex signs in with ChatGPT, only with an API key: ChatGPT's backend doesn't run tool searches itself."
-  if (!proto.defers || !h?.defers) return "Shaver can't defer tools in this harness yet."
-  if (!searchOn(body, proto.searchTool)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
+// The tools `:shaver optimize` asks about deferring, or dropping where they
+// can't be deferred, those the policy does that to already, and the rules
+// doing it to them all, or why there are none.
+function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { action: 'defer' | 'drop'; names: string[]; chosen: string[]; all: ToolRule[] } | string {
+  // Responses with deferring off is ChatGPT's backend for Codex (protocolOf),
+  // which runs no tool searches, so its tools can only be dropped.
+  const action = proto.searchTool && !proto.defers ? 'drop' : 'defer'
+  if ((action === 'defer' && !proto.defers) || !h?.defers) return "Shaver can't defer tools in this harness yet."
+  if (action === 'defer' && !searchOn(body, proto.searchTool)) return 'Tool search is off, so no tools can be deferred. Start Claude Code with ENABLE_TOOL_SEARCH=true to turn it on.'
   const now = toolRulesOf(policy, h.name) ?? []
   const names = offerable(body, h.core)
-  if (!names.length) return `No tools but ${proto.searchTool ? 'exec and wait' : h.core.join(', ')} are sent in full, so none can be deferred.`
-  return { names, deferred: names.filter((name) => deferredBy(now, name)), all: withDeferred(now, names, new Set(names), h.core) }
+  if (!names.length) return `No tools but ${proto.searchTool ? 'exec and wait' : h.core.join(', ')} are sent in full, so none can be ${action === 'drop' ? 'dropped' : 'deferred'}.`
+  return { action, names, chosen: names.filter((name) => actionOf(now, name) === action), all: withPicked(now, names, new Set(names), h.core, action) }
 }
 
 // The skills part of `:shaver optimize`'s answer, with the skills in its

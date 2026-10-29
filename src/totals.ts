@@ -61,7 +61,7 @@ export function totals(stateDir: string, ttlMs: number): string {
       }
       for (const k of forksOf(file)) {
         const v = k.usage ? spent(k.model, k.provider, k.usage) : 0
-        count(key, k.model, { actual: v, saved: { [k.kind === 'optimize' ? 'skills-trimmed' : SUMMARIES]: -v } })
+        count(key, k.model, { actual: v, saved: { [k.kind === 'optimize' ? 'skills-shaved' : SUMMARIES]: -v } })
         if (k.kind === 'summary') forks += v
       }
       for (const b of bareLines(file)) {

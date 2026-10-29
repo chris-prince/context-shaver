@@ -229,9 +229,8 @@ breakpoint is Messages-only. Tool deferral works in Claude Code, whose
 `ToolSearch` loads deferred tools, and in Codex with an API key, where the
 proxy adds a `tool_search` tool the backend runs. Codex answers searches only
 for the tools it deferred, and ChatGPT's backend, which Codex signed in with
-ChatGPT uses, runs none itself, so there nothing is deferred. One tool list
-serves both, so the tools the others are loaded by or run through (Claude's core tools, Codex's
-`functions.exec` and `functions.wait`) are never deferred.
+ChatGPT uses, runs none itself, so there nothing is deferred; tools can only be
+dropped.
 
 `bin/opencode-via-shaver` and `bin/codex-via-shaver` run OpenCode and Codex
 through the proxy as `claude-via-shaver` runs Claude Code, leaving their
@@ -301,15 +300,18 @@ response, it is left alone.
 `tool_list` says which tools each harness sends in full to defer, keyed by the
 harness's name (`claude`, `codex`), since tool names and a `*` rule mean
 something different in each. Each rule has a `name`, a tool name or `*` for
-any, and an `action`, `keep` or `defer`; the first matching rule wins, and a tool no
-rule matches stays. A harness with no list defers nothing. A deferred tool is
+any, and an `action`, `keep`, `defer` or `drop`; the first matching rule wins, and a tool no
+rule matches stays. A dropped tool is taken out of every request, so the model
+can't use it at all; `:shaver optimize` offers dropping only on Codex with
+ChatGPT sign-in, whose backend won't run tool searches, so nothing can be
+deferred there. A harness with no list defers nothing. A deferred tool is
 marked `defer_loading`. On Claude Code it is added to the deferred tools listed
 in the environment message, so the model loads it with `ToolSearch`; on Codex
 the proxy adds a `tool_search` tool the backend runs, and moves the tool out
 of the `additional_tools` input item, where the backend ignores
 `defer_loading`, to the top-level tools. The tools the others are loaded by or
 run through (`ToolSearch` on Claude Code, `functions.exec` and `functions.wait`
-on Codex) are never deferred, whatever the rules say. The older forms, a flat
+on Codex) are never deferred or dropped, whatever the rules say. The older forms, a flat
 `tool_list` or `tools_not_deferred` (tools to keep with every other deferred),
 are read as Claude Code's, since only it deferred tools then, and a rule's older
 `defer`, true or false, as its action. A tool answer rewrites them. With tool search
@@ -325,7 +327,9 @@ be deferred and the tokens deferring them saves, measured as for the skill
 lines: the base sent with the old rules and with the new. It asks which to
 defer first, since tools take only those two requests, and asks the model for
 the skill lines meanwhile, so they are often ready once the tools are
-answered; the skills' base keeps the tool rules the offer began with.
+answered; the skills' base keeps the tool rules the offer began with. Where
+tools can't be deferred it offers dropping instead, the same way, warning that
+the model can't use a dropped tool.
 Deferring all writes those rules, some
 adds a deferring rule for each, in the asking harness's list only. Any answer,
 `keep` too, rewrites an older form as keyed lists.

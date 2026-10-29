@@ -1,11 +1,12 @@
 // `:shaver optimize`'s questions, answers and replies, apart from what the
 // proxy measures and asks the model for, the policy file's I/O and the offer
 // it holds (server.ts), so each rule here can be tested alone. It offers
-// deferring the tools sent in full but the core ones and a line for each
-// skill the policy keeps whole, asks which tools to defer, then which skills
-// to trim, and puts the ones picked in the policy file's text.
+// deferring the tools sent in full but the core ones, or dropping them where
+// they can't be deferred, and a line for each skill the policy keeps whole,
+// asks which tools to defer or drop, then which skills to trim, and puts the
+// ones picked in the policy file's text.
 
-import { withDeferred } from './defer.ts'
+import { withPicked } from './defer.ts'
 import type { Harness } from './harness.ts'
 import { olderTools, parsePolicy, toolListsOf, withList } from './policy.ts'
 import { withLines, type Skill } from './skills.ts'
@@ -14,8 +15,10 @@ import { counted } from './stats.ts'
 // How replies end when they ask which items to change.
 export const PICK = "Type 'all', 'none', a specific list (like '1 3 5-8'), or 'keep' (to leave as-is)."
 
-// The question that ends a reply offering skill lines or tools to defer.
-export const askOf = (asking: 'skills' | 'tools') => `${asking === 'skills' ? 'Which skills should be trimmed?' : 'Which tools should be deferred?'}\n${PICK}`
+// The question that ends a reply offering skill lines or tools to defer or
+// drop.
+export const askOf = (asking: 'skills' | 'tools', action: 'defer' | 'drop' = 'defer') =>
+  `${asking === 'skills' ? 'Which skills should be trimmed?' : `Which tools should be ${action === 'drop' ? 'dropped' : 'deferred'}?`}\n${PICK}`
 
 // A reply to PICK as the words of the command it is (command.ts): `all`,
 // `none`, `keep`, or, for any text of only digits, dashes, commas and spaces,
@@ -40,9 +43,10 @@ export const NOTHING = 'No changes to apply. Run `shaver optimize` again.'
 
 const CLEAR = 'Run /clear in every claude/codex/opencode active session on this machine to make `shaver info` report skill savings accurately.'
 
-// The tools part of an offer: the harness asked, the tools in its table,
-// those deferred already and the text showing them, or why there are none.
-export type Tools = { harness: Pick<Harness, 'name' | 'core'>; names: string[]; deferred: string[]; text: string } | string
+// The tools part of an offer: the harness asked, whether its tools are
+// deferred or dropped, the tools in its table, those that is done to already
+// and the text showing them, or why there are none.
+export type Tools = { harness: Pick<Harness, 'name' | 'core'>; action: 'defer' | 'drop'; names: string[]; chosen: string[]; text: string } | string
 
 // The skills part: the text showing them (skillsText's) or why there are
 // none, the skills in its table, a line for each and those already trimmed.
@@ -61,11 +65,11 @@ export type Proposal = {
   changed: number
 }
 
-// The reply asking which `tools` to defer in the conversation `key`, and the
-// offer it makes; undefined if there are none to ask about.
+// The reply asking which `tools` to defer or drop in the conversation `key`,
+// and the offer it makes; undefined if there are none to ask about.
 export function toolsAsked(key: string, tools: Tools): { reply: string; next: Proposal } | undefined {
   if (typeof tools === 'string') return undefined
-  return { reply: [tools.text, '', askOf('tools')].join('\n'), next: { key, asking: 'tools', tools, skills: [], lines: {}, trimmed: [], changed: 0 } }
+  return { reply: [tools.text, '', askOf('tools', tools.action)].join('\n'), next: { key, asking: 'tools', tools, skills: [], lines: {}, trimmed: [], changed: 0 } }
 }
 
 // The reply asking which `skills` to trim after `shown`'s tools, and the offer
@@ -77,17 +81,17 @@ export function skillsAsked(shown: Proposal, skills: Skills): { reply: string; n
 
 // What answering `answer` (pickWords's) to `shown` does to the policy file
 // `text` at `file`: the reply, the file's text after it, and what is asked
-// next, if anything. An answer names every item to have trimmed or deferred,
-// so those not named are turned back; `keep` leaves them all as they are. A
+// next, if anything. An answer names every item to have trimmed, deferred or
+// dropped, so those not named are turned back; `keep` leaves them all as they are. A
 // tool answer changes only its harness's rules, and puts tool rules in an
 // older form in the current one, whatever it changes. Its `next` asks about
 // skills, whose question skillsAsked adds.
 export function afterAnswer(shown: Proposal, answer: string, text: string, file: string): { reply: string; text: string; next?: Proposal } {
-  const tools = typeof shown.tools === 'string' ? { harness: { name: '', core: [] }, names: [], deferred: [] } : shown.tools
+  const tools = typeof shown.tools === 'string' ? { harness: { name: '', core: [] }, action: 'defer' as const, names: [], chosen: [] } : shown.tools
   const items = shown.asking === 'skills' ? shown.skills.map((s) => s.name) : tools.names
-  const on = new Set(shown.asking === 'skills' ? shown.trimmed : tools.deferred)
+  const on = new Set(shown.asking === 'skills' ? shown.trimmed : tools.chosen)
   const numbers = ['all', 'none', 'keep'].includes(answer) ? [] : numbersOf(answer, items.length)
-  if (!numbers) return { reply: `All numbers must be between 1 and ${items.length}. Ranges must be stated as X-Y, smaller number first. Keywords are: all / none / keep.\n\n${askOf(shown.asking)}`, text, next: shown }
+  if (!numbers) return { reply: `All numbers must be between 1 and ${items.length}. Ranges must be stated as X-Y, smaller number first. Keywords are: all / none / keep.\n\n${askOf(shown.asking, tools.action)}`, text, next: shown }
   const picked = new Set(answer === 'all' ? items : answer === 'keep' ? on : items.filter((_, i) => numbers.includes(i + 1)))
   const changes = items.filter((name) => picked.has(name) !== on.has(name)).length
   let written = text
@@ -100,7 +104,7 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
   } else if (changes || olderTools(policy)) {
     const lists = toolListsOf(policy)
     const { name, core } = tools.harness
-    if (changes) lists[name] = withDeferred(lists[name] ?? [], items, picked, core)
+    if (changes) lists[name] = withPicked(lists[name] ?? [], items, picked, core, tools.action)
     written = withList(text, 'tool_list', lists, 'tools_not_deferred')
   }
   const done = [`Modified ${counted(changes, shown.asking === 'skills' ? 'skill' : 'tool')} in shaver policy file.`, file]
@@ -142,12 +146,16 @@ export function skillsText(lined: readonly Skill[], lines: Record<string, string
   ].join('\n')
 }
 
-// The tools part of the offer: a table of `names`, each deferred already or
-// not, headed by the tokens deferring them all saves, `saved` (or why it is
-// unknown). If all are deferred, it says only how many load when needed.
-export function toolsText(names: readonly string[], deferred: readonly string[], saved: number | Error): string {
-  const table = ['| Tool | Deferred |', '| --- | --- |', ...names.map((name, i) => `| ${i + 1}. ${cell(name)} | ${deferred.includes(name) ? 'Yes' : 'No'} |`)].join('\n')
-  if (saved instanceof Error) return `Couldn't measure the savings (sending the base failed: ${saved.message}). Tools:\n\n${table}`
-  const head = deferred.length < names.length ? `Can save ${n(saved)} tokens by deferring tools until the model needs them:` : `${counted(names.length, 'tool')} load only when the model needs them:`
-  return `${head}\n\n${table}`
+// The tools part of the offer: a table of `names`, each with `action` done to
+// it already or not, headed by the tokens doing it to them all saves, `saved`
+// (or why it is unknown). If it is done to all, it says only that. Dropping
+// is offered where tools can't be deferred, and warned of.
+export function toolsText(names: readonly string[], chosen: readonly string[], saved: number | Error, action: 'defer' | 'drop' = 'defer'): string {
+  const drop = action === 'drop'
+  const table = [`| Tool | ${drop ? 'Dropped' : 'Deferred'} |`, '| --- | --- |', ...names.map((name, i) => `| ${i + 1}. ${cell(name)} | ${chosen.includes(name) ? 'Yes' : 'No'} |`)].join('\n')
+  const warning = drop ? "Codex can't defer tools with ChatGPT sign-in, only drop them. The model can't use a dropped tool at all, so drop with caution.\n\n" : ''
+  if (saved instanceof Error) return `${warning}Couldn't measure the savings (sending the base failed: ${saved.message}). Tools:\n\n${table}`
+  const head = chosen.length === names.length ? `${counted(names.length, 'tool')} ${drop ? 'are dropped' : 'load only when the model needs them'}:`
+    : `Can save ${n(saved)} tokens by ${drop ? 'dropping tools' : 'deferring tools until the model needs them'}:`
+  return `${warning}${head}\n\n${table}`
 }

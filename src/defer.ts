@@ -6,6 +6,8 @@
 // Where the protocol has a search tool its backend runs (Responses'), it is
 // added instead, unless the client sends a search of its own, which finds only
 // the tools it deferred. Gives the bytes of the definitions it deferred.
+// Tools the rules drop are taken out of the request (dropTools): where tools
+// can't be deferred, the model can't use them at all.
 
 import { matches } from './skills.ts'
 
@@ -13,12 +15,13 @@ const HEAD = 'Use ToolSearch with query "select:<name>[,<name>...]" to load tool
 
 // Each tool takes the first rule whose `name`, with `*` for any run of
 // characters, matches its own; with none matching it is sent as it came.
-export type ToolRule = { name: string; action: 'keep' | 'defer' }
+export type ToolRule = { name: string; action: 'keep' | 'defer' | 'drop' }
 
 type Block = { type: string; text?: string }
 type Body = { tools?: { type?: string; name?: string; defer_loading?: boolean; [key: string]: unknown }[]; messages?: { role: string; content: string | Block[] }[] }
 
-export const deferredBy = (rules: readonly ToolRule[], name: string) => rules.find((r) => matches(r.name, name))?.action === 'defer'
+export const actionOf = (rules: readonly ToolRule[], name: string) => rules.find((r) => matches(r.name, name))?.action
+export const deferredBy = (rules: readonly ToolRule[], name: string) => actionOf(rules, name) === 'defer'
 
 // Whether Claude Code's tool search is on: a system message lists the deferred
 // tools. Only system messages: a conversation that quotes the list is not one.
@@ -43,20 +46,30 @@ export const deferrable = (body: Body, rules: readonly ToolRule[]): string[] =>
 export const offerable = (body: Body, core: readonly string[]): string[] =>
   (body.tools ?? []).flatMap((t) => (t.name && !t.defer_loading && !loaded(t) && !core.includes(t.name) ? [t.name] : []))
 
-// `rules` placing the `shown` tools: the `picked` ones deferred, the others
-// kept loaded. Those kept are named first, then come the rules' others but a
-// catch-all, the `core` tools kept where no rule names them, and with any
-// picked, a catch-all deferring the rest. A picked tool an earlier rule would
-// still keep loaded is named first too.
-export function withDeferred(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, core: readonly string[]): ToolRule[] {
+// `rules` placing the `shown` tools: the `picked` ones given `action`, the
+// others kept loaded. Those kept are named first, then come the rules' others
+// but a catch-all, the `core` tools kept where no rule names them, and with any
+// picked to defer, a catch-all deferring the rest; tools are dropped only by
+// name, so none Codex adds later is. A picked tool an earlier rule would still
+// keep loaded is named first too.
+export function withPicked(rules: readonly ToolRule[], shown: readonly string[], picked: ReadonlySet<string>, core: readonly string[], action: 'defer' | 'drop'): ToolRule[] {
   const others = rules.filter((r) => r.name !== '*' && !shown.includes(r.name))
-  const out = [
+  const out: ToolRule[] = [
     ...shown.filter((name) => !picked.has(name)).map((name) => ({ name, action: 'keep' as const })),
     ...others,
     ...core.filter((n) => !others.some((r) => matches(r.name, n))).map((name) => ({ name, action: 'keep' as const })),
-    ...(picked.size ? [{ name: '*', action: 'defer' as const }] : []),
+    ...(picked.size && action === 'defer' ? [{ name: '*', action }] : []),
   ]
-  return [...[...picked].filter((name) => !deferredBy(out, name)).map((name) => ({ name, action: 'defer' as const })), ...out]
+  return [...[...picked].filter((name) => actionOf(out, name) !== action).map((name) => ({ name, action })), ...out]
+}
+
+// Takes the tools the rules drop out of `body`, but those always loaded.
+// Gives the bytes of their definitions.
+export function dropTools(body: Body, rules: readonly ToolRule[]): number {
+  const drop = (t: { type?: string; name?: string }) => !!t.name && !loaded(t) && actionOf(rules, t.name) === 'drop'
+  const bytes = (body.tools ?? []).filter(drop).reduce((n, t) => n + JSON.stringify(t).length, 0)
+  if (bytes) body.tools = body.tools?.filter((t) => !drop(t))
+  return bytes
 }
 
 export function forceDefer(body: Body, rules: readonly ToolRule[], searchTool?: Record<string, unknown>): number {

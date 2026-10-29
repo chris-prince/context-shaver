@@ -12,7 +12,7 @@ export type Action = 'stub' | 'drop'
 // the latest `wait`.
 type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
 // `tool_list` says, by harness name, which tools it sends in full the proxy
-// defers, first matching rule winning (defer.ts); `:shaver optimize` writes
+// defers or drops, first matching rule winning (defer.ts); `:shaver optimize` writes
 // it. Its older forms, one list or rules with `defer` true or false for the
 // action, and the older `tools_not_deferred`, naming the tools kept, every
 // other deferred, are read as now (toolListsOf). `summary_threshold_tokens` is
@@ -40,7 +40,7 @@ export function parsePolicy(v: unknown): Policy {
       for (const list of Array.isArray(rules) ? [rules] : Object.values(rules)) {
         if (!Array.isArray(list)) throw new Error('policy: tool_list is not rule lists by harness')
         for (const r of list)
-          if (typeof r?.name !== 'string' || !(typeof r.defer === 'boolean' || ['keep', 'defer'].includes(r.action)) || Object.keys(r).length !== 2) throw new Error(`policy: bad tool_list rule ${JSON.stringify(r)}`)
+          if (typeof r?.name !== 'string' || !(typeof r.defer === 'boolean' || ['keep', 'defer', 'drop'].includes(r.action)) || Object.keys(r).length !== 2) throw new Error(`policy: bad tool_list rule ${JSON.stringify(r)}`)
       }
       continue
     }
