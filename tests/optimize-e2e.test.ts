@@ -81,10 +81,17 @@ const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }
 const assistant = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] })
 
 // The messages as Claude Code sends them: the skill list follows the first
-// message, as blocks only when it's last, and the last two messages carry
-// cache breakpoints on their last blocks.
-function laidOut(messages: object[]): object[] {
-  const all = [messages[0], { role: 'system', content: messages.length > 1 ? LIST : [{ type: 'text', text: LIST }] }, ...messages.slice(1)]
+// message, as blocks only when it's last, then, with tool search on, the
+// deferred tools' list; and the last two messages carry cache breakpoints on
+// their last blocks.
+const DEFERRED = 'Use ToolSearch with query "select:<name>[,<name>...]" to load tool schemas before calling them:\nWebSearch\n'
+function laidOut(messages: object[], search: boolean): object[] {
+  const all = [
+    messages[0],
+    { role: 'system', content: messages.length > 1 || search ? LIST : [{ type: 'text', text: LIST }] },
+    ...(search ? [{ role: 'system', content: messages.length > 1 ? DEFERRED : [{ type: 'text', text: DEFERRED }] }] : []),
+    ...messages.slice(1),
+  ]
   return all.map((m, i) => {
     const { content, ...rest } = m as { content: string | object[] }
     if (i < all.length - 2 || typeof content === 'string') return m
@@ -92,15 +99,15 @@ function laidOut(messages: object[]): object[] {
   })
 }
 
-// Sends Claude Code's request with `messages` around the skill list, and
-// returns the text of the streamed answer.
-async function send(p: Proxy, messages: object[]): Promise<string> {
+// Sends Claude Code's request with `messages` around the skill list, with
+// tool search on if `search`, and returns the text of the streamed answer.
+async function send(p: Proxy, messages: object[], search: boolean): Promise<string> {
   const body = {
     model: 'claude-opus-5-5', max_tokens: 1000, stream: true,
     metadata: { user_id: JSON.stringify({ session_id: 's1' }) },
     system: [{ type: 'text', text: 'You are Claude Code.' }],
-    tools: ['Bash', 'Read', 'Agent'].map((name) => ({ name, description: `The ${name} tool.`, input_schema: { type: 'object', properties: {} } })),
-    messages: laidOut(messages),
+    tools: ['Bash', 'Read', 'Agent', ...(search ? ['ToolSearch'] : [])].map((name) => ({ name, description: `The ${name} tool.`, input_schema: { type: 'object', properties: {} } })),
+    messages: laidOut(messages, search),
   }
   const r = await fetch(`${p.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1' }, body: JSON.stringify(body) })
   assert.equal(r.status, 200)
@@ -115,13 +122,13 @@ async function send(p: Proxy, messages: object[]): Promise<string> {
 
 // Runs `steps` of prompts, each sent after the history so far with the
 // replies as the answers to them, and returns the replies.
-async function converse(p: Proxy, prompts: string[]): Promise<string[]> {
+async function converse(p: Proxy, prompts: string[], search: boolean): Promise<string[]> {
   const history: object[] = []
   const replies: string[] = []
   for (const prompt of prompts) {
     // Claude Code's first message carries its reminder before the prompt.
     history.push(history.length ? user(prompt) : { role: 'user', content: [{ type: 'text', text: '<system-reminder>\nContext for the session.\n</system-reminder>' }, { type: 'text', text: prompt }] })
-    const reply = await send(p, history)
+    const reply = await send(p, history, search)
     replies.push(reply)
     history.push(assistant(reply))
   }
@@ -131,12 +138,12 @@ async function converse(p: Proxy, prompts: string[]): Promise<string[]> {
 const stubbed = (policy: string) => JSON.parse(readFileSync(policy, 'utf8')).skill_list.filter((r: { text?: string }) => r.text).map((r: { match: string }) => r.match)
 const listSent = (up: Upstream) => JSON.stringify(up.bodies.at(-1).messages.find((m: { role: string }) => m.role === 'system'))
 
-async function scenario(prompts: string[]) {
+async function scenario(prompts: string[], search = false) {
   const up = await upstream()
   const p = await proxy(up.url)
   try {
-    const replies = await converse(p, prompts)
-    return { replies, picked: stubbed(p.policy), sent: listSent(up) }
+    const replies = await converse(p, prompts, search)
+    return { replies, picked: stubbed(p.policy), sent: listSent(up), tools: up.bodies.at(-1).tools, policy: JSON.parse(readFileSync(p.policy, 'utf8')) }
   } finally {
     p.child.kill()
     rmSync(path.dirname(p.policy), { recursive: true, force: true })
@@ -146,8 +153,9 @@ async function scenario(prompts: string[]) {
 
 test('optimize offers a numbered table, and the answer trims the skills picked from the next request', async () => {
   const { replies, picked, sent } = await scenario(['hello', 'shaver optimize', '1 3', 'carry on'])
-  assert.match(replies[1], /\| 1 \| alpha \| No \| Alpha line \|/)
-  assert.match(replies[1], /Which skills should I trim\?/)
+  assert.match(replies[1], /^Tool search is off/)
+  assert.match(replies[1], /\| 1\. alpha \| No \| Alpha line \|/)
+  assert.match(replies[1], /Which skills should be trimmed\?/)
   assert.match(replies[2], /^Modified 2 skills in shaver policy file\./)
   assert.deepEqual(picked, ['alpha', 'gamma'])
   assert.ok(sent.includes('- alpha: Alpha line') && sent.includes('- gamma: Gamma line'))
@@ -166,6 +174,21 @@ test('an invalid answer asks again, and the next one applies', async () => {
   const { replies, picked } = await scenario(['hello', 'shaver optimize', '3-1', 'trim them', '2'])
   for (const reply of replies.slice(2, 4)) assert.match(reply, /^All numbers must be between 1 and 3\. Ranges must be stated as X-Y, smaller number first\./)
   assert.deepEqual(picked, ['beta'])
+})
+
+test('with tool search on, tools are asked about first and the skills, worked out meanwhile, next', async () => {
+  const { replies, picked, tools, policy } = await scenario(['hello', 'shaver optimize', '1', '1 3', 'carry on'], true)
+  assert.match(replies[1], /^Analyzing tools\.\.\./)
+  assert.match(replies[1], /\| 1 \| Agent \| No \|/)
+  assert.match(replies[1], /Which tools should be deferred\?/)
+  assert.ok(!replies[1].includes('alpha'))
+  assert.match(replies[2], /^Modified 1 tool in shaver policy file\.\n.*\n\nAnalyzing skills\.\.\./)
+  assert.match(replies[2], /\| 1\. alpha \| No \| Alpha line \|/)
+  assert.match(replies[2], /Which skills should be trimmed\?/)
+  assert.match(replies[3], /^Modified 2 skills/)
+  assert.deepEqual(picked, ['alpha', 'gamma'])
+  assert.equal(policy.tool_list.at(-1).name, '*')
+  assert.equal(tools.find((t: { name: string }) => t.name === 'Agent').defer_loading, true)
 })
 
 test('optimize as the first prompt applies its answer', async () => {

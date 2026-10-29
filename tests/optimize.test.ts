@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { afterAnswer, offered, optimizing, pickWords, PICK, skillsText, toolsText, type Proposal } from '../src/optimize.ts'
+import { afterAnswer, optimizing, pickWords, PICK, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal } from '../src/optimize.ts'
 import { parsePolicy } from '../src/policy.ts'
 import { descriptionHash } from '../src/skills.ts'
 
@@ -37,11 +37,11 @@ test('the skill table numbers every skill and says which are trimmed', () => {
   assert.equal(text, [
     'Can save 1,000 tokens using short skill descriptions:',
     '',
-    '| # | Skill | Trimmed | Description |',
-    '| --- | --- | --- | --- |',
-    '| 1 | alpha | No | Alpha line |',
-    '| 2 | beta | Yes | Beta line |',
-    '| 3 | gamma | No | Gamma line |',
+    '| Skill | Trimmed | Trimmed Description |',
+    '| --- | --- | --- |',
+    '| 1. alpha | No | Alpha line |',
+    '| 2. beta | Yes | Beta line |',
+    '| 3. gamma | No | Gamma line |',
   ].join('\n'))
 })
 
@@ -54,24 +54,30 @@ test('the header counts every skill in the table', () => {
   assert.equal(optimizing(1, undefined), '1 skill is listed. Optimizing...\n\n')
 })
 
-test('the first question is about skills when there are any, else tools', () => {
-  const both = offered('k', { text: 'SKILLS TABLE', skills, lines, trimmed: [] }, proposal().tools)
-  assert.ok(both.reply.endsWith(`Which skills should I trim?\n${PICK}`))
-  assert.equal(both.next?.asking, 'skills')
-  const toolsOnly = offered('k', { text: 'No skills found in this session.', skills: [], lines: {}, trimmed: [] }, proposal().tools)
-  assert.ok(toolsOnly.reply.endsWith(`Which tools should I defer?\n${PICK}`))
-  assert.equal(toolsOnly.next?.asking, 'tools')
-  const neither = offered('k', { text: 'No skills found in this session.', skills: [], lines: {}, trimmed: [] }, 'No tools to defer.')
-  assert.equal(neither.next, undefined)
+test('the first question is about tools, if there are any to defer', () => {
+  const asked = toolsAsked('k', proposal().tools)!
+  assert.equal(asked.reply, `TOOLS TABLE\n\nWhich tools should be deferred?\n${PICK}`)
+  assert.equal(asked.next.asking, 'tools')
+  assert.deepEqual(asked.next.skills, [])
+  assert.equal(toolsAsked('k', 'No tools to defer.'), undefined)
 })
 
-test('a skill answer puts the lines picked in the policy, then asks about tools', () => {
+test('the skills question follows, if there are any to trim', () => {
+  const asked = skillsAsked(proposal({ asking: 'tools', skills: [], lines: {} }), { text: 'SKILLS TABLE', skills, lines, trimmed: ['beta'] })
+  assert.equal(asked.reply, `SKILLS TABLE\n\nWhich skills should be trimmed?\n${PICK}`)
+  assert.equal(asked.next?.asking, 'skills')
+  assert.deepEqual(asked.next?.trimmed, ['beta'])
+  const none = { text: 'No skills found in this session.', skills: [], lines: {}, trimmed: [] }
+  assert.deepEqual(skillsAsked(proposal({ asking: 'tools' }), none), { reply: 'No skills found in this session.' })
+  assert.match(skillsAsked(proposal({ asking: 'tools', changed: 1 }), none).reply, /^No skills found in this session\.\n\nRun \/clear/)
+})
+
+test('a skill answer puts the lines picked in the policy, and ends', () => {
   const before = file({ skill_list: [{ match: '*', action: 'keep' }] })
   const out = afterAnswer(proposal(), '1 3', before, '/p/policy.json')
   assert.deepEqual(rulesIn(out.text).skill_list, [stub(skills[0], 'Alpha line'), stub(skills[2], 'Gamma line'), { match: '*', action: 'keep' }])
-  assert.equal(out.reply, 'Modified 2 skills in shaver policy file.\n/p/policy.json\n\nTOOLS TABLE\n\n' + `Which tools should I defer?\n${PICK}`)
-  assert.equal(out.next?.asking, 'tools')
-  assert.equal(out.next?.changed, 2)
+  assert.match(out.reply, /^Modified 2 skills in shaver policy file\.\n\/p\/policy\.json\n\nRun \/clear in every claude\/codex\/opencode active session/)
+  assert.equal(out.next, undefined)
 })
 
 test('an answer turns back the trims it leaves out', () => {
@@ -99,7 +105,7 @@ test('an invalid answer asks again and changes nothing', () => {
   for (const answer of ['4', '0', '2-4', '1 99999', '3-2', '2-2-3', '1-', '-1', '1 , -', '1 x', 'trim them', 'keep it']) {
     const out = afterAnswer(proposal(), pickWords(answer), before, '/p')
     assert.equal(out.text, before, answer)
-    assert.equal(out.reply, `All numbers must be between 1 and 3. Ranges must be stated as X-Y, smaller number first.\n\nWhich skills should I trim?\n${PICK}`)
+    assert.equal(out.reply, `All numbers must be between 1 and 3. Ranges must be stated as X-Y, smaller number first.\n\nWhich skills should be trimmed?\n${PICK}`)
     assert.equal(out.next?.asking, 'skills')
   }
 })
@@ -114,24 +120,19 @@ test('a range picks every item in it', () => {
   assert.deepEqual(trimmedBy('1,2-3'), ['alpha', 'beta', 'gamma'])
 })
 
-test('a tool answer writes tool rules in place of tools_not_deferred, and ends', () => {
+test('a tool answer writes tool rules in place of tools_not_deferred, then goes on to skills', () => {
   const before = file({ tools_not_deferred: ['Bash'] })
-  const out = afterAnswer(proposal({ asking: 'tools', changed: 2 }), '2', before, '/p')
+  const out = afterAnswer(proposal({ asking: 'tools' }), '2', before, '/p')
   assert.ok(!out.text.includes('tools_not_deferred'))
   const rules = rulesIn(out.text).tool_list!
   assert.deepEqual(rules.find((r) => r.name === 'Agent'), { name: 'Agent', defer: false })
   assert.deepEqual(rules.at(-1), { name: '*', defer: true })
-  assert.equal(out.next, undefined)
-  assert.match(out.reply, /\n\nRun \/clear in every claude\/codex\/opencode active session/)
+  assert.equal(out.reply, 'Modified 1 tool in shaver policy file.\n/p')
+  assert.equal(out.next?.asking, 'skills')
+  assert.equal(out.next?.changed, 1)
 })
 
 test('the /clear advice shows only when something changed', () => {
-  const out = afterAnswer(proposal({ asking: 'tools' }), 'keep', file({}), '/p')
-  assert.equal(out.reply, 'Modified 0 tools in shaver policy file.\n/p')
-})
-
-test('with no tools to offer, the skill answer ends with why', () => {
-  const out = afterAnswer(proposal({ tools: 'No tools to defer.' }), 'keep', file({}), '/p')
-  assert.equal(out.reply, 'Modified 0 skills in shaver policy file.\n/p\n\nNo tools to defer.')
-  assert.equal(out.next, undefined)
+  assert.equal(afterAnswer(proposal(), 'keep', file({}), '/p').reply, 'Modified 0 skills in shaver policy file.\n/p')
+  assert.match(afterAnswer(proposal({ changed: 2 }), 'keep', file({}), '/p').reply, /\n\nRun \/clear/)
 })

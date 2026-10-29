@@ -304,13 +304,16 @@ still read as those rules plus `*`, when there's no `tool_list`. Without either
 key nothing is deferred, and with tool search off (no `ENABLE_TOOL_SEARCH`, so
 no list) neither. Changing the rules rewrites the cache of open sessions once.
 
-`:shaver optimize` offers tool rules after the skill lines: the policy's own
+`:shaver optimize` offers tool rules before the skill lines: the policy's own
 rules first, then the core tools (Bash, Edit, Read, Write) kept and `*`
 deferring the rest. A policy that already has a `*` rule is left as it is, so
 nothing is offered. It names the tools that would newly
 be deferred and the tokens deferring them saves, measured as for the skill
 lines: the base sent with the old rules and with the new. It asks which to
-defer after the skills are answered; deferring all writes those rules, some
+defer first, since tools take only those two requests, and asks the model for
+the skill lines meanwhile, so they are often ready once the tools are
+answered; the skills' base keeps the tool rules the offer began with.
+Deferring all writes those rules, some
 adds a deferring rule for each, and either writes `tool_list` in place of
 `tools_not_deferred`.
 With tool search off it says how to turn it on. On Codex it says shaver can't

@@ -27,7 +27,7 @@ import { RESPONSES } from './responses.ts'
 import { CORE_TOOLS, deferredBy, forceDefer, offerable, searchOn, toolListMessage, withDeferred, type ToolRule } from './defer.ts'
 import { keptWhole, LINE_WORDS, lineOf, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
-import { afterAnswer, ANALYZING, NOTHING, offered, optimizing, skillsText, toolsText, type Proposal } from './optimize.ts'
+import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitTrimmed, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
@@ -780,6 +780,17 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
 // What it asked last, waiting for an answer in the conversation it asked in.
 let proposal: Proposal | undefined
 
+// The skills part of the offer in the conversation `key`, worked out while
+// the tools are chosen: what it has said so far, shown with it, and where it
+// says the rest once the tools are answered.
+let skillsLater: { key: string; skills: Promise<Skills>; said: string; say?: (text: string) => void } | undefined
+
+// Shows what `later` said so far with `say`, and the rest as it is said.
+function sayingTo(later: NonNullable<typeof skillsLater>, say: (text: string) => void) {
+  if (later.said) say(later.said)
+  later.say = say
+}
+
 // Commands sent mid-turn, by conversation, waiting for a response that ends
 // the turn (command.ts). Kept in memory, so a restart drops them.
 const waiting = new Map<string, string[]>()
@@ -852,23 +863,42 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
       }
     }
     proposal = next
-    return reply
+    const later = skillsLater?.key === key ? skillsLater : undefined
+    if (shown.asking !== 'tools' || next?.asking !== 'skills' || !later) return reply
+    say(`${reply}\n\n`)
+    sayingTo(later, say)
+    const asked = skillsAsked(next, await later.skills)
+    proposal = asked.next
+    skillsLater = undefined
+    return asked.reply
   }
-  const measure = (rules?: readonly SkillRule[], tools?: readonly ToolRule[]) => promptOf(proto, key, body, baseOf(proto, h, key, body, render, rules, tools), target, headers)
+  // The tool rules as they are now, so a tools answer given while the skills
+  // are measured doesn't change their base.
+  const now = toolRulesOf(policy) ?? []
+  const measure = (rules?: readonly SkillRule[], tools = now) => promptOf(proto, key, body, baseOf(proto, h, key, body, render, rules, tools), target, headers)
   let base: ReturnType<typeof measure> | undefined
   const old = () => (base ??= measure())
-  // Tools are measured while the skills' lines are asked for.
+  // The skills' lines are asked for while the tools are measured and chosen.
+  const later = { key, said: '' } as NonNullable<typeof skillsLater>
+  const relay = (text: string) => {
+    later.said += text
+    later.say?.(text)
+  }
   const offer = toolOffer(proto, h, body)
-  const tools =
-    typeof offer === 'string'
-      ? offer
-      : Promise.all([old(), measure(undefined, offer.all)]).then(
-          ([o, d]) => o.tokens - d.tokens,
-          (err: Error) => err,
-        ).then((saved) => ({ names: offer.names, deferred: offer.deferred, text: toolsText(offer.names, offer.deferred, saved) }))
-  const skilled = await skillsStage(proto, h, key, body, render, target, headers, say, old, measure)
-  const { reply, next } = offered(key, skilled, await tools)
+  if (typeof offer !== 'string') say(ANALYZING_TOOLS)
+  later.skills = skillsStage(proto, h, key, body, render, target, headers, relay, old, measure).catch((err) => ({ text: internalError(err), skills: [], lines: {}, trimmed: [] }))
+  const none: Proposal = { key, asking: 'tools', tools: offer, skills: [], lines: {}, trimmed: [], changed: 0 }
+  if (typeof offer === 'string') {
+    say(`${offer}\n\n`)
+    sayingTo(later, say)
+    const { reply, next } = skillsAsked(none, await later.skills)
+    proposal = next
+    return reply
+  }
+  const saved = await Promise.all([old(), measure(undefined, offer.all)]).then(([o, d]) => o.tokens - d.tokens, (err: Error) => err)
+  const { reply, next } = toolsAsked(key, { names: offer.names, deferred: offer.deferred, text: toolsText(offer.names, offer.deferred, saved) })!
   proposal = next
+  skillsLater = later
   return reply
 }
 
@@ -888,7 +918,7 @@ function toolOffer(proto: Protocol, h: Harness | undefined, body: Canonical): { 
 // The skills part of `:shaver optimize`'s answer, with the skills in its
 // table, a line for each, and those whose line is sent already. Lines are
 // asked for only for the others.
-async function skillsStage(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>): Promise<{ text: string; skills: Skill[]; lines: Record<string, string>; trimmed: string[] }> {
+async function skillsStage(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], target: string, headers: Record<string, string>, say: (text: string) => void, old: () => Promise<{ tokens: number }>, measure: (rules?: readonly SkillRule[]) => Promise<{ tokens: number }>): Promise<Skills> {
   const none = (text: string) => ({ text, skills: [], lines: {}, trimmed: [] })
   const listed = skillsOf(body)
   if (!listed.length) return none('No skills found in this session.')
