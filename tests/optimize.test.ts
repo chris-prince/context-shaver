@@ -105,7 +105,7 @@ test('an invalid answer asks again and changes nothing', () => {
   for (const answer of ['4', '0', '2-4', '1 99999', '3-2', '2-2-3', '1-', '-1', '1 , -', '1 x', 'trim them', 'keep it']) {
     const out = afterAnswer(proposal(), pickWords(answer), before, '/p')
     assert.equal(out.text, before, answer)
-    assert.equal(out.reply, `All numbers must be between 1 and 3. Ranges must be stated as X-Y, smaller number first.\n\nWhich skills should be trimmed?\n${PICK}`)
+    assert.equal(out.reply, `All numbers must be between 1 and 3. Ranges must be stated as X-Y, smaller number first. Keywords are: all / none / keep.\n\nWhich skills should be trimmed?\n${PICK}`)
     assert.equal(out.next?.asking, 'skills')
   }
 })

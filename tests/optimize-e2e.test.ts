@@ -172,7 +172,7 @@ test('an invalid answer asks again, and the next one applies', async () => {
   // A reply that isn't an answer stays with the proxy too: it, not the
   // model, asks again.
   const { replies, picked } = await scenario(['hello', 'shaver optimize', '3-1', 'trim them', '2'])
-  for (const reply of replies.slice(2, 4)) assert.match(reply, /^All numbers must be between 1 and 3\. Ranges must be stated as X-Y, smaller number first\./)
+  for (const reply of replies.slice(2, 4)) assert.match(reply, /^All numbers must be between 1 and 3\. Ranges must be stated as X-Y, smaller number first\. Keywords are: all \/ none \/ keep\./)
   assert.deepEqual(picked, ['beta'])
 })
 

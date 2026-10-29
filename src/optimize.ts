@@ -84,7 +84,7 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
   const items = shown.asking === 'skills' ? shown.skills.map((s) => s.name) : tools.names
   const on = new Set(shown.asking === 'skills' ? shown.trimmed : tools.deferred)
   const numbers = ['all', 'none', 'keep'].includes(answer) ? [] : numbersOf(answer, items.length)
-  if (!numbers) return { reply: `All numbers must be between 1 and ${items.length}. Ranges must be stated as X-Y, smaller number first.\n\n${askOf(shown.asking)}`, text, next: shown }
+  if (!numbers) return { reply: `All numbers must be between 1 and ${items.length}. Ranges must be stated as X-Y, smaller number first. Keywords are: all / none / keep.\n\n${askOf(shown.asking)}`, text, next: shown }
   const picked = new Set(answer === 'all' ? items : answer === 'keep' ? on : items.filter((_, i) => numbers.includes(i + 1)))
   const changes = items.filter((name) => picked.has(name) !== on.has(name)).length
   let written = text
