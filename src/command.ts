@@ -30,11 +30,8 @@ import { PICK, pickWords } from './optimize.ts'
 
 export const COMMANDS = [':shaver info', ':shaver info all', ':shaver policy', ':shaver optimize', ':shaver probe-codex-tool-search']
 
-// An answer to `:shaver optimize`'s question (PICK), as the command it is.
-function answerOf(text: string): string | undefined {
-  const words = pickWords(text)
-  return words === undefined ? undefined : `:shaver optimize ${words}`
-}
+// A reply to `:shaver optimize`'s question (PICK), as the command it is.
+const answerOf = (text: string) => `:shaver optimize ${pickWords(text)}`
 
 type Block = { type: string; text?: string; content?: unknown; cache_control?: unknown }
 type Msg = { role: string; content: string | Block[] }

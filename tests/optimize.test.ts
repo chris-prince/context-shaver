@@ -23,10 +23,10 @@ test('an answer is all, none, keep or item numbers, whatever the case or separat
   assert.equal(pickWords('1, 3 5'), '1 3 5')
   assert.equal(pickWords('1,3-6 9'), '1 3-6 9')
   assert.equal(pickWords('2 - 4,07'), '2-4 7')
-  assert.equal(pickWords('trim them'), undefined)
-  assert.equal(pickWords('1 x'), undefined)
-  assert.equal(pickWords(' , '), undefined)
-  // Malformed lists are still answers, so they ask again.
+  // Any other reply is an answer too, so it asks again.
+  assert.equal(pickWords('trim them'), 'invalid')
+  assert.equal(pickWords('1 x'), 'invalid')
+  assert.equal(pickWords(' , '), 'invalid')
   assert.equal(pickWords('1-'), '1-')
   assert.equal(pickWords('1-2-3'), '1-2-3')
   assert.equal(pickWords('5-3'), '5-3')
@@ -94,10 +94,10 @@ test('keep, or picking what is already so, leaves the file as it was', () => {
   assert.equal(afterAnswer(proposal({ trimmed: ['beta'] }), '2', before, '/p').text, before)
 })
 
-test('an invalid list asks again and changes nothing', () => {
+test('an invalid answer asks again and changes nothing', () => {
   const before = file({})
-  for (const answer of ['4', '0', '2-4', '1 99999', '3-2', '2-2-3', '1-', '-1', '1 , -']) {
-    const out = afterAnswer(proposal(), pickWords(answer)!, before, '/p')
+  for (const answer of ['4', '0', '2-4', '1 99999', '3-2', '2-2-3', '1-', '-1', '1 , -', '1 x', 'trim them', 'keep it']) {
+    const out = afterAnswer(proposal(), pickWords(answer), before, '/p')
     assert.equal(out.text, before, answer)
     assert.equal(out.reply, `All numbers must be between 1 and 3. Ranges must be stated as X-Y, smaller number first.\n\nWhich skills should I trim?\n${PICK}`)
     assert.equal(out.next?.asking, 'skills')
@@ -106,7 +106,7 @@ test('an invalid list asks again and changes nothing', () => {
 
 test('a range picks every item in it', () => {
   const trimmedBy = (answer: string) => {
-    const text = afterAnswer(proposal(), pickWords(answer)!, file({ skill_list: [{ match: '*', action: 'keep' }] }), '/p').text
+    const text = afterAnswer(proposal(), pickWords(answer), file({ skill_list: [{ match: '*', action: 'keep' }] }), '/p').text
     return rulesIn(text).skill_list!.filter((r) => 'text' in r).map((r) => r.match)
   }
   assert.deepEqual(trimmedBy('1-2'), ['alpha', 'beta'])

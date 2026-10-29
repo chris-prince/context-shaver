@@ -350,9 +350,9 @@ usage reports them, is the saving. The skills and the tools are numbered, with
 a Trimmed or Deferred column saying which the policy changes now, and each list
 ends asking which to change: `all`, `none`, numbers and ranges split by commas
 or spaces like `1,3-5 8`, or `keep` as the next prompt is the answer, a command
-like the others. A list that is only digits, dashes, commas and spaces but isn't
-valid (a number out of range, a range written high to low like `5-3`, a stray
-dash) asks again. The answer sets every row: those picked are trimmed or
+like the others. Any other reply (a number out of range, a range written high
+to low like `5-3`, a stray dash, words) asks again, so nothing reaches the
+model until a valid answer does. The answer sets every row: those picked are trimmed or
 deferred, the rest are not, and `keep` leaves the policy as it is. Skills
 already trimmed keep their lines; the others get new ones. The policy changes
 in memory and in the policy file, and every session gets them from its next

@@ -16,13 +16,14 @@ export const PICK = "Type 'all', 'none', a specific list (like '1,3-5 8'), or 'k
 // The question that ends a reply offering skill lines or tools to defer.
 export const askOf = (asking: 'skills' | 'tools') => `${asking === 'skills' ? 'Which skills should I trim?' : 'Which tools should I defer?'}\n${PICK}`
 
-// An answer to PICK as the words of the command it is (command.ts): `all`,
+// A reply to PICK as the words of the command it is (command.ts): `all`,
 // `none`, `keep`, or, for any text of only digits, dashes, commas and spaces,
-// its pieces split by spaces, valid or not (numbersOf checks them); or
-// undefined if it is none.
-export function pickWords(text: string): string | undefined {
+// its pieces split by spaces, valid or not (numbersOf checks them). Any other
+// reply is `invalid`, so it is asked again and never reaches the model.
+export function pickWords(text: string): string {
   if (/^(?:all|none|keep)$/i.test(text)) return text.toLowerCase()
   if (/^[\d\s,-]+$/.test(text) && /\d/.test(text)) return text.replace(/\s*-\s*/g, '-').replace(/\d+/g, (d) => String(Number(d))).split(/[\s,]+/).filter(Boolean).join(' ')
+  return 'invalid'
 }
 
 // The item numbers in pickWords's `answer`; or undefined if a piece isn't a
