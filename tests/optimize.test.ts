@@ -46,7 +46,7 @@ test('the skill table numbers every skill and says which are trimmed', () => {
 })
 
 test('the tool table numbers every tool and says which are deferred', () => {
-  assert.match(toolsText(['Agent', 'WebFetch'], ['WebFetch'], 900), /^Can save 900 tokens by deferring tools until the model needs them:\n\n\| # \| Tool \| Deferred \|\n\| --- \| --- \| --- \|\n\| 1 \| Agent \| No \|\n\| 2 \| WebFetch \| Yes \|$/)
+  assert.match(toolsText(['Agent', 'WebFetch'], ['WebFetch'], 900), /^Can save 900 tokens by deferring tools until the model needs them:\n\n\| Tool \| Deferred \|\n\| --- \| --- \|\n\| 1\. Agent \| No \|\n\| 2\. WebFetch \| Yes \|$/)
 })
 
 test('the header counts every skill in the table', () => {

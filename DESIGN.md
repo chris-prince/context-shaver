@@ -352,7 +352,7 @@ question after it, and the difference of their prompt tokens, as the API's
 usage reports them, is the saving. The skills and the tools are numbered, with
 a Trimmed or Deferred column saying which the policy changes now, and each list
 ends asking which to change: `all`, `none`, numbers and ranges split by commas
-or spaces like `1,3-5 8`, or `keep` as the next prompt is the answer, a command
+or spaces like `1 3 5-8`, or `keep` as the next prompt is the answer, a command
 like the others. Any other reply (a number out of range, a range written high
 to low like `5-3`, a stray dash, words) asks again, so nothing reaches the
 model until a valid answer does. The answer sets every row: those picked are trimmed or

@@ -11,7 +11,7 @@ import { withLines, type Skill } from './skills.ts'
 import { counted } from './stats.ts'
 
 // How replies end when they ask which items to change.
-export const PICK = "Type 'all', 'none', a specific list (like '1,3-5 8'), or 'keep' to leave as-is."
+export const PICK = "Type 'all', 'none', a specific list (like '1 3 5-8'), or 'keep' (to leave as-is)."
 
 // The question that ends a reply offering skill lines or tools to defer.
 export const askOf = (asking: 'skills' | 'tools') => `${asking === 'skills' ? 'Which skills should be trimmed?' : 'Which tools should be deferred?'}\n${PICK}`
@@ -140,7 +140,7 @@ export function skillsText(lined: readonly Skill[], lines: Record<string, string
 // not, headed by the tokens deferring them all saves, `saved` (or why it is
 // unknown). If all are deferred, it says only how many load when needed.
 export function toolsText(names: readonly string[], deferred: readonly string[], saved: number | Error): string {
-  const table = ['| # | Tool | Deferred |', '| --- | --- | --- |', ...names.map((name, i) => `| ${i + 1} | ${cell(name)} | ${deferred.includes(name) ? 'Yes' : 'No'} |`)].join('\n')
+  const table = ['| Tool | Deferred |', '| --- | --- |', ...names.map((name, i) => `| ${i + 1}. ${cell(name)} | ${deferred.includes(name) ? 'Yes' : 'No'} |`)].join('\n')
   if (saved instanceof Error) return `Couldn't measure the savings (sending the base failed: ${saved.message}). Tools:\n\n${table}`
   const head = deferred.length < names.length ? `Can save ${n(saved)} tokens by deferring tools until the model needs them:` : `${counted(names.length, 'tool')} load only when the model needs them:`
   return `${head}\n\n${table}`

@@ -179,7 +179,7 @@ test('an invalid answer asks again, and the next one applies', async () => {
 test('with tool search on, tools are asked about first and the skills, worked out meanwhile, next', async () => {
   const { replies, picked, tools, policy } = await scenario(['hello', 'shaver optimize', '1', '1 3', 'carry on'], true)
   assert.match(replies[1], /^Analyzing tools\.\.\./)
-  assert.match(replies[1], /\| 1 \| Agent \| No \|/)
+  assert.match(replies[1], /\| 1\. Agent \| No \|/)
   assert.match(replies[1], /Which tools should be deferred\?/)
   assert.ok(!replies[1].includes('alpha'))
   assert.match(replies[2], /^Modified 1 tool in shaver policy file\.\n.*\n\nAnalyzing skills\.\.\./)
