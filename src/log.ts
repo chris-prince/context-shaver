@@ -49,7 +49,7 @@ export function hash(s: string): string {
 // session, as the system prompt is, and the stats count them as base. Their
 // text is cut at Claude Code's headings into `system:skills`,
 // `system:agents-md` and the like, and the tools it adds there are
-// `system:tools-deferred`; text under no heading stays `system`. A system
+// `system:deferred-tools-list`; text under no heading stays `system`. A system
 // message's own bytes join its first part.
 // Later ones (environment updates, reminders) are `harness`.
 export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Record<string, number>; lineage?: string } {
@@ -60,7 +60,7 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
   for (const b of content) {
     const k = isCompaction(b) ? 'harness' : m.role === 'system' || isReminder(b) ? injected : kindOf(b, m.role)
     if (k === 'system' && b.type === 'text') for (const [s, n] of sections(b)) add(s, n)
-    else add(k === 'system' && b.type === 'tool_addition' ? 'system:tools-deferred' : k, JSON.stringify(b).length)
+    else add(k === 'system' && b.type === 'tool_addition' ? 'system:deferred-tools-list' : k, JSON.stringify(b).length)
   }
   const envelope = m.role !== 'system' ? (out.summary ? 'summary' : out.memoir ? 'memoir' : m.role) : preamble ? (Object.keys(out)[0] ?? injected) : injected
   add(envelope, json.length - Object.values(out).reduce((a, b) => a + b, 0))
@@ -93,7 +93,7 @@ export const CODEX_HEADINGS: Array<[string, string]> = [
 const HEADINGS: Array<[string, string]> = [
   ['The following skills are available', 'skills'],
   ['Available agent types', 'agent-types'],
-  ['The following deferred tools', 'tools-deferred'],
+  ['The following deferred tools', 'deferred-tools-list'],
   ['Codebase and user instructions', 'agents-md'],
   ['Contents of .*/memory/MEMORY\\.md', 'memory'],
   ['As you answer the user', 'guidance'],

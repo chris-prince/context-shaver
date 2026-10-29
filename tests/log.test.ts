@@ -35,7 +35,7 @@ test('injected content is system in the preamble and harness after it; the promp
   const tool = { type: 'tool_addition', tool: { name: 'Docs' } }
   const added = { role: 'system', content: [{ type: 'text', text: '# Environment' }, tool] } as ApiMsg
   const n = JSON.stringify(added).length
-  assert.deepEqual(kinds(JSON.stringify(added), added, true).kinds, { 'system:other': n - JSON.stringify(tool).length, 'system:tools-deferred': JSON.stringify(tool).length })
+  assert.deepEqual(kinds(JSON.stringify(added), added, true).kinds, { 'system:other': n - JSON.stringify(tool).length, 'system:deferred-tools-list': JSON.stringify(tool).length })
 })
 
 test('preamble text is cut at its headings into sections', () => {

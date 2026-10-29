@@ -505,8 +505,9 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.
-  // Stats saved before 2026-10-29 name the shaved skills `skills-trimmed`.
-  const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections).map(([k, v]): [string, number] => [k === 'skills-trimmed' ? 'skills-shaved' : k, v])]
+  // Stats saved before 2026-10-29 name two sections differently.
+  const renamed: Record<string, string> = { 'skills-trimmed': 'skills-shaved', 'tools-deferred': 'deferred-tools-list' }
+  const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections).map(([k, v]): [string, number] => [renamed[k] ?? k, v])]
   for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by type:')
   for (const k of [...REST_TYPES].sort(byLabel)) if (by[k]) out.push(row(label(k), by[k], total, 2))

@@ -128,8 +128,9 @@ test("Base shows the skills the proxy shortened as skills-shaved, Claude Code's 
   assert.ok(baseOf(observe(undefined, codex, 2000, 0))['skills-shaved'] > 0)
   // Stats saved under the older name show the new one.
   const old = observe(undefined, codex, 2000, 0)
-  old.defs.sections = { 'system-prompt': 300, skills: 300, 'skills-trimmed': 200 }
+  old.defs.sections = { 'system-prompt': 300, skills: 300, 'skills-trimmed': 200, 'tools-deferred': 100 }
   assert.ok(baseOf(old)['skills-shaved'] > 0 && !('skills-trimmed' in baseOf(old)))
+  assert.ok(baseOf(old)['deferred-tools-list'] > 0 && !('tools-deferred' in baseOf(old)))
 })
 
 test('before any request is answered, the request is estimated from its bytes', () => {
