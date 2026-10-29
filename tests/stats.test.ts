@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornFrom, bornOf, describe, estimate, isSuggestion, observe, render, settled, splitTrimmed, withoutSuggestion, type Stats } from '../src/stats.ts'
+import { bornFrom, bornOf, costLines, describe, estimate, isSuggestion, observe, render, settled, splitTrimmed, withoutSuggestion, type Stats } from '../src/stats.ts'
 import { clockOf, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -243,4 +243,13 @@ test('parts the API counted take its counts, and only the rest share what is lef
   assert.equal(s.tokens[s.parts[0].key], 100)
   assert.equal(s.tokens[s.parts[1].key], 47)
   assert.equal(s.tokens[s.parts[2].key], 53)
+})
+
+test('a saving under half a cent is still listed in the breakdown', () => {
+  const c = { without: 0.002, actual: 0.00193, saved: { 'skills-trimmed': 0.00006, 'tools-deferred': 0.00001 }, compactions: 0, waitMs: 0 }
+  const lines = costLines(c)
+  assert.ok(lines.includes('    $0.00 ( 3%) base:skills-trimmed'), lines.join('\n'))
+  assert.ok(lines.includes('    $0.00 ( 1%) base:tools-deferred'), lines.join('\n'))
+  assert.ok(!lines.includes('    none yet'))
+  assert.ok(costLines({ ...c, saved: {} }).includes('    none yet'))
 })

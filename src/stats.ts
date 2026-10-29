@@ -445,9 +445,9 @@ export const costLines = (c: Cost, heading = 'Costs (session)') => [
 const SAVED = [...BASE, 'tools', 'reasoning', 'messages', SUMMARIES, 'other']
 
 // Each type named for its half, shares padded to 2 digits as in line(). A
-// type that rounds to nothing is left out.
+// type that saved anything is shown, even if it rounds to $0.00.
 function split(c: Cost): string[] {
-  const types = SAVED.filter((t) => money(c.saved[t] ?? 0) !== '$0.00')
+  const types = SAVED.filter((t) => c.saved[t])
   const width = Math.max(...types.map((t) => money(c.saved[t]).length))
   return types.map((t) => `    ${money(c.saved[t]).padStart(width)} (${String(percent(c.saved[t], c.without)).padStart(2)}%) ${BASE.includes(t) ? 'base' : 'conv'}:${t}`)
 }
