@@ -265,23 +265,24 @@ The policy file has three sections: `conversation_shaver_rules` for the parts
 of the conversation, `tool_shaver_rules` for the tools and
 `skill_shaver_rules` for the skill list. A file in an older form (the part
 rules and thresholds at the top level, `tool_list`, `tools_not_deferred`,
-`skill_list`) is rewritten in this one when the proxy starts, the old text
-kept beside it as `policy.json.old`.
+`skill_list`, part rules timed by `on` and `wait`) is rewritten in this one
+when the proxy starts, the old text kept beside it as `policy.json.old`.
 
 `conversation_shaver_rules` gives each kind of part a list of rules. A rule is
-due once its item's step (`"on": "step"`) or turn (`"on": "turn"`) is among
-the completed ones, leaving out the latest `wait`; the strongest due rule wins,
-drop over stub. A kind with no rules is never trimmed.
+due once its item's request or turn is among the completed ones, leaving out
+the latest few: `"after": "4 request"` or `"after": "2 turn"`, the unit also
+read plural. The strongest due rule wins, drop over stub. A kind with no rules
+is never trimmed.
 
 ```json
 {
   "conversation_shaver_rules": {
     "tool": [
-      { "on": "step", "wait": 1, "action": "stub" },
-      { "on": "step", "wait": 10, "action": "drop" }
+      { "after": "1 request", "action": "stub" },
+      { "after": "10 request", "action": "drop" }
     ],
-    "skill": [{ "on": "turn", "wait": 0, "action": "drop" }],
-    "reasoning": [{ "on": "turn", "wait": 0, "action": "drop" }],
+    "skill": [{ "after": "0 turn", "action": "drop" }],
+    "reasoning": [{ "after": "0 turn", "action": "drop" }],
     "prompt_and_assistant_text": { "summary_threshold_tokens": 20000 }
   }
 }

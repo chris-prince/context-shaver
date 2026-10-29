@@ -8,9 +8,17 @@ import type { ToolRule } from './defer.ts'
 import type { SkillRule } from './skills.ts'
 
 export type Action = 'stub' | 'drop'
-// Due once the item's step (or turn) is among the completed ones, leaving out
-// the latest `wait`.
-type Rule = { on: 'step' | 'turn'; wait: number; action: Action }
+// Due once the item's request (or turn) is among the completed ones, leaving
+// out the latest few: `after` is "4 request" or "2 turn", the unit also taken
+// plural.
+type Rule = { after: string; action: Action }
+const AFTER = /^(\d+) (request|turn)s?$/
+
+// A rule's `after` as its unit and count; none if it is neither.
+export function afterOf(r: Rule): { on: 'request' | 'turn'; wait: number } | undefined {
+  const m = typeof r?.after === 'string' ? AFTER.exec(r.after) : null
+  return m ? { on: m[2] as 'request' | 'turn', wait: Number(m[1]) } : undefined
+}
 // Of the prompts and the assistant's text: `summary_threshold_tokens` is how
 // many tokens of completed turns a record leaves uncovered before the proxy
 // asks for the next (summary.ts); without it, none is made or applied.
@@ -53,7 +61,7 @@ export function parsePolicy(v: unknown): Policy {
         if (!Object.hasOwn(ACTIONS, kind)) throw new Error(`policy: unknown part kind ${kind}`)
         if (!Array.isArray(rules)) throw new Error(`policy: ${kind} is not a list of rules`)
         for (const r of rules)
-          if ((r?.on !== 'step' && r?.on !== 'turn') || !Number.isInteger(r.wait) || r.wait < 0 || !ACTIONS[kind as Kind].includes(r.action))
+          if (!afterOf(r) || Object.keys(r).length !== 2 || !ACTIONS[kind as Kind].includes(r.action))
             throw new Error(`policy: bad ${kind} rule ${JSON.stringify(r)}`)
       }
     } else if (key === 'tool_shaver_rules') {
@@ -82,20 +90,29 @@ export const skillRulesNow = (rules: (SkillRule & { match?: string })[]): SkillR
 // the top level; `skill_list`, whose rules name skills by `match`;
 // `tool_list`, one list for Claude Code or lists by harness, whose rules may
 // have `defer` true or false for the action; and `tools_not_deferred`, naming
-// the tools Claude Code keeps, every other deferred.
+// the tools Claude Code keeps, every other deferred; and part rules timed by
+// `on` ("step" or "turn") and `wait`, written as `after`, a step as a request.
 export function upgraded(v: Record<string, unknown>): Record<string, unknown> | undefined {
   const old = ['skill_list', 'tool_list', 'tools_not_deferred', 'summary_threshold_tokens', 'memoir_threshold_tokens']
   const kinds = Object.keys(v).filter((k) => Object.hasOwn(ACTIONS, k))
-  if (!kinds.length && !old.some((k) => k in v)) return undefined
+  const conv = isObject(v.conversation_shaver_rules) ? v.conversation_shaver_rules : {}
+  const onWait = (r: unknown) => isObject(r) && 'on' in r
+  const timedOlder = [...kinds.map((k) => v[k]), ...Object.values(conv)].some((rs) => Array.isArray(rs) && rs.some(onWait))
+  if (!kinds.length && !timedOlder && !old.some((k) => k in v)) return undefined
+  const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { after: `${r.wait} ${r.on === 'step' ? 'request' : r.on}`, action: r.action } : r)) : rs)
   type Older = { name: string; defer?: boolean; action?: string }
   const now = (rs: Older[]) => rs.map((r) => (r.defer === undefined ? r : { name: r.name, action: r.defer ? 'defer' : 'keep' }))
   const tools = v.tool_list
     ? Array.isArray(v.tool_list) ? { claude: now(v.tool_list) } : Object.fromEntries(Object.entries(v.tool_list as Record<string, Older[]>).map(([h, rs]) => [h, now(rs)]))
     : v.tools_not_deferred && { claude: [...(v.tools_not_deferred as string[]).map((name) => ({ name, action: 'keep' })), { name: '*', action: 'defer' }] }
   const skills = v.skill_list && skillRulesNow(v.skill_list as SkillRule[])
-  const text = Object.fromEntries(['summary_threshold_tokens', 'memoir_threshold_tokens'].filter((k) => k in v).map((k) => [k, v[k]]))
-  const parts = { ...Object.fromEntries(kinds.map((k) => [k, v[k]])), ...(Object.keys(text).length && { prompt_and_assistant_text: text }) }
-  const rest = Object.fromEntries(Object.entries(v).filter(([k]) => !kinds.includes(k) && !old.includes(k)))
+  const { prompt_and_assistant_text: had, ...convKinds } = conv
+  const text = { ...(isObject(had) && had), ...Object.fromEntries(['summary_threshold_tokens', 'memoir_threshold_tokens'].filter((k) => k in v).map((k) => [k, v[k]])) }
+  const parts = {
+    ...Object.fromEntries([...Object.entries(convKinds), ...kinds.map((k) => [k, v[k]])].map(([k, rs]) => [k, timed(rs)])),
+    ...(Object.keys(text).length && { prompt_and_assistant_text: text }),
+  }
+  const rest = Object.fromEntries(Object.entries(v).filter(([k]) => !kinds.includes(k) && !old.includes(k) && (k !== 'conversation_shaver_rules' || !isObject(v[k]))))
   return {
     ...(Object.keys(parts).length && { conversation_shaver_rules: parts }),
     ...(tools && { tool_shaver_rules: tools }),
@@ -186,6 +203,9 @@ export function loadPolicy(file: string): Policy | undefined {
 // What is due to an item at a clock: the strongest due rule's action, drop
 // over stub.
 export function treatment(rules: readonly Rule[] = [], it: Item, c: Clock): Action | undefined {
-  const due = rules.filter((r) => (r.on === 'step' ? it.step && it.step <= c.steps - r.wait : it.turn && it.turn <= c.turns - r.wait))
+  const due = rules.filter((r) => {
+    const { on, wait } = afterOf(r)!
+    return on === 'request' ? it.step && it.step <= c.steps - wait : it.turn && it.turn <= c.turns - wait
+  })
   return due.some((r) => r.action === 'drop') ? 'drop' : due.length ? 'stub' : undefined
 }

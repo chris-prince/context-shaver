@@ -10,7 +10,7 @@
 import type { Model } from './models.ts'
 import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, stepsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
-import { treatment, type Action, type PartRules } from './policy.ts'
+import { afterOf, treatment, type Action, type PartRules } from './policy.ts'
 
 // Where trimming ends in the messages: the index of the first message past
 // the steps (or turns) the furthest-reaching rule covers, for tool calls and
@@ -236,7 +236,8 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: PartRules, clock: Cl
     Math.max(
       0,
       ...(rules ?? []).map((r) => {
-        const [of, n] = r.on === 'step' ? [stepOf, c.steps - r.wait] : [turnOf, c.turns - r.wait]
+        const { on, wait } = afterOf(r)!
+        const [of, n] = on === 'request' ? [stepOf, c.steps - wait] : [turnOf, c.turns - wait]
         return n > 0 ? of.findIndex((x) => x > n) : 0
       }),
     )
