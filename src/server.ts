@@ -492,6 +492,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // Why a request the API answers would be journaled bare, if it's sent as it came.
   let why: Why = 'side'
   let c: ReturnType<Protocol['canonical']> | undefined
+  // The conversation's key, from the messages as the client sent them, before any are stripped (harness.ts).
+  let key: string | undefined
   const served = req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length > 0
   if (served) {
     // `:shaver` commands are answered here; answered ones are stripped (command.ts).
@@ -502,8 +504,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: request not read:', err)
     }
     const body = c?.body
-    // The key comes from the messages as the client sent them, before any are stripped (harness.ts).
-    const key = body && Array.isArray(body.messages) && body.messages.length ? conversationId(h, proto.name, body, req.headers) : undefined
+    key = body && Array.isArray(body.messages) && body.messages.length ? conversationId(h, proto.name, body, req.headers) : undefined
     try {
       if (c && body && key) {
         const msgs = stripCommands(body.messages)

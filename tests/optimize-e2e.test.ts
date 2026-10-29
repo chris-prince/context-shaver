@@ -59,22 +59,22 @@ const freePort = async () => {
 }
 
 // The proxy, with a policy keeping every skill whole, in a directory of its own.
-type Proxy = { url: string; policy: string; child: ChildProcess }
+type Proxy = { url: string; policy: string; child: ChildProcess; err: () => string }
 async function proxy(up: string): Promise<Proxy> {
   const dir = mkdtempSync(path.join(tmpdir(), 'optimize-e2e-'))
   const policy = path.join(dir, 'policy.json')
   writeFileSync(policy, JSON.stringify({ skill_list: [{ match: '*', action: 'keep' }] }, null, 2) + '\n')
   const port = await freePort()
   const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', String(port), '--upstream', up, '--dir', dir, '--policy', policy], { stdio: ['ignore', 'ignore', 'pipe'] })
+  let err = ''
   await new Promise<void>((ok, fail) => {
-    let err = ''
     child.stderr!.on('data', (d) => {
       err += d
       if (err.includes('listening on')) ok()
     })
     child.on('exit', (code) => fail(new Error(`the proxy exited (${code}): ${err}`)))
   })
-  return { url: `http://127.0.0.1:${port}`, policy, child }
+  return { url: `http://127.0.0.1:${port}`, policy, child, err: () => err }
 }
 
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] })
@@ -196,4 +196,22 @@ test('optimize as the first prompt applies its answer', async () => {
   const { replies, picked } = await scenario(['shaver optimize', 'all'])
   assert.match(replies[1], /^Modified 3 skills/)
   assert.deepEqual(picked, ['alpha', 'beta', 'gamma'])
+})
+
+test('a request with no tools, sent as it came, is journaled without an error', async () => {
+  const up = await upstream()
+  const p = await proxy(up.url)
+  try {
+    const body = { model: 'claude-opus-5-5', max_tokens: 100, stream: true, messages: [user('Write a title for this conversation.')] }
+    const r = await fetch(`${p.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1' }, body: JSON.stringify(body) })
+    assert.equal(r.status, 200)
+    await r.text()
+    await new Promise((ok) => setTimeout(ok, 100))
+    assert.equal(p.child.exitCode, null)
+    assert.doesNotMatch(p.err(), /Error/)
+  } finally {
+    p.child.kill()
+    rmSync(path.dirname(p.policy), { recursive: true, force: true })
+    up.close()
+  }
 })
