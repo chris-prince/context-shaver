@@ -17,11 +17,7 @@
     "user_and_assistant_text": { "summary_threshold_tokens": 20000, "memoir_threshold_tokens": 15000 }
   },
   "tool_shaver_rules": {
-    "claude": [
-      { "name": "*", "action": "defer" }
-    ]
+    "claude": []
   },
-  "skill_shaver_rules": [
-    { "name": "*", "action": "keep" }
-  ]
+  "skill_shaver_rules": []
 }
