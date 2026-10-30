@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { afterAnswer, optimizing, pickWords, PICK, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal } from '../src/optimize.ts'
+import { afterAnswer, optimizing, pickWords, PICK, SKILLS_NOTE, skillsAsked, skillsText, toolsAsked, toolsText, TOOLS_NOTE, type Proposal } from '../src/optimize.ts'
 import { parsePolicy, toolRulesOf } from '../src/policy.ts'
 import { harnessOf, type Harness } from '../src/harness.ts'
 
@@ -69,7 +69,9 @@ test("where tools can't be deferred, dropping is offered with a warning, and the
   const text = toolsText(['clock.sleep'], [], { own: 40, blocked: 0, more: 40 }, 'drop')
   assert.match(text, /^Codex can't defer tools with ChatGPT sign-in, only drop them\. The model can't use a dropped tool at all, so drop with caution\.\n\n1 tool currently adds 40 tokens on every request\.\nCurrent status:\n\n\| Tool \| Dropped \|\n[^]*Dropping 'all' would save 40 more tokens on every request\.$/)
   const tools = { harness: harnessOf('codex', {}) as Harness, action: 'drop' as const, names: ['clock.sleep'], chosen: [], text }
-  assert.match(toolsAsked('k', tools)!.reply, /Which tools should be dropped\?/)
+  const reply = toolsAsked('k', tools)!.reply
+  assert.match(reply, /Which tools should be dropped\?/)
+  assert.ok(!reply.includes(TOOLS_NOTE))
   const rules = toolRulesOf(rulesIn(afterAnswer(proposal({ asking: 'tools', tools }), 'all', file({}), '/p').text), 'codex')
   assert.deepEqual(rules, [{ name: 'clock.sleep', action: 'drop' }])
 })
@@ -86,7 +88,7 @@ test('the header says nothing of generating when every line is already written',
 
 test('the first question is about tools, if there are any to defer', () => {
   const asked = toolsAsked('k', proposal().tools)!
-  assert.equal(asked.reply, `TOOLS TABLE\n\nWhich tools should be deferred?\n${PICK}`)
+  assert.equal(asked.reply, `TOOLS TABLE\n\n${TOOLS_NOTE}\n\nWhich tools should be deferred?\n${PICK}`)
   assert.equal(asked.next.asking, 'tools')
   assert.deepEqual(asked.next.skills, [])
   assert.equal(toolsAsked('k', 'No tools to defer.'), undefined)
@@ -94,7 +96,7 @@ test('the first question is about tools, if there are any to defer', () => {
 
 test('the skills question follows, if there are any to trim', () => {
   const asked = skillsAsked(proposal({ asking: 'tools', skills: [], lines: {} }), { text: 'SKILLS TABLE', skills, lines, trimmed: ['beta'] })
-  assert.equal(asked.reply, `SKILLS TABLE\n\nWhich skills should be trimmed?\n${PICK}`)
+  assert.equal(asked.reply, `SKILLS TABLE\n\n${SKILLS_NOTE}\n\nWhich skills should be trimmed?\n${PICK}`)
   assert.equal(asked.next?.asking, 'skills')
   assert.deepEqual(asked.next?.trimmed, ['beta'])
   const none = { text: 'No skills found in this session.', skills: [], lines: {}, trimmed: [] }
@@ -134,7 +136,7 @@ test('an invalid answer asks again and changes nothing', () => {
   for (const answer of ['4', '0', '2-4', '1 99999', '3-2', '2-2-3', '1-', '-1', '1 , -', '1 x', 'trim them', 'keep it']) {
     const out = afterAnswer(proposal(), pickWords(answer), before, '/p')
     assert.equal(out.text, before, answer)
-    assert.equal(out.reply, `All numbers must be between 1 and 3. Ranges must be stated as X-Y, smaller number first. Keywords are: all / none / keep.\n\nWhich skills should be trimmed?\n${PICK}`)
+    assert.equal(out.reply, `All numbers must be between 1 and 3. Ranges must be stated as X-Y, smaller number first. Keywords are: all / none / keep.\n\n${SKILLS_NOTE}\n\nWhich skills should be trimmed?\n${PICK}`)
     assert.equal(out.next?.asking, 'skills')
   }
 })

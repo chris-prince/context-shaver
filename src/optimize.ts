@@ -16,9 +16,11 @@ import { counted } from './stats.ts'
 export const PICK = "Type 'all', 'none', a specific list (like '1 3 5-8'), or 'keep' (to leave as-is)."
 
 // The question that ends a reply offering skill lines or tools to defer or
-// drop.
+// drop, after a note on what it risks; a drop's warning comes with its table.
+export const SKILLS_NOTE = 'Trimming skills is generally safe. But if a skill stops auto-loading, you can later disable its trim.'
+export const TOOLS_NOTE = "Deferring tools is always safe. But don't defer tools you use regularly, it can raise costs."
 export const askOf = (asking: 'skills' | 'tools', action: 'defer' | 'drop' = 'defer') =>
-  `${asking === 'skills' ? 'Which skills should be trimmed?' : `Which tools should be ${action === 'drop' ? 'dropped' : 'deferred'}?`}\n${PICK}`
+  `${asking === 'skills' ? `${SKILLS_NOTE}\n\nWhich skills should be trimmed?` : action === 'drop' ? 'Which tools should be dropped?' : `${TOOLS_NOTE}\n\nWhich tools should be deferred?`}\n${PICK}`
 
 // A reply to PICK as the words of the command it is (command.ts): `all`,
 // `none`, `keep`, or, for any text of only digits, dashes, commas and spaces,
