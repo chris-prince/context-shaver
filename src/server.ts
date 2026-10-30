@@ -977,7 +977,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   const recorded = s && tokensOf(s, asSent, asSent) !== undefined ? s : undefined
   const measure = async (rules?: readonly SkillRule[], tools = now): Promise<{ tokens: number }> => {
     const fork = canonicalBase(proto, h, key, body, rules, tools)
-    return recorded ? { tokens: tokensOf(recorded, asSent, sent(fork))! } : promptOf(proto, key, body, render(fork) as Record<string, unknown>, target, headers)
+    return recorded ? { tokens: Math.round(tokensOf(recorded, asSent, sent(fork))!) } : promptOf(proto, key, body, render(fork) as Record<string, unknown>, target, headers)
   }
   let base: ReturnType<typeof measure> | undefined
   const old = () => (base ??= measure())
