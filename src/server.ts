@@ -31,7 +31,7 @@ import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsk
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitShaved, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
-import { bareLines, forks, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
+import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
@@ -325,10 +325,9 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   if (proto.defers && h?.defers && toolRules) forceDefer(sent, toolRules, h.alwaysLoaded, proto.searchTool)
   const trimmed = policy.skill_shaver_rules ? shaveSkills(sent, policy.skill_shaver_rules).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
+  // `shaver optimize`'s requests are one-time work, so they aren't counted.
   const { spent: summaryForks, requests, chain } = loadSummaries(key)
-  // `shaver optimize` requests made here are charged to the skill list.
-  const lines = [...forks(journalOf(key))].reduce((n, f) => n + (f.kind === 'optimize' && f.usage ? spent(f.model, f.provider, f.usage) : 0), 0)
-  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks + lines, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks, 'skills-shaved': (c.saved['skills-shaved'] ?? 0) - lines } }
+  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks } }
   // Each summary request is running, or left a record or none. A record no
   // longer fitting the messages is dropped, like one replaced or none at all.
   const valid = validChain(chain, sent.messages).length
@@ -977,7 +976,7 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   const offer = toolOffer(proto, h, body)
   if (typeof offer !== 'string') say(ANALYZING_TOOLS)
   later.skills = skillsStage(proto, h, key, body, render, target, headers, relay, old, measure).catch((err) => ({ text: internalError(err), skills: [], lines: {}, trimmed: [] }))
-  const none: Proposal = { key, asking: 'tools', tools: offer, skills: [], lines: {}, trimmed: [], changed: 0 }
+  const none: Proposal = { key, asking: 'tools', tools: offer, skills: [], lines: {}, trimmed: [] }
   if (typeof offer === 'string') {
     say(`${offer}\n\n`)
     sayingTo(later, say)

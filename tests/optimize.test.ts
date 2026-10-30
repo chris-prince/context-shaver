@@ -14,7 +14,7 @@ const stub = (s: { name: string; description: string }, text: string) => ({ name
 const proposal = (over: Partial<Proposal> = {}): Proposal => ({
   key: 'k', asking: 'skills', skills, lines, trimmed: [],
   tools: { harness: harnessOf('claude', {}) as Harness, action: 'defer', names: ['Agent', 'WebFetch'], chosen: [], text: 'TOOLS TABLE' },
-  changed: 0, ...over,
+  ...over,
 })
 
 test('an answer is all, none, keep or item numbers, whatever the case or separators', () => {
@@ -99,14 +99,13 @@ test('the skills question follows, if there are any to trim', () => {
   assert.deepEqual(asked.next?.trimmed, ['beta'])
   const none = { text: 'No skills found in this session.', skills: [], lines: {}, trimmed: [] }
   assert.deepEqual(skillsAsked(proposal({ asking: 'tools' }), none), { reply: 'No skills found in this session.' })
-  assert.match(skillsAsked(proposal({ asking: 'tools', changed: 1 }), none).reply, /^No skills found in this session\.\n\nRun \/clear/)
 })
 
 test('a skill answer puts the lines picked in the policy, and ends', () => {
   const before = file({ skill_shaver_rules: [{ name: '*', action: 'keep' }] })
   const out = afterAnswer(proposal(), '1 3', before, '/p/policy.json')
   assert.deepEqual(rulesIn(out.text).skill_shaver_rules, [stub(skills[0], 'Alpha line'), stub(skills[2], 'Gamma line'), { name: '*', action: 'keep' }])
-  assert.match(out.reply, /^Modified 2 skills in shaver policy file\.\n\/p\/policy\.json\n\nRun \/clear in every claude\/codex\/opencode active session/)
+  assert.equal(out.reply, 'Modified 2 skills in shaver policy file.\n/p/policy.json')
   assert.equal(out.next, undefined)
 })
 
@@ -158,7 +157,6 @@ test('a tool answer writes tool rules, then goes on to skills', () => {
   assert.deepEqual(rules.at(-1), { name: '*', action: 'defer' })
   assert.equal(out.reply, 'Modified 1 tool in shaver policy file.\n/p')
   assert.equal(out.next?.asking, 'skills')
-  assert.equal(out.next?.changed, 1)
 })
 
 test("a tool answer changes only its harness's rules", () => {
@@ -179,11 +177,9 @@ test('a tool answer that changes nothing leaves the file as it was', () => {
   for (const answer of ['keep', '2']) {
     const out = afterAnswer(proposal({ asking: 'tools', tools: { ...(proposal().tools as Exclude<Proposal['tools'], string>), chosen: ['WebFetch'] } }), answer, before, '/p')
     assert.equal(out.text, before, answer)
-    assert.equal(out.next?.changed, 0)
   }
 })
 
-test('the /clear advice shows only when something changed', () => {
+test('a skill answer that changes nothing says so', () => {
   assert.equal(afterAnswer(proposal(), 'keep', file({}), '/p').reply, 'Modified 0 skills in shaver policy file.\n/p')
-  assert.match(afterAnswer(proposal({ changed: 2 }), 'keep', file({}), '/p').reply, /\n\nRun \/clear/)
 })

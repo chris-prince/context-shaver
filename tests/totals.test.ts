@@ -37,6 +37,8 @@ test('all-time totals add up what each conversation info shows', () => {
   recordFork(a, fork)
   // A fork answered with nothing to read costs nothing.
   recordFork(a, { time: '2026-10-11T10:30:30Z', kind: 'summary', model: 'claude-opus-5-5', why: 'no usage' })
+  // A `shaver optimize` request is one-time work, so it isn't counted.
+  recordFork(a, { ...fork, time: '2026-10-11T10:30:45Z', kind: 'optimize' })
   // A request refused changed and resent as it came.
   const resent = { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 6000, output_tokens: 30 }
   recordResent(a, latest(a)!, '2026-10-11T10:31:00Z', resent)

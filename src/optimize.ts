@@ -41,8 +41,6 @@ function numbersOf(answer: string, n: number): number[] | undefined {
 
 export const NOTHING = 'No changes to apply. Run `shaver optimize` again.'
 
-const CLEAR = 'Run /clear in every claude/codex/opencode active session on this machine to make `shaver info` report skill savings accurately.'
-
 // The tools part of an offer: the harness asked, whether its tools are
 // deferred or dropped, the tools in its table, those that is done to already
 // and the text showing them, or why there are none.
@@ -53,8 +51,7 @@ export type Tools = { harness: Pick<Harness, 'name'>; action: 'defer' | 'drop'; 
 export type Skills = { text: string; skills: Skill[]; lines: Record<string, string>; trimmed: string[] }
 
 // What `shaver optimize` asked about, in the conversation `key`: its tools,
-// then its skills, empty until they are shown. `changed` counts the items
-// answers changed so far.
+// then its skills, empty until they are shown.
 export type Proposal = {
   key: string
   asking: 'skills' | 'tools'
@@ -62,21 +59,20 @@ export type Proposal = {
   skills: Skill[]
   lines: Record<string, string>
   trimmed: string[]
-  changed: number
 }
 
 // The reply asking which `tools` to defer or drop in the conversation `key`,
 // and the offer it makes; undefined if there are none to ask about.
 export function toolsAsked(key: string, tools: Tools): { reply: string; next: Proposal } | undefined {
   if (typeof tools === 'string') return undefined
-  return { reply: [tools.text, '', askOf('tools', tools.action)].join('\n'), next: { key, asking: 'tools', tools, skills: [], lines: {}, trimmed: [], changed: 0 } }
+  return { reply: [tools.text, '', askOf('tools', tools.action)].join('\n'), next: { key, asking: 'tools', tools, skills: [], lines: {}, trimmed: [] } }
 }
 
 // The reply asking which `skills` to trim after `shown`'s tools, and the offer
 // it makes; or, with none, why, and the end.
 export function skillsAsked(shown: Proposal, skills: Skills): { reply: string; next?: Proposal } {
   if (skills.skills.length) return { reply: [skills.text, '', askOf('skills')].join('\n'), next: { ...shown, asking: 'skills', skills: skills.skills, lines: skills.lines, trimmed: skills.trimmed } }
-  return { reply: [skills.text, ...(shown.changed ? ['', CLEAR] : [])].join('\n') }
+  return { reply: skills.text }
 }
 
 // What answering `answer` (pickWords's) to `shown` does to the policy file
@@ -104,9 +100,8 @@ export function afterAnswer(shown: Proposal, answer: string, text: string, file:
     written = withList(text, 'tool_shaver_rules', lists)
   }
   const done = [`Modified ${counted(changes, shown.asking === 'skills' ? 'skill' : 'tool')} in shaver policy file.`, file]
-  const changed = shown.changed + changes
-  if (shown.asking === 'tools') return { reply: done.join('\n'), text: written, next: { ...shown, asking: 'skills', changed } }
-  return { reply: [...done, ...(changed ? ['', CLEAR] : [])].join('\n'), text: written }
+  if (shown.asking === 'tools') return { reply: done.join('\n'), text: written, next: { ...shown, asking: 'skills' } }
+  return { reply: done.join('\n'), text: written }
 }
 
 const n = (x: number) => x.toLocaleString('en-US')
