@@ -647,8 +647,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // A changed request the API refuses is sent again as it came, so the proxy
   // never costs the user a turn, and journaled as resent.
   let resent: Prepared | undefined
+  // The key a request is journaled bare under: its conversation's, or, with
+  // none prepared, its side key. One not read has no conversation to go
+  // with, so its harness's own.
+  const bareKey = () => (p ?? resent)?.key ?? (key ? sideKey(stateDir, key) : `${h?.name ?? proto.name}-unread`)
+  // A request the API refused is logged with what it asked for and the
+  // API's answer, whether or not it's sent again.
+  const failed = (status: number, text: string, more?: Record<string, unknown>) =>
+    a['log-step-events'] && served && writeLine(path.join(logRoot, bareKey()), { event: 'failed', time: new Date(arrived).toISOString(), model: c?.body.model ?? 'unknown', provider: c?.body.provider, protocol: proto.name, params, status, error: text.slice(0, 2000), ...more })
   if ((p || raw !== original) && up.status === 400) {
-    console.error(`shaver: changed request refused, sent as it came: ${(await up.text()).slice(0, 500)}`)
+    const text = await up.text()
+    console.error(`shaver: changed request refused, sent as it came: ${text.slice(0, 500)}`)
+    failed(up.status, text, { resent: true })
     ;[resent, p] = [p, undefined]
     up = await send(original)
   }
@@ -663,6 +673,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (up.status >= 400) {
     const text = Buffer.from(await up.arrayBuffer())
     console.error(`${new Date().toISOString()} shaver: upstream answered ${up.status} to ${req.method} ${upstream}${url.split('?')[0]}: ${text.toString('utf8').slice(0, 2000)}`)
+    failed(up.status, text.toString('utf8'))
     res.writeHead(up.status, out)
     return void res.end(text)
   }
@@ -678,18 +689,19 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (finished || !served || up.status !== 200) return
     finished = true
     journaling(url.split('?')[0], () => {
+      const body = c?.body
+      // A request sent as the client sent it, not as the proxy prepared it,
+      // is logged with its messages whole.
+      const whole = (event: string): WholeLog | undefined => (a['log-step-events'] && body ? { dir: path.join(logRoot, bareKey()), event, side: body, protocol: proto.name, params } : undefined)
       if (p && !cut) answered(p, usage, upstream + url, headers)
-      else if (resent && !cut) answeredResent(resent, usage)
+      else if (resent && !cut) answeredResent(resent, usage, whole('resent'))
       else {
         const q = p ?? resent
-        const body = c?.body
         const u = usage.end().usage
         const provider = q ? q.provider : body?.provider
         const b: BareLine = { time: q?.sent.time ?? new Date(arrived).toISOString(), model: q?.model ?? body?.model ?? 'unknown', ...(provider && { provider }), ...(u && { usage: u }), why: cut ? 'cut off' : why }
-        // One not read has no conversation to go with, so its harness's own.
-        const bare = q?.key ?? (key ? sideKey(stateDir, key) : `${h?.name ?? proto.name}-unread`)
-        const log = !a['log-step-events'] ? undefined : q ? q.logLine && { dir: q.logDir!, line: q.logLine } : body && { dir: path.join(logRoot, bare), side: body, protocol: proto.name }
-        answeredBare(bare, b, log)
+        const log = !a['log-step-events'] ? undefined : q ? q.logLine && { dir: q.logDir!, line: q.logLine } : whole('side')
+        answeredBare(bareKey(), b, log)
       }
     })
   }
@@ -780,26 +792,35 @@ const usageFields = (u: Usage | undefined) =>
 // its line in the journal and its cost. The proxy's state stays as it was,
 // since none of this request's trim went up. A conversation with no journal
 // yet has no stats to count it in, so it's journaled bare.
-function answeredResent(p: Prepared, usage: UsageReader): void {
+function answeredResent(p: Prepared, usage: UsageReader, log?: WholeLog): void {
   const { usage: u } = usage.end()
   const was = currentOf(p.key)
-  if (!u || !was.stats) return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), ...(u && { usage: u }), why: u ? 'resent' : 'no usage' })
+  const b: BareLine = { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), ...(u && { usage: u }), why: u ? 'resent' : 'no usage' }
+  if (!u || !was.stats) return answeredBare(p.key, b, log)
   const stats = recordResent(journalOf(p.key), was.stats, new Date().toISOString(), u)
   current.set(p.key, { stats, cost: addResent(was.cost, stats, u) })
+  if (log) writeWhole(log, b, usageFields(u))
 }
+
+// A request logged with its messages whole, as an event of its own: a side
+// request, or one resent as it came.
+type WholeLog = { dir: string; event: string; side: Canonical; protocol: string; params: Record<string, unknown> }
+
+const writeWhole = (log: WholeLog, b: BareLine, counts: Record<string, unknown> | undefined) =>
+  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, parts: writeParts(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...counts })
 
 // Records a request journaled bare (journal.ts): its line and its cost, and
 // with logging its log line. A request the proxy prepared is logged as
-// requests are, marked bare; a side request as an event of its own, its
-// messages whole, so the logs' request lines stay the conversation's.
-function answeredBare(key: string, b: BareLine, log?: { dir: string; line: Record<string, unknown> } | { dir: string; side: Canonical; protocol: string }): void {
+// requests are, marked bare; one sent as it came with its messages whole,
+// so the logs' request lines stay the conversation's.
+function answeredBare(key: string, b: BareLine, log?: { dir: string; line: Record<string, unknown> } | WholeLog): void {
   const was = currentOf(key)
   recordBare(journalOf(key), b)
   current.set(key, { ...was, cost: addBare(was.cost, b) })
   if (!log) return
   const counts = { ...usageFields(b.usage), bare: b.why }
   if ('line' in log) writeLine(log.dir, { ...withReceivedDelta(log.dir, log.line), ...counts })
-  else writeLine(log.dir, { event: 'side', time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, parts: writeParts(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...counts })
+  else writeWhole(log, b, counts)
 }
 
 // The conversations with a summary fork under way, which get no second one.
@@ -808,10 +829,24 @@ const summaryForking = new Set<string>()
 // Sends a request the proxy makes of its own, a fork, and journals it as
 // finish journals a client's: once the API answers 200, before the answer is
 // used, with the usage its protocol reads in it, or marked cut off or no usage.
-// Gives the answer and that usage; throws for any other status.
+// Gives the answer and that usage; throws for any other status. With
+// logging, each fork is logged as a `fork` line, whatever it answers.
 async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>, kind: ForkKind, body: Canonical, target: string, headers: Record<string, string>): Promise<{ text: string; usage?: Usage }> {
-  const r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
-  if (r.status !== 200) throw new Error(`${r.status} ${(await r.text()).slice(0, 500)}`)
+  const time = new Date().toISOString()
+  const log = (fields: Record<string, unknown>) =>
+    a['log-step-events'] && writeLine(path.join(logRoot, p.key), { event: 'fork', kind, time, model: p.model, provider: p.provider, protocol: p.proto.name, params: paramsOf(body), ...fields })
+  let r: Response
+  try {
+    r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
+  } catch (err) {
+    log({ error: String(err).slice(0, 2000) })
+    throw err
+  }
+  if (r.status !== 200) {
+    const error = await r.text()
+    log({ status: r.status, error: error.slice(0, 2000) })
+    throw new Error(`${r.status} ${error.slice(0, 500)}`)
+  }
   let text: string | undefined
   let usage: Usage | undefined
   try {
@@ -820,8 +855,10 @@ async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>,
     reader.push(Buffer.from(text))
     usage = reader.end().usage
   } finally {
-    const line: ForkLine = { time: new Date().toISOString(), kind, model: p.model, ...(p.provider && { provider: p.provider }), ...(usage ? { usage } : { why: text === undefined ? 'cut off' : 'no usage' }) }
+    const why = text === undefined ? 'cut off' : 'no usage'
+    const line: ForkLine = { time: new Date().toISOString(), kind, model: p.model, ...(p.provider && { provider: p.provider }), ...(usage ? { usage } : { why }) }
     journaling(`a ${kind} fork`, () => recordFork(journalOf(p.key), line))
+    log({ status: r.status, ...(usage ? usageFields(usage) : { why }) })
   }
   return { text, usage }
 }

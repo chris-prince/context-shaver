@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -18,9 +18,10 @@ const LIST = 'The following skills are available for use with the Skill tool:\n\
 
 // The upstream: every request costs a token per 4 bytes of its body, so the
 // shorter base measures smaller; the lines fork gets a line for each skill,
-// and anything else an OK. It keeps the bodies the proxy sent.
+// and anything else an OK; it refuses those `fail` picks. It keeps the
+// bodies the proxy sent.
 type Upstream = { url: string; bodies: any[]; close(): void }
-async function upstream(): Promise<Upstream> {
+async function upstream(fail = (raw: string) => false): Promise<Upstream> {
   const bodies: any[] = []
   const server: Server = createServer((req, res) => {
     let raw = ''
@@ -28,6 +29,10 @@ async function upstream(): Promise<Upstream> {
     req.on('end', () => {
       const body = JSON.parse(raw)
       bodies.push(body)
+      if (fail(raw)) {
+        res.writeHead(500, { 'content-type': 'application/json' })
+        return res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'refused' } }))
+      }
       const text = raw.includes('Below is the list of skills') ? JSON.stringify(SKILLS) : 'OK'
       const usage = { input_tokens: Math.ceil(raw.length / 4), output_tokens: 1 }
       if (!body.stream) {
@@ -60,12 +65,12 @@ const freePort = async () => {
 
 // The proxy, with a policy keeping every skill whole, in a directory of its own.
 type Proxy = { url: string; policy: string; child: ChildProcess; err: () => string }
-async function proxy(up: string): Promise<Proxy> {
+async function proxy(up: string, args: string[] = []): Promise<Proxy> {
   const dir = mkdtempSync(path.join(tmpdir(), 'optimize-e2e-'))
   const policy = path.join(dir, 'policy.json')
   writeFileSync(policy, JSON.stringify({ skill_shaver_rules: [{ name: '*', action: 'keep' }] }, null, 2) + '\n')
   const port = await freePort()
-  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', String(port), '--upstream', up, '--dir', dir, '--policy', policy], { stdio: ['ignore', 'ignore', 'pipe'] })
+  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', String(port), '--upstream', up, '--dir', dir, '--policy', policy, ...args], { stdio: ['ignore', 'ignore', 'pipe'] })
   let err = ''
   await new Promise<void>((ok, fail) => {
     child.stderr!.on('data', (d) => {
@@ -101,7 +106,7 @@ function laidOut(messages: object[], search: boolean): object[] {
 
 // Sends Claude Code's request with `messages` around the skill list, with
 // tool search on if `search`, and returns the text of the streamed answer.
-async function send(p: Proxy, messages: object[], search: boolean): Promise<string> {
+async function send(p: Proxy, messages: object[], search: boolean, status = 200): Promise<string> {
   const body = {
     model: 'claude-opus-5-5', max_tokens: 1000, stream: true,
     metadata: { user_id: JSON.stringify({ session_id: 's1' }) },
@@ -110,7 +115,7 @@ async function send(p: Proxy, messages: object[], search: boolean): Promise<stri
     messages: laidOut(messages, search),
   }
   const r = await fetch(`${p.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1' }, body: JSON.stringify(body) })
-  assert.equal(r.status, 200)
+  assert.equal(r.status, status)
   let text = ''
   for (const line of (await r.text()).split('\n')) {
     if (!line.startsWith('data: ')) continue
@@ -212,6 +217,40 @@ test('a request with no tools, sent as it came, is journaled without an error', 
   } finally {
     p.child.kill()
     rmSync(path.dirname(p.policy), { recursive: true, force: true })
+    up.close()
+  }
+})
+
+test('with logging, every request is logged with its params, refused or not, and each fork as a fork', async () => {
+  const up = await upstream((raw) => raw.includes('please fail') || raw.includes('Below is the list of skills'))
+  const p = await proxy(up.url, ['--log-step-events'])
+  const dir = path.dirname(p.policy)
+  try {
+    // Optimize first, before any request has recorded counts, so its
+    // measuring forks are sent too.
+    const [reply] = await converse(p, ['shaver optimize'], false)
+    assert.match(reply, /Shaver unable to retrieve skill details\./)
+    await send(p, [user('hello')], false)
+    await send(p, [user('please fail')], false, 500)
+    const logs = path.join(dir, 'logs')
+    const lines = readdirSync(logs).flatMap((k) => readFileSync(path.join(logs, k, 'step_events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)))
+    const params = { max_tokens: 1000, stream: true }
+    const requests = lines.filter((l) => l.event === 'request' || l.event === 'side')
+    assert.ok(requests.length >= 1)
+    for (const l of requests) assert.deepEqual(l.params, params)
+    const failed = lines.filter((l) => l.event === 'failed')
+    assert.equal(failed.length, 1)
+    assert.deepEqual(failed[0].params, params)
+    assert.equal(failed[0].status, 500)
+    const forks = lines.filter((l) => l.event === 'fork')
+    assert.ok(forks.length >= 2)
+    for (const f of forks) assert.equal(f.kind, 'optimize')
+    // The measuring forks are answered; the lines fork is refused.
+    assert.ok(forks.some((f) => f.status === 200 && f.inputTokens > 0 && f.params.max_tokens === 16 && f.params.stream === false))
+    assert.ok(forks.some((f) => f.status === 500 && f.error.includes('refused') && f.params.stream === false))
+  } finally {
+    p.child.kill()
+    rmSync(dir, { recursive: true, force: true })
     up.close()
   }
 })
