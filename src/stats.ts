@@ -34,8 +34,9 @@ export type Sent = {
   // conventions cut it (Conventions.promptHeadings); `deferred` is the bytes of
   // the tool definitions the proxy deferred (defer.ts) and `skills` those it
   // took off the skill list (skills.ts), which the base would hold without it.
-  // Before 2026-10-21 `deferred` held both.
-  defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number>; deferred?: number; skills?: number }
+  // Before 2026-10-21 `deferred` held both. `shaves` hashes the tool and
+  // skill rules it was sent with; none before 2026-10-29.
+  defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number>; deferred?: number; skills?: number; shaves?: { tools: string; skills: string } }
   ends: { tools: number; reasoning: number }
   // Whether the proxy advanced its trim on this request.
   advanced: boolean
@@ -157,6 +158,18 @@ export function describe(body: { model: string; provider?: string; messages: Api
     ends,
     advanced,
   }
+}
+
+// The tokens `variant` holds, a base like `base` with its tools or skill list
+// changed (server.ts, optimize), from the journal's counts: a part as `s`
+// counted it takes that count, and one changed from `base`'s the count of the
+// part it replaces, at its bytes' share. Undefined if `s` lacks a count of
+// one of `base`'s parts.
+export function tokensOf(s: Stats, base: Sent, variant: Sent): number | undefined {
+  if ([base.defs.key, ...base.parts.map((p) => p.key)].some((k) => s.tokens[k] === undefined)) return undefined
+  const counted = (key: string, bytes: number, was: string, wasBytes: number) => s.tokens[key] ?? (s.tokens[was] * bytes) / wasBytes
+  const size = (d: Sent['defs']) => d.systemPrompt + d.tools
+  return counted(variant.defs.key, size(variant.defs), base.defs.key, size(base.defs)) + variant.parts.reduce((n, p, i) => n + counted(p.key, p.bytes, base.parts[i].key, base.parts[i].bytes), 0)
 }
 
 // Whether a request is Claude Code's prompt suggestion: the conversation so far
@@ -446,11 +459,13 @@ export const costLines = (c: Cost, heading = 'Costs (session)') => [
 const SAVED = [...BASE, 'tools', 'reasoning', 'messages', SUMMARIES, 'other']
 
 // Each type named for its half, shares padded to 2 digits as in line(). A
-// type that saved anything is shown, even if it rounds to $0.00.
+// type that saved anything is shown, even if it rounds to $0.00. The base's
+// shaves are a best case: a tool or skill the model then looks up costs turns
+// the unshaved base wouldn't.
 function split(c: Cost): string[] {
   const types = SAVED.filter((t) => c.saved[t])
   const width = Math.max(...types.map((t) => money(c.saved[t]).length))
-  return types.map((t) => `    ${money(c.saved[t]).padStart(width)} (${String(percent(c.saved[t], c.without)).padStart(2)}%) ${BASE.includes(t) ? 'base' : 'conv'}:${t}`)
+  return types.map((t) => `    ${money(c.saved[t]).padStart(width)} (${String(percent(c.saved[t], c.without)).padStart(2)}%) ${BASE.includes(t) ? `base:${t} <best case>` : `conv:${t}`}`)
 }
 
 // With no price for the session's model there is no cost (cost.ts, add), so

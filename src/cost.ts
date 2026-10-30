@@ -20,8 +20,9 @@
 // Each request, against the journal's previous one:
 // - Cold (none, or the cache's TTL has passed since): it reads what this one
 //   read, with the deferred tools if that was the base, and writes the rest.
-// - Warm and advanced: it reads all the previous prompt was, or the base after
-//   a compaction, and writes the rest.
+// - Warm and advanced, or sent with tool or skill rules other than the
+//   previous one's (Sent.defs.shaves): it reads all the previous prompt was,
+//   or the base after a compaction, and writes the rest.
 // - Warm and read from the cache: it reads as far as this one, plus all the
 //   proxy took out, up to what the previous prompt was.
 // - Otherwise, a miss without a trim, as cold.
@@ -31,7 +32,8 @@
 // would cost without it alone. The rest is the conversation's, shared by the
 // tokens each type of trim has taken out so far (stats.ts, removedByType), or
 // on a request that trims, by what it takes out, since its rewriting is that
-// trim's cost.
+// trim's cost. On one whose rules changed, the rest goes to the shaves whose
+// rules did, the rewriting being theirs.
 
 import { lifetimeMs, modelOf, PROMPTS_KEPT, type Compaction, type Price } from './models.ts'
 import { BASE, baseOf, promptsOf, removedByType, type Stats } from './stats.ts'
@@ -83,12 +85,19 @@ export function without(prev: Stats | undefined, s: Stats, u: Usage, ttlMs: numb
   const all = base + rest
   const uncached = u.input_tokens
   const warm = prev && ctx && !s.compacted && Date.parse(s.time) - Date.parse(prev.time) <= ttlMs
-  const advanced = warm && (s.removedTokens ?? 0) !== (prev.removedTokens ?? 0)
+  const advanced = warm && ((s.removedTokens ?? 0) !== (prev.removedTokens ?? 0) || reshaved(prev, s).length > 0)
   const read = warm && !advanced && reads >= s.inputTokens / 2
-  const r = Math.min(all - uncached, advanced ? ctx.cached : read ? Math.min(ctx.cached, reads + all - s.inputTokens) : reads && reads + base - (s.defs ? baseOf(s) : 0))
+  const r = Math.min(all - uncached, advanced ? ctx.cached :read ? Math.min(ctx.cached, reads + all - s.inputTokens) : reads && reads + base - (s.defs ? baseOf(s) : 0))
   const tokens = { uncached, reads: r, writes: all - uncached - r, output: u.output_tokens ?? 0 }
   if (compaction && all > compaction.at) return { tokens, context: { rest: keptOf(compaction, s, rest), client, cached: base }, compacted: true }
   return { tokens, context: { rest, client, cached: all }, compacted: false }
+}
+
+// The base shaves whose rules a request was sent with changed since the one
+// before.
+const reshaved = (prev: Stats | undefined, s: Stats): string[] => {
+  const [was, now] = [prev?.defs?.shaves, s.defs?.shaves]
+  return was && now ? (['tools', 'skills'] as const).filter((t) => was[t] !== now[t]).map((t) => `${t}-shaved`) : []
 }
 
 // What a compaction keeps of the prompt past the base, the client's user
@@ -162,7 +171,8 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
     for (const [t, n] of positive(before)) credit(t, (earlier * n) / sum(positive(before)))
     if (positive(before).length) rest -= earlier
   }
-  const by = positive(trimmed).length ? positive(trimmed) : positive(removed).length ? positive(removed) : [['other', 1] as [string, number]]
+  const changed = reshaved(prev, s)
+  const by = changed.length ? changed.map((t) => [t, 1] as [string, number]) : positive(trimmed).length ? positive(trimmed) : positive(removed).length ? positive(removed) : [['other', 1] as [string, number]]
   const weight = by.reduce((n, [, w]) => n + w, 0)
   for (const [t, w] of by) credit(t, (rest * w) / weight)
   // Once the prompt without the shaver compacts, what was taken out before

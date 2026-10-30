@@ -30,7 +30,7 @@ import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withou
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitShaved, SUMMARIES, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSuggestion, type Sent, type Stats } from './stats.ts'
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -253,6 +253,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   if (deferred + dropped) described.defs.deferred = deferred + dropped
   if (skills) described.defs.skills = skills
   if (skillsTrimmed) splitShaved(described, skillsTrimmed)
+  described.defs.shaves = { tools: hash(JSON.stringify(toolRules ?? [])), skills: hash(JSON.stringify(skillList?.rules ?? [])) }
   if (marked) described.ttl = marked
   if (covers) described.covers = covers
   const last = latestOf(key)
@@ -895,11 +896,15 @@ let skillsForcedAt = 0
 // the policy's tool rules, or `tools`. Forks start from it, so they read what
 // the session has cached of it.
 function baseOf(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, render: Wire['render'], rules = sessionRules(key, body), tools = toolRulesOf(policy, h?.name)): Record<string, unknown> {
+  return render(canonicalBase(proto, h, key, body, rules, tools)) as Record<string, unknown>
+}
+
+function canonicalBase(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, rules = sessionRules(key, body), tools = toolRulesOf(policy, h?.name)): Canonical {
   const fork: Canonical = structuredClone({ ...body, messages: body.messages.slice(0, Math.max(listMessage(body), toolListMessage(body)) + 1) })
   if (h && tools) dropTools(fork, tools, h.alwaysLoaded)
   if (proto.defers && h?.defers && tools) forceDefer(fork, tools, h.alwaysLoaded, proto.searchTool)
   if (rules) shaveSkills(fork, rules)
-  return render(fork) as Record<string, unknown>
+  return fork
 }
 
 function sessionRules(key: string, body: Canonical): readonly SkillRule[] | undefined {
@@ -964,7 +969,16 @@ async function optimize(command: string, proto: Protocol, h: Harness | undefined
   // The tool rules as they are now, so a tools answer given while the skills
   // are measured doesn't change their base.
   const now = toolRulesOf(policy, h?.name) ?? []
-  const measure = (rules?: readonly SkillRule[], tools = now) => promptOf(proto, key, body, baseOf(proto, h, key, body, render, rules, tools), target, headers)
+  // Each base is measured from the journal's counts of the base as sent
+  // (stats.ts, tokensOf), or sent, if the journal lacks them.
+  const sent = (c: Canonical) => describe(c, { tools: 0, reasoning: 0 }, '', false, h?.conventions ?? NO_CONVENTIONS)
+  const s = currentOf(key).stats
+  const asSent = sent(canonicalBase(proto, h, key, body, undefined, now))
+  const recorded = s && tokensOf(s, asSent, asSent) !== undefined ? s : undefined
+  const measure = async (rules?: readonly SkillRule[], tools = now): Promise<{ tokens: number }> => {
+    const fork = canonicalBase(proto, h, key, body, rules, tools)
+    return recorded ? { tokens: tokensOf(recorded, asSent, sent(fork))! } : promptOf(proto, key, body, render(fork) as Record<string, unknown>, target, headers)
+  }
   let base: ReturnType<typeof measure> | undefined
   const old = () => (base ??= measure())
   // The skills' lines are asked for while the tools are measured and chosen.

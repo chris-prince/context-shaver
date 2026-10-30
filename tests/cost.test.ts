@@ -148,7 +148,7 @@ test('render shows the cost in the summary and the tokens in the details', () =>
 test('render splits the saving by type of trim', () => {
   const s = { ...at(2, 13_000, 9000), first: at(0, 0, 0).time, requests: 3, turns: 2, tokens: {}, bound: {}, answers: {}, seen: {}, parts: [], defs: { key: 'd', systemPrompt: 1, tools: 1 }, ends: { tools: 0, reasoning: 0 } } as Stats
   const out = render(s, 'session', false, { without: 1, actual: 0.4, saved: { 'tools-shaved': 0.1, 'skills-shaved': 0.05, tools: 0.3, reasoning: 0.15, messages: 0.001 }, compactions: 0, waitMs: 0 })
-  assert.match(out, /\$0\.60 saved \(60%\)\n\n  Savings Breakdown\n    \$0\.10 \(10%\) base:tools-shaved\n    \$0\.05 \( 5%\) base:skills-shaved\n    \$0\.30 \(30%\) conv:tools\n    \$0\.15 \(15%\) conv:reasoning\n    \$0\.00 \( 0%\) conv:messages\n\n  Speedup\n/)
+  assert.match(out, /\$0\.60 saved \(60%\)\n\n  Savings Breakdown\n    \$0\.10 \(10%\) base:tools-shaved <best case>\n    \$0\.05 \( 5%\) base:skills-shaved <best case>\n    \$0\.30 \(30%\) conv:tools\n    \$0\.15 \(15%\) conv:reasoning\n    \$0\.00 \( 0%\) conv:messages\n\n  Speedup\n/)
 })
 
 test('a trim is charged its rewrite, and later savings are shared by what each type took out', () => {
