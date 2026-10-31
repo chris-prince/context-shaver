@@ -9,7 +9,8 @@ import { readFileSync } from 'node:fs'
 import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
 import { apply, decide, positionsOf, readThrough, TEXT_TOKENS, type Position } from '../src/trim.ts'
-import type { Policy } from '../src/policy.ts'
+import { modelOf } from '../src/models.ts'
+import type { PartRules } from '../src/policy.ts'
 
 const [dir, from = '', to = '9999'] = process.argv.slice(2)
 const TTL = 3600e3
@@ -92,6 +93,12 @@ function defsSize(e: { system: Def[]; tools: Def[] }, msgs: ApiMsg[]): number {
 // Claude Code injects before the first response, the kind src/log.ts calls
 // `system`), takes its tokens from the conversation's first request, as the
 // API reported them, less that request's other parts, shared by bytes.
+// A window from partway through (one long turn, say) could take its base from
+// the window's first request instead, by filtering `all` to [from, to) as
+// `reqs` is. That request's messages then carry earlier assistant parts, so the
+// base would be shared by bytes with them rather than with the preamble alone,
+// a close estimate rather than an exact count, and the checks below would say
+// so rather than throw.
 const sig = (e: { system: (Def & { hash: string })[]; tools: (Def & { hash: string })[] }) =>
   JSON.stringify([e.system.map((d) => d.hash), e.tools.filter((t) => !t.deferred).map((t) => t.hash)])
 if (all[0].parts.some((p: { part: string }) => p.part === 'assistant')) throw new Error(`${dir} was logged from partway through, so its base has no exact count`)
@@ -125,7 +132,7 @@ function price(base: number, pos: Position[], r: number, warm: boolean) {
 }
 
 type Run = { cost: number; rd: number; wr: number; ctx: number; advanced: number; mismatch: number; firstMiss?: string }
-function run(policy: Policy | 'sent', actual?: Policy): Run {
+function run(policy: PartRules | 'sent', actual?: PartRules): Run {
   let applied: Clock = { requests: 0, turns: 0 }
   let found: Clock = { requests: 0, turns: 0 }
   const entries = new Map<string, number>()
@@ -134,6 +141,7 @@ function run(policy: Policy | 'sent', actual?: Policy): Run {
   const out: Run = { cost: 0, rd: 0, wr: 0, ctx: 0, advanced: 0, mismatch: 0 }
   reqs.forEach((e, n) => {
     const t = Date.parse(e.time)
+    const model = modelOf(e.model, e.provider)
     for (const [h, at] of entries) if (t - at > TTL) entries.delete(h)
     const live = new Set(entries.keys())
     const msgs = marked(orig[n], sent[n])
@@ -158,12 +166,12 @@ function run(policy: Policy | 'sent', actual?: Policy): Run {
       body = keep.msgs
       if (clock.requests > held.requests || clock.turns > held.turns) {
         const next = apply(msgs, policy, clock)
-        const d = decide(keep.msgs, next.msgs, live, 's', e.model, thinking)
+        const d = decide(keep.msgs, next.msgs, live, 's', model, thinking)
         if (d.advanced) { body = next.msgs; applied = clock; if (d.savedChars) out.advanced++ }
       }
     }
     const pos = positionsOf(body, 's', thinking)
-    const r = readThrough(pos, live)
+    const r = readThrough(pos, live, model.lookback)
     const c = price(defsTokens(e, body), pos, r, t - lastAt <= TTL)
     out.rd += c.rd; out.wr += c.wr; out.ctx = Math.max(out.ctx, c.rd + c.wr + c.plain)
     out.cost += P * (0.05 * c.rd + 2 * c.wr + c.plain + 5 * e.outputTokens)
@@ -181,10 +189,10 @@ const fmt = (name: string, r: Run) => console.log(`${name.padEnd(14)} $${r.cost.
 console.log(`${dir.replace(/\/$/, '').split('/').at(-1)}: ${reqs.length} requests, rebuild breaks ${broken}, rate ${rate.toFixed(3)} tok/char, base ${BASE.toFixed(0)}`)
 console.log(`logged         $${logged.toFixed(2)}`)
 const actualWait = Number(process.env.WAIT)
-const pol = (w: number): Policy => ({ tool: [{ on: 'step', wait: w, action: 'drop' }], skill: [{ on: 'turn', wait: 0, action: 'drop' }], reasoning: [{ on: 'turn', wait: 0, action: 'drop' }] })
+const pol = (w: number): PartRules => ({ tool: [{ action: 'drop', after: `${w} requests` }], skill: [{ action: 'drop', after: '0 turns' }], reasoning: [{ action: 'drop', after: '0 turns' }] })
 const s = run('sent', actualWait ? pol(actualWait) : undefined)
 fmt('sent, repriced', s)
 if (actualWait) console.log(`  rebuilt requests the real policy doesn't reproduce: ${s.mismatch} of ${reqs.length}${s.firstMiss ? `, from ${s.firstMiss}` : ''}`)
 fmt('no trimming', run({}))
 for (const w of [2, 4, 8, 16]) fmt(`drop wait ${w}`, run(pol(w)))
-fmt('8 + 2 turns', run({ ...pol(8), tool: [{ on: 'step', wait: 8, action: 'drop' }, { on: 'turn', wait: 2, action: 'drop' }] }))
+fmt('8 + 2 turns', run({ ...pol(8), tool: [{ action: 'drop', after: '8 requests' }, { action: 'drop', after: '2 turns' }] }))
