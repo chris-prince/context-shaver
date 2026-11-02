@@ -1,13 +1,19 @@
 (version 1)
 (allow default)
 ; Nothing the run could look ahead in: the real repo (and so this benchmark and
-; anything kept beside it) and this project's real transcripts, outside the
-; run's own directory.
+; anything kept beside it), this project's real transcripts, and every Claude
+; Code scratchpad, outside the run's own directory and its own scratchpad.
 (deny file-read* file-write*
   (subpath (param "REAL"))
-  (subpath (param "PROJECTS")))
+  (subpath (param "PROJECTS"))
+  (subpath (param "SCRATCH")))
 (allow file-read* file-write*
-  (subpath (param "RUN")))
+  (subpath (param "RUN"))
+  (subpath (param "OWN_SCRATCH")))
+; Claude Code opens the scratchpad root at startup; it may read the root itself
+; (the projects' directory names), but nothing in them.
+(allow file-read*
+  (literal (param "SCRATCH")))
 ; The proxy on run-proxy's default port: a run's own proxy must never reach it,
 ; and run-proxy restarts a proxy from another checkout that it finds on its port.
 (deny network-outbound (remote ip "localhost:18787"))

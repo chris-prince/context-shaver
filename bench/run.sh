@@ -125,6 +125,7 @@ agent() { # <prompt>
   (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=http://127.0.0.1:$PORT ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} \
     sandbox-exec -f "$B/sandbox.sb" -D REAL="$REAL" -D RUN="$W" \
       -D PROJECTS="$HOME/.claude/projects/$(esc "$REAL")" \
+      -D SCRATCH="/private/tmp/claude-$(id -u)" -D OWN_SCRATCH="/private/tmp/claude-$(id -u)/$(esc "$RUN")" \
     claude -p "${session[@]}" --model claude-opus-5-5 --strict-mcp-config \
       ${MAX_TURNS:+--max-turns $MAX_TURNS} --permission-mode bypassPermissions ${deny[@]+"${deny[@]}"} \
       --output-format stream-json --verbose "$1")
