@@ -1,0 +1,13 @@
+(version 1)
+(allow default)
+; Nothing the run could look ahead in: the real repo (and so this benchmark and
+; anything kept beside it) and this project's real transcripts, outside the
+; run's own directory.
+(deny file-read* file-write*
+  (subpath (param "REAL"))
+  (subpath (param "PROJECTS")))
+(allow file-read* file-write*
+  (subpath (param "RUN")))
+; The proxy on run-proxy's default port: a run's own proxy must never reach it,
+; and run-proxy restarts a proxy from another checkout that it finds on its port.
+(deny network-outbound (remote ip "localhost:18787"))
