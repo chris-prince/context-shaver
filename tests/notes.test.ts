@@ -23,7 +23,7 @@ const SAMPLES: Record<string, string> = {
   'agents-md': 'Codebase and user instructions are shown below. Be sure to adhere to these instructions.',
   memory: "Contents of /Users/u/.claude/projects/p/memory/MEMORY.md (user's auto-memory, persists across conversations):",
   'instructions-reread': 'Instruction files were re-read when this session started; these differ from their earlier copies',
-  'session-context': 'The session context was re-read when this session started; these values replace the earlier ones:',
+  'session-reread': 'The session context was re-read when this session started; these values replace the earlier ones:',
   guidance: "As you answer the user's questions, you can use the following context:\n# userEmail",
   'git-attribution': 'Attribution for git commits and pull requests you create in this session:',
   environment: '# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /p',

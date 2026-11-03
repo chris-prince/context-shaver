@@ -12,6 +12,9 @@
 // - unrecognized: under no heading below, treated as conversation, and shown
 //   by its first line (stats.ts) so it gets a heading.
 //
+// Notes in the preamble are never trimmed or summarized, whatever their
+// category: only the ones after it are sorted here.
+//
 // One message can hold several notes, so a text block is cut at the headings,
 // each starting the text or a line after a blank one. File contents and diffs
 // in notes have numbered lines, so none of theirs reads as a heading.
@@ -45,7 +48,7 @@ export const NOTES: Array<[string, string, Category]> = [
   ['Codebase and user instructions', 'agents-md', 'forever'],
   ['Contents of .*/memory/MEMORY\\.md', 'memory', 'forever'],
   ['Instruction files were re-read', 'instructions-reread', 'forever'],
-  ['The session context was re-read', 'session-context', 'forever'],
+  ['The session context was re-read', 'session-reread', 'latest'],
   ['As you answer the user', 'guidance', 'forever'],
   ['Attribution for git commits', 'git-attribution', 'forever'],
   ['From here on, do not add attribution lines', 'git-attribution', 'forever'],
