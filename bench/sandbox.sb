@@ -1,15 +1,21 @@
 (version 1)
 (allow default)
 ; Nothing the run could look ahead in: the real repo (and so this benchmark and
-; anything kept beside it), this project's real transcripts, and every Claude
-; Code scratchpad, outside the run's own directory and its own scratchpad.
+; anything kept beside it), this project's real transcripts, every Claude Code
+; scratchpad, the bench's other runs, results and proxy code, and Codex's and
+; OpenCode's own data, outside the run's own directory and its own scratchpad.
 (deny file-read* file-write*
   (subpath (param "REAL"))
   (subpath (param "PROJECTS"))
-  (subpath (param "SCRATCH")))
+  (subpath (param "SCRATCH"))
+  (subpath (param "BENCH"))
+  (subpath (string-append (param "HOME") "/.codex"))
+  (subpath (string-append (param "HOME") "/.local/share/opencode"))
+  (subpath (string-append (param "HOME") "/.config/opencode")))
 (allow file-read* file-write*
   (subpath (param "RUN"))
-  (subpath (param "OWN_SCRATCH")))
+  (subpath (param "OWN_SCRATCH"))
+  (subpath (string-append (param "HOME") "/.codex/packages")))
 ; Claude Code opens the scratchpad root at startup; it may read the root itself
 ; (the projects' directory names), but nothing in them.
 (allow file-read*

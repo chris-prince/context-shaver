@@ -9,7 +9,12 @@
 #   BENCH_PROMPT       a file holding the turn's prompt
 #   BENCH_PATCH        a patch (git format-patch) committed on top, such as a
 #                      feature to try that's newer than BENCH_COMMIT (optional)
-#   BENCH_PROXY_PATCH  a patch for the scratch proxy's code only (optional)
+#   BENCH_PROXY_COMMIT the commit the scratch proxy runs (optional; by default
+#                      BENCH_COMMIT with BENCH_PATCH), such as one that reads a
+#                      newer policy format. Not for live runs, whose proxy is
+#                      the agent's own checkout.
+#   BENCH_PROXY_PATCH  a patch for the scratch proxy's code only, on top of
+#                      BENCH_PROXY_COMMIT if set (optional)
 #   BENCH_SETUP        a script that adds what the turn starts from to each
 #                      fresh run (optional), run as
 #                      BENCH_SETUP <run dir> <projects dir> <session id>.
@@ -44,36 +49,41 @@ done
 [[ -n $SLOT ]] || { echo "no free slot in /private/tmp/shaver-bench" >&2; exit 1; }
 W=/private/tmp/shaver-bench/run$SLOT
 RUN=$W/repo
+# The scratch proxy's code, outside $W so the run can't read it.
+PCODE=/private/tmp/shaver-bench/proxy$SLOT
 esc() { sed 's/[^A-Za-z0-9]/-/g' <<<"$1"; }
 PROJ=~/.claude/projects/$(esc "$RUN")
 PORT=$((P0 + 1)) DUMMY_PORT=$((P0 + 2))
 # A live run's proxy outlives claude -p, and may be one the agent restarted, so
-# stop whatever is on the port with the slot.
+# stop whatever is on the port with the slot, and the dummy upstream if the run
+# stopped early.
 done_slot() {
   lsof -tiTCP:$PORT -sTCP:LISTEN | xargs kill 2>/dev/null || true
+  kill $(cat "$W/dummy.pid" 2>/dev/null) 2>/dev/null || true
   rmdir /private/tmp/shaver-bench/slot$SLOT.lock
 }
 trap done_slot EXIT
 
-# A clone holding only BENCH_COMMIT and what it descends from, with the patch
+# A clone holding only the commit and what it descends from, with the patch
 # committed on top.
-checkout() { # <dir> [patch]
+checkout() { # <dir> <commit> [patch]
   git clone -q --no-local --no-tags --single-branch -b main "$REAL" "$1"
-  git -C "$1" reset -q --hard "$BENCH_COMMIT"
+  git -C "$1" reset -q --hard "$2"
   git -C "$1" remote remove origin
   git -C "$1" reflog expire --expire=now --all
   git -C "$1" gc -q --prune=now
-  [[ -z ${2:-} ]] || git -C "$1" am -q --committer-date-is-author-date "$2"
+  [[ -z ${3:-} ]] || git -C "$1" am -q --committer-date-is-author-date "$3"
 }
 
 fresh() { # <policy>
-  rm -rf "$W" "$PROJ"
+  rm -rf "$W" "$PCODE" "$PROJ"
   mkdir -p "$W" "$PROJ"
-  checkout "$RUN" "${BENCH_PATCH:-}"
+  checkout "$RUN" "$BENCH_COMMIT" "${BENCH_PATCH:-}"
   # The scratch proxy runs the code as of the turn's start, apart from the
-  # checkout the agent edits.
-  checkout "$W/proxy-code" "${BENCH_PATCH:-}"
-  [[ -z ${BENCH_PROXY_PATCH:-} ]] || git -C "$W/proxy-code" am -q "$BENCH_PROXY_PATCH"
+  # checkout the agent edits, unless BENCH_PROXY_COMMIT names other code.
+  if [[ -n ${BENCH_PROXY_COMMIT:-} ]]; then checkout "$PCODE" "$BENCH_PROXY_COMMIT"
+  else checkout "$PCODE" "$BENCH_COMMIT" "${BENCH_PATCH:-}"; fi
+  [[ -z ${BENCH_PROXY_PATCH:-} ]] || git -C "$PCODE" am -q "$BENCH_PROXY_PATCH"
   [[ -z ${BENCH_SETUP:-} ]] || "$BENCH_SETUP" "$W" "$PROJ" "$SID"
   [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${BENCH_PROXY_CONVO_KEY:-} && -f $PROJ/$SID.jsonl ]] && adopt "$1"
   return 0
@@ -86,10 +96,11 @@ fresh() { # <policy>
 adopt() { # <policy>
   local old=$BENCH_PROXY_CONVO_KEY
   cp "$PROJ/$SID.jsonl" "$W/transcript.tmp"
-  node "$B/dummy.mjs" $DUMMY_PORT & local dummy=$!
+  node "$B/dummy.mjs" $DUMMY_PORT & echo $! >"$W/dummy.pid"
   proxy "$W/probe" "$1" http://127.0.0.1:$DUMMY_PORT
   agent 'say hi' >/dev/null 2>&1 || true
-  kill "$(cat "$W/proxy.pid")" $dummy
+  kill "$(cat "$W/proxy.pid")" "$(cat "$W/dummy.pid")"
+  rm "$W/dummy.pid"
   local new=$(ls "$W/probe/logs")
   [[ $new == claude-$SID-main-???????? ]] || { echo "no conversation key from the probe: $new" >&2; exit 1; }
   mv "$W/transcript.tmp" "$PROJ/$SID.jsonl"
@@ -110,7 +121,7 @@ live_proxy() { # <policy>
 }
 
 proxy() { # <dir> <policy> [upstream]
-  "$W/proxy-code/bin/node-wrapper" "$W/proxy-code/src/server.ts" --port $PORT \
+  "$PCODE/bin/node-wrapper" "$PCODE/src/server.ts" --port $PORT \
     --dir "$1" --policy "$2" --log-step-events ${3:+--upstream "$3"} >"$W/proxy.log" 2>&1 &
   echo $! >"$W/proxy.pid"
   for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$PORT/" && return; sleep 0.1; done
@@ -123,7 +134,8 @@ agent() { # <prompt>
   local session=(--session-id $SID)
   [[ -f $PROJ/$SID.jsonl ]] && session=(--resume $SID)
   (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=http://127.0.0.1:$PORT ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} \
-    sandbox-exec -f "$B/sandbox.sb" -D REAL="$REAL" -D RUN="$W" \
+    sandbox-exec -f "$B/sandbox.sb" -D REAL="$REAL" -D RUN="$W" -D HOME="$HOME" \
+      -D BENCH=/private/tmp/shaver-bench \
       -D PROJECTS="$HOME/.claude/projects/$(esc "$REAL")" \
       -D SCRATCH="/private/tmp/claude-$(id -u)" -D OWN_SCRATCH="/private/tmp/claude-$(id -u)/$(esc "$RUN")" \
     claude -p "${session[@]}" --model claude-opus-5-5 --strict-mcp-config \
@@ -135,6 +147,7 @@ case $1 in
 run)
   name=$2 policy=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
   [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${DUMMY:-} ]] && { echo "DUMMY doesn't go with ALLOW_LIVE_TESTING" >&2; exit 1; }
+  [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${BENCH_PROXY_COMMIT:-} ]] && { echo "BENCH_PROXY_COMMIT doesn't go with ALLOW_LIVE_TESTING: a live run goes through a proxy the agent starts from its own checkout, at BENCH_COMMIT" >&2; exit 1; }
   fresh "$policy"
   before=$(git -C "$REAL" status --porcelain; git -C "$REAL" rev-parse HEAD)
   # MAX_TURNS=N stops the run after N turns, for a short quota test.
