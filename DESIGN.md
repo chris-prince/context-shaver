@@ -277,7 +277,9 @@ singular or plural whatever the count. `"after": "15000 tokens"` keeps the
 latest 15000 tokens of the kind: a rule is due to an item of a completed
 request once the items of its kind after it in completed requests hold that
 many tokens. Thinking counts at the tokens it billed, as the proxy recorded
-them (`thinking` in a session's state), other parts at 0.39 tokens a character.
+them (`thinking` in a session's state), and a Codex tool call, with its output,
+at the tokens Codex counted for it (`calls`); other parts at 0.39 tokens a
+character.
 Like any rule, it only makes an item eligible; the cache gate still decides
 whether trimming it pays. The strongest due rule wins, drop over stub. A kind with no rules
 is never trimmed.
