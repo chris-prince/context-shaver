@@ -2,13 +2,13 @@
 // kinds: `harness`), each sorted by how a trim or a summary should treat it:
 //
 // - latest: restates part of the current state, so a newer note with the same
-//   keys replaces it (the working directory, the date, a reminder).
+//   keys replaces it (the working directory, the date).
 // - forever: changes what the model can do or is told to do (tools added or
 //   removed, skills, instructions), so it is never trimmed or summarized away.
 // - tool: content the model can fetch again (a file attached or changed), like
 //   a tool's result.
 // - conversation: an event in the conversation (a background task done, a turn
-//   aborted), never trimmed and summarized with its turn.
+//   aborted, a reminder), never trimmed and summarized with its turn.
 // - unrecognized: under no heading below, treated as conversation, and shown
 //   by its first line (stats.ts) so it gets a heading.
 //
@@ -32,9 +32,11 @@ export const NOTES: Array<[string, string, Category]> = [
   // Claude Code
   ['# Environment update', 'environment-update', 'latest'],
   ['The date has changed', 'date-change', 'latest'],
-  ["The user hasn't heard from you", 'unheard-reminder', 'latest'],
+  // A nudge about one moment, spent once answered: kept, it would read as an
+  // instruction still to follow.
+  ["The user hasn't heard from you", 'unheard-reminder', 'conversation'],
   ['<total_tokens>', 'token-counter', 'latest'],
-  ["The task tools haven't been used recently", 'task-tools-reminder', 'latest'], // unseen
+  ["The task tools haven't been used recently", 'task-tools-reminder', 'conversation'], // unseen
   ['The user named this session', 'session-name', 'latest'],
   ['The following skills are available', 'skills', 'forever'],
   // Each lists every skill invoked so far, so the newest has the others.
