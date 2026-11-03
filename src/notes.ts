@@ -42,6 +42,7 @@ export const NOTES: Array<[string, string, Category]> = [
   ['The following deferred tools', 'deferred-tools', 'forever'],
   ['The following tools just became available', 'tools-added', 'forever'],
   ['The following tools are no longer available', 'tools-removed', 'forever'],
+  ['Definitions of the following tools were loaded earlier', 'tools-removed', 'forever'],
   ['The following tools have updated definitions', 'tools-updated', 'forever'],
   ['# MCP Server Instructions', 'mcp-instructions', 'forever'],
   ['While bypass permissions mode is active', 'permission-mode', 'forever'],

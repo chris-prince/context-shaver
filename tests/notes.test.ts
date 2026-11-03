@@ -51,6 +51,7 @@ const MORE = [
   'New skills are available:\n<skill><id>a</id></skill>',
   'The following skills have changed:\n<skill><id>a</id></skill>',
   'From here on, do not add attribution lines to commits.',
+  'Definitions of the following tools were loaded earlier in this conversation and their source has since been removed. Disregard those definitions:\n- Artifact',
 ]
 
 test('every heading has a sample that reads as its kind, alone and inside a reminder', () => {
