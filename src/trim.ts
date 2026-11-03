@@ -105,18 +105,76 @@ export type Applied = {
 // - Dropped reasoning is the message's thinking, unless that would leave it
 //   empty: an empty message is refused. One left empty by dropped calls is
 //   removed; the API joins the neighbours that leaves in the same role.
-export function apply(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock, conv: Conventions = CLAUDE_CODE): Applied {
-  return applyAt(msgs, policy, heldTo(clock, msgs), conv)
+//
+// `thinking` sizes reasoning for token rules (sizeOf).
+export function apply(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map()): Applied {
+  return applyAt(msgs, policy, heldTo(clock, msgs), conv, thinking)
 }
 
 // The messages trimmed as far as the policy ever takes them: every rule due.
-export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: PartRules, conv: Conventions = CLAUDE_CODE) => applyAt(msgs, policy, { requests: Infinity, turns: Infinity }, conv)
+export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: PartRules, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map()) =>
+  applyAt(msgs, policy, { requests: Infinity, turns: Infinity }, conv, thinking)
 
-function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Conventions): Applied {
+// Each item's tokens in the messages as they came: its blocks sized by sizeOf
+// (thinking at its recorded tokens), at TEXT_TOKENS a character. A tool call's
+// are its call and results, a skill's its body too, a Read's its text; where
+// its call and output were counted (Thinking, `call:`), they are that.
+//
+// TODO: revisit the fixed TEXT_TOKENS rate for parts the API didn't count (all
+// but thinking on Claude). Each response's usage gives the prompt's real tokens
+// (input + cache read + cache write); saving the previous response's rate,
+// (those tokens − thinking's) / (characters − thinking's), and using it here in
+// place of TEXT_TOKENS (which stays the fallback for a first request) would
+// size parts by their share of a known total.
+// Pro: fits the conversation's real tokens per character, so a dense one (code,
+// JSON, non-English) puts an "N tokens" boundary where it belongs; at the fixed
+// rate a 20% error moves a 15000-token boundary by about 3000 tokens.
+// Con: still splits by characters, so a dense part is undercounted against the
+// prose around it (only counts for each part, as Codex gives, fix that); the
+// rate comes a request late; one more value kept in state.
+function tokensOf(msgs: readonly ApiMsg[], items: ReadonlyMap<string, Item>, thinking: Thinking): Map<string, number> {
+  const out = new Map<string, number>()
+  const add = (id: unknown, chars: number) => items.has(String(id)) && out.set(String(id), (out.get(String(id)) ?? 0) + chars * TEXT_TOKENS)
+  msgs.forEach((m, i) => {
+    const bs = blocks(m)
+    if (m.role === 'system') {
+      let n = 0
+      for (const b of bs) if (b.type === 'text') for (const [read] of String(b.text).matchAll(READ)) add(`read:${i}:${n++}`, read.length)
+      return
+    }
+    const skill = bs.find((b) => b.type === 'tool_result' && items.get(String(b.tool_use_id))?.kind === 'skill')?.tool_use_id
+    for (const b of bs)
+      if (isThinking(b)) add(i, sizeOf(b, thinking))
+      else if (b.type === 'tool_use') add(b.id, sizeOf(b, thinking))
+      else if (b.type === 'tool_result') add(b.tool_use_id, sizeOf(b, thinking))
+      else if (skill !== undefined && isSkillBody(b)) add(skill, sizeOf(b, thinking))
+  })
+  for (const id of out.keys()) if (thinking.has(`call:${id}`)) out.set(id, thinking.get(`call:${id}`)!)
+  return out
+}
+
+// Each item's newer tokens at a clock: the tokens of the items of its kind
+// after it in completed requests, which token rules are timed by. Counting
+// only those keeps what a clock trims the same however the conversation goes
+// on, and more is due as the clock moves.
+function newerTokens(msgs: readonly ApiMsg[], items: ReadonlyMap<string, Item>, c: Clock, thinking: Thinking): Map<string, number> {
+  const tokens = tokensOf(msgs, items, thinking)
+  const sums = new Map<Kind, number>()
+  const out = new Map<string, number>()
+  for (const it of [...items.values()].reverse()) {
+    const n = sums.get(it.kind) ?? 0
+    out.set(it.id, n)
+    if (it.request && it.request <= c.requests) sums.set(it.kind, n + (tokens.get(it.id) ?? 0))
+  }
+  return out
+}
+
+function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Conventions, thinking: Thinking): Applied {
   const items = new Map(itemsOf(msgs, conv).map((it) => [it.id, it]))
+  const newer = newerTokens(msgs, items, c, thinking)
   const undroppable = new Set<unknown>()
   for (;;) {
-    const out = applyKeeping(msgs, policy, c, items, undroppable, conv)
+    const out = applyKeeping(msgs, policy, c, items, newer, undroppable, conv)
     const n = undroppable.size
     out.msgs.forEach((m, j) => {
       if (m.role !== 'system') return
@@ -135,11 +193,11 @@ function pairsOf(m: ApiMsg | undefined, to: Set<unknown>) {
     else if (b.type === 'tool_result') to.add(b.tool_use_id)
 }
 
-function applyKeeping(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, items: Map<string, Item>, undroppable: ReadonlySet<unknown>, conv: Conventions): Applied {
+function applyKeeping(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, items: Map<string, Item>, newer: ReadonlyMap<string, number>, undroppable: ReadonlySet<unknown>, conv: Conventions): Applied {
   const due = new Map<unknown, Action>()
   for (const it of items.values()) {
     const rules = policy[it.kind]
-    let a = treatment(rules, it, c)
+    let a = treatment(rules, it, c, newer.get(it.id))
     // A stub leaves every message where it was, so it is allowed where the drop
     // was refused.
     if (a === 'drop' && undroppable.has(it.id)) a = 'stub'
@@ -228,20 +286,24 @@ export function transitions(before: Applied, after: Applied): Record<string, num
 
 // Where trimming ends at a clock. Behind it, content has had at least its
 // first treatment.
-export function trimmedEnd(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock): Ends {
+// A token rule's reaches the request of the latest item it is due to.
+export function trimmedEnd(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map()): Ends {
   const c = heldTo(clock, msgs)
   const { requestOf } = requestsOf(msgs)
   const { turnOf } = turnsOf(msgs)
-  const end = (rules: PartRules[Kind]) =>
+  const items = new Map(itemsOf(msgs, conv).map((it) => [it.id, it]))
+  const newer = newerTokens(msgs, items, c, thinking)
+  const end = (kind: Kind) =>
     Math.max(
       0,
-      ...(rules ?? []).map((r) => {
+      ...(policy[kind] ?? []).map((r) => {
         const { on, wait } = afterOf(r)!
-        const [of, n] = on === 'request' ? [requestOf, c.requests - wait] : [turnOf, c.turns - wait]
+        const latest = () => [...items.values()].findLast((it) => it.kind === kind && it.request && it.request <= c.requests && newer.get(it.id)! >= wait)?.request ?? 0
+        const [of, n] = on === 'token' ? [requestOf, latest()] : on === 'request' ? [requestOf, c.requests - wait] : [turnOf, c.turns - wait]
         return n > 0 ? of.findIndex((x) => x > n) : 0
       }),
     )
-  return { tools: end(policy.tool), reasoning: end(policy.reasoning) }
+  return { tools: end('tool'), reasoning: end('reasoning') }
 }
 
 // --- When to move the applied clock. ---
@@ -265,7 +327,9 @@ export const K = 40
 // blocks the proxy saw generated; any other is put at SIGNATURE_TOKENS a
 // signature character. A block's size is its characters with a thinking block
 // counted as its tokens' worth of text, at TEXT_TOKENS a character (both
-// measured; local/notes.md, "Reasoning drops").
+// measured; local/notes.md, "Reasoning drops"). The map also holds the tokens
+// tool calls billed where the API counted them, by `call:` and the call's id,
+// which tokensOf takes in place of their size.
 export const TEXT_TOKENS = 0.39
 const SIGNATURE_TOKENS = 0.13
 export type Thinking = ReadonlyMap<string, number>

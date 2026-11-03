@@ -36,7 +36,7 @@ import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './c
 import { localHost, route } from './via.ts'
 import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
-import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision } from './trim.ts'
+import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { coveredBy, summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
@@ -73,12 +73,19 @@ const commit = (() => {
 // A conversation's applied clock; the cache entries its answered requests
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
 // tokens each thinking block it was answered with bills, by the signature's
-// hash (trim.ts, sizeOf); how many of its records it sends (summary.ts), how
-// many of those as the memoir, and the turn the last summary fork was offered
-// at; the skill rules its list was last shortened by, and when it took them.
-// Its stats, for `shaver info`, are in its journal.
+// hash (trim.ts, sizeOf); the tokens each tool call's call and output items
+// billed, by call id, where the API counted them (Codex; trim.ts, tokensOf);
+// how many of its records it sends (summary.ts), how many of those as the
+// memoir, and the turn the last summary fork was offered at; the skill rules
+// its list was last shortened by, and when it took them. Its stats, for
+// `shaver info`, are in its journal.
 type SkillList = { rules: SkillRule[]; at: number }
-type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList }
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; calls?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList }
+
+// The token counts trim.ts sizes items by: thinking by signature hash, and
+// tool calls by `call:` and their id (trim.ts, Thinking).
+const recordedOf = (s: State | undefined): Thinking =>
+  new Map([...Object.entries(s?.thinking ?? {}), ...Object.entries(s?.calls ?? {}).map(([id, n]) => [`call:${id}`, n] as const)])
 
 // The skill rules a conversation's list is shortened by: while its cache is
 // warm the ones it has, so new ones don't rewrite it, unless lines from
@@ -102,12 +109,13 @@ function load(key: string): State | undefined {
 // Two requests of a conversation can be in flight at once (a side request
 // beside the main loop), each with the state it loaded, so the entries and
 // thinking another saved meanwhile are kept: what one knows of the cache, the
-// other doesn't undo. The clock and the rest are the later request's.
+// other doesn't undo. The clock and the rest are the later request's. A call's
+// first count is kept: it was sent whole then, and may since be stubbed.
 function save(key: string, s: State): void {
   const was = load(key)
   const entries: Record<string, number> = {}
   for (const [h, t] of [...Object.entries(was?.entries ?? {}), ...Object.entries(s.entries ?? {})]) if (Date.now() - t <= ttlMs) entries[h] = Math.max(t, entries[h] ?? 0)
-  writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify({ ...s, entries, thinking: { ...was?.thinking, ...s.thinking } }))
+  writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify({ ...s, entries, thinking: { ...was?.thinking, ...s.thinking }, calls: { ...s.calls, ...was?.calls } }))
 }
 
 // A conversation's records (summary.ts), how many of the oldest the memoir
@@ -192,7 +200,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const skillList = skillListOf(s, live.size > 0, now)
   const { cut: skills, trimmed: skillsTrimmed } = skillList ? shaveSkills(body, skillList.rules) : { cut: 0 }
   const seed = seedOf(body.model, body.tools, body.system)
-  const thinking = new Map(Object.entries(s?.thinking ?? {}))
+  const thinking = recordedOf(s)
   // The records it sends, and how many of them as the memoir: as sent before,
   // and on a cold cache, all there are.
   const file = summaryAt ? loadSummaries(key) : undefined
@@ -201,7 +209,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const mergedBefore = Math.min(s?.merged ?? 0, before)
   let records = before
   let merged = mergedBefore
-  let keep = summarized(apply(msgs, parts, held, conv), msgs, chain.slice(0, records), merged)
+  let keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain.slice(0, records), merged)
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   const allMerged = Math.min(file?.merged ?? 0, chain.length)
   let covers: string[] | undefined
@@ -209,11 +217,11 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     if (records < chain.length) covers = coveredBy(keep, msgs, chain, records).map(keyOf)
     records = chain.length
     merged = allMerged
-    keep = summarized(apply(msgs, parts, held, conv), msgs, chain, merged)
+    keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain, merged)
   }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
-  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, parts, conv), msgs, chain.slice(0, records), merged).msgs, seed, thinking)
+  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, parts, conv, thinking), msgs, chain.slice(0, records), merged).msgs, seed, thinking)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
   const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
   const freed = spare > 0 ? undefined : freedSystem(body.system)
@@ -232,7 +240,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   let d: Decision | undefined
   const horizon = model.horizon(latestOf(key)?.requests ?? 0)
   if (clock.requests > held.requests || clock.turns > held.turns) {
-    next = summarized(apply(msgs, parts, clock, conv), msgs, chain.slice(0, records), merged)
+    next = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain.slice(0, records), merged)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
   }
@@ -244,7 +252,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const r = readThrough(pos, live, model.lookback)
   const touched = pos.filter((q, i) => q.breakpoint || (auto && !q.joined) || i === r).map((q) => q.prefix)
   // Where trimming ends in the messages as sent, which drops shorten.
-  const ends = trimmedEnd(msgs, parts, applied)
+  const ends = trimmedEnd(msgs, parts, applied, conv, thinking)
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
@@ -773,7 +781,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   record(journalOf(p.key), was.stats, next, u)
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
   const due = p.summaryFork && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList })
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList })
   if (due) void summarize(p, due, target, headers)
   if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }) })
 }

@@ -208,6 +208,9 @@ test("the API's usage per item counts the head, each message it counted all of, 
   n!.kinds.forEach((k, i) => assert.equal(k && Math.round(Object.values(k).reduce((a, b) => a + b, 0)), n!.messages[i]))
   assert.deepEqual(n!.kinds[1], { reasoning: 5, assistant: 6, toolCalls: 7 })
   assert.deepEqual([...n!.reasoning], [['enc', 5]])
+  // A call is counted only where its call and output both were.
+  assert.deepEqual([...n!.calls], [])
+  assert.deepEqual([...c.counted!(c.body.messages, { items: { ...items, i7: { input_tokens: 8 } } })!.calls], [['c1', 7 + 8]])
   assert.equal(c.counted!(c.body.messages, {}), undefined)
 })
 

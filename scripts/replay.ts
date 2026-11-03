@@ -165,15 +165,15 @@ function run(policy: PartRules | 'sent', actual?: PartRules): Run {
     } else {
       const held = heldTo(applied, msgs)
       const clock = clockOf(msgs)
-      const keep = apply(msgs, policy, held)
+      const keep = apply(msgs, policy, held, undefined, thinking)
       // The anchor, a breakpoint where the messages stop matching them settled,
       // as the proxy places it (server.ts).
-      const end = settledEnd(keep.msgs, fullyTrimmed(msgs, policy).msgs, 's', thinking)
+      const end = settledEnd(keep.msgs, fullyTrimmed(msgs, policy, undefined, thinking).msgs, 's', thinking)
       const reads = (m: ApiMsg[]) => { const ps = positionsOf(m, 's', thinking); return sz(ps.slice(0, readThrough(ps, live, model.lookback) + 1)) }
       const anchor = (m: ApiMsg[]) => { const x = anchored(m, end, 's', thinking); return reads(x) >= reads(m) ? x : m }
       body = anchor(keep.msgs)
       if (clock.requests > held.requests || clock.turns > held.turns) {
-        const next = apply(msgs, policy, clock)
+        const next = apply(msgs, policy, clock, undefined, thinking)
         const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', model, thinking, false, model.horizon(n))
         if (d.advanced) { body = anchor(next.msgs); applied = clock; if (d.savedChars) out.advanced++ }
       }

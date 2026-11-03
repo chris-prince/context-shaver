@@ -154,6 +154,41 @@ test('trimming ends where the furthest rule reaches', () => {
   assert.deepEqual(trimmedEnd(msgs, { ...committed, ...stubAll }, { requests: 9, turns: 9 }), { tools: 13, reasoning: 10 })
 })
 
+test('a token rule keeps the latest tokens of its kind in completed requests, and is due to what is older', () => {
+  // Each thinking block signed apart, billing a recorded 1000 tokens.
+  let n = 0
+  const signed = msgs.map((m) => (typeof m.content === 'string' ? m : { ...m, content: m.content.map((b) => (b.type === 'thinking' ? { ...b, signature: `sig${n++}` } : b)) }))
+  const thinking = new Map(Array.from({ length: n }, (_, i) => [hash(`sig${i}`), 1000]))
+  const p: PartRules = { reasoning: [{ action: 'drop', after: '2500 tokens' }] }
+  assert.deepEqual(afterOf(p.reasoning![0]), { on: 'token', wait: 2500 })
+  // Held to 5 completed requests: thinking at 1, 3, 6, 8 and 11 is in them, and
+  // what follows 1 and 3 holds over 2500 tokens; 13 is in the current request.
+  const a = apply(signed, p, { requests: 9, turns: 9 }, undefined, thinking)
+  assert.deepEqual(counts(a), { 'reasoning:drop': 2 })
+  assert.deepEqual(a.msgs[3].content, [{ type: 'text', text: 'answer 1' }])
+  assert.deepEqual(a.msgs.slice(4), signed.slice(4))
+  // Trimming ends where request 2, the latest dropped from, ends, as a request rule's would.
+  const end = trimmedEnd(signed, p, { requests: 9, turns: 9 }, undefined, thinking)
+  assert.deepEqual(end, trimmedEnd(signed, { reasoning: [{ action: 'drop', after: '3 requests' }] }, { requests: 9, turns: 9 }))
+  assert.deepEqual(end, { tools: 0, reasoning: 6 })
+  // Without the recorded counts, each block is too small to reach the limit.
+  assert.equal(apply(msgs, p, { requests: 9, turns: 9 }).treated.size, 0)
+  // Earlier, fewer completed requests follow, so less is due: at 3, thinking
+  // at 3 and 6 follows 1's, 2000 tokens; at 4, 8's too.
+  assert.equal(apply(signed, p, { requests: 3, turns: 1 }, undefined, thinking).treated.size, 0)
+  assert.deepEqual(counts(apply(signed, p, { requests: 4, turns: 1 }, undefined, thinking)), { 'reasoning:drop': 1 })
+})
+
+test("a tool call is sized for token rules by its recorded count, where there's one", () => {
+  const p: PartRules = { tool: [{ action: 'stub', after: '5000 tokens' }] }
+  // Estimated at about 1950 tokens each, the calls after the Write hold too
+  // little to make it due.
+  assert.equal(apply(msgs, p, { requests: 9, turns: 9 }).treated.size, 0)
+  // Recorded at 6000, the ls call makes both before it due.
+  const a = apply(msgs, p, { requests: 9, turns: 9 }, undefined, new Map([['call:toolu_3', 6000]]))
+  assert.deepEqual([...a.treated.keys()], ['toolu_1', 'toolu_2'])
+})
+
 test('stubs completed requests and drops completed turns\' thinking, never the latest', () => {
   const s = apply(msgs, stubAll, { requests: 9, turns: 5 }) // held to 5 requests, 2 turns
   // The current turn's result too: its request is completed.

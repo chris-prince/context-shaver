@@ -9,15 +9,18 @@ import type { SkillRule } from './skills.ts'
 
 export type Action = 'stub' | 'drop'
 // Due once the item's request (or turn) is among the completed ones, leaving
-// out the latest few: `after` is "4 requests" or "1 turn", the unit taken
+// out the latest few: `after` is "4 requests" or "1 turn"; or, with "15000
+// tokens", once its kind's parts after it hold that many tokens, so the latest
+// 15000 tokens of them are kept (trim.ts, newerTokens). The unit is taken
 // singular or plural whatever the count.
 type Rule = { action: Action; after: string }
-const AFTER = /^(\d+) (request|turn)s?$/
+type Unit = 'request' | 'turn' | 'token'
+const AFTER = /^(\d+) (request|turn|token)s?$/
 
 // A rule's `after` as its unit and count; none if it is neither.
-export function afterOf(r: Rule): { on: 'request' | 'turn'; wait: number } | undefined {
+export function afterOf(r: Rule): { on: Unit; wait: number } | undefined {
   const m = typeof r?.after === 'string' ? AFTER.exec(r.after) : null
-  return m ? { on: m[2] as 'request' | 'turn', wait: Number(m[1]) } : undefined
+  return m ? { on: m[2] as Unit, wait: Number(m[1]) } : undefined
 }
 // Of the user's and the assistant's text: `summary_threshold_tokens` is how
 // many tokens of completed turns a record leaves uncovered before the proxy
@@ -203,10 +206,12 @@ export function loadPolicy(file: string): Policy | undefined {
 }
 
 // What is due to an item at a clock: the strongest due rule's action, drop
-// over stub.
-export function treatment(rules: readonly Rule[] = [], it: Item, c: Clock): Action | undefined {
+// over stub. `newer` is the tokens of its kind's parts after it, at the clock.
+// A token rule reaches only completed requests, as the others do.
+export function treatment(rules: readonly Rule[] = [], it: Item, c: Clock, newer = 0): Action | undefined {
   const due = rules.filter((r) => {
     const { on, wait } = afterOf(r)!
+    if (on === 'token') return it.request && it.request <= c.requests && newer >= wait
     return on === 'request' ? it.request && it.request <= c.requests - wait : it.turn && it.turn <= c.turns - wait
   })
   return due.some((r) => r.action === 'drop') ? 'drop' : due.length ? 'stub' : undefined

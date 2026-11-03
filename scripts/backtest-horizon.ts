@@ -106,9 +106,11 @@ function rebuild(dir: string): Conv {
   const trims = new Map(lines.filter((e) => e.event === 'compaction').map((e) => [e.time, e]))
   const reqs = all.map((e, n) => ({ time: e.time, model: modelOf(e.model, e.provider), auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n] }))
   const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= since && e.time < until).length
-  // What each thinking block billed, as the proxy last saved it (server.ts, State).
+  // What each thinking block and counted tool call billed, as the proxy last
+  // saved it (server.ts, State and recordedOf).
   const state = path.join(root, 'proxy-data/state', path.basename(dir) + '.json')
-  const thinking: Thinking = new Map(Object.entries(existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')).thinking ?? {} : {}))
+  const saved = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : {}
+  const thinking: Thinking = new Map([...Object.entries<number>(saved.thinking ?? {}), ...Object.entries<number>(saved.calls ?? {}).map(([id, n]) => [`call:${id}`, n] as const)])
   const records = state.replace(/\.json$/, '.summaries.json')
   const chain: Summary[] = policy.summary_threshold_tokens && existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
   return { reqs, broken, logged, h: h && 'name' in h ? h : undefined, thinking, chain }
@@ -156,7 +158,7 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => nu
     const clock = clockOf(q.msgs)
     const chain = validChain(renumbered(all.filter((r) => r.time <= q.time), q.msgs), q.msgs)
     let records = Math.min(sentRecords, chain.length)
-    let keep = summarized(apply(q.msgs, policy, held, conv), q.msgs, chain.slice(0, records))
+    let keep = summarized(apply(q.msgs, policy, held, conv, thinking), q.msgs, chain.slice(0, records))
     const reads = (m: ApiMsg[]) => {
       const ps = positionsOf(m, 's', thinking, q.auto)
       return ps.slice(0, readThrough(ps, live, q.model.lookback) + 1).reduce((x, p) => x + p.size, 0)
@@ -164,10 +166,10 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => nu
     const cold = (m: ApiMsg[]) => { const ps = positionsOf(m, 's', thinking, q.auto); return ps.some((p) => p.breakpoint) && readThrough(ps, live, q.model.lookback) < 0 }
     if (records < chain.length && cold(keep.msgs)) {
       records = chain.length
-      keep = summarized(apply(q.msgs, policy, held, conv), q.msgs, chain)
+      keep = summarized(apply(q.msgs, policy, held, conv, thinking), q.msgs, chain)
     }
     sentRecords = records
-    const end = q.auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(q.msgs, policy, conv), q.msgs, chain.slice(0, records)).msgs, 's', thinking)
+    const end = q.auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(q.msgs, policy, conv, thinking), q.msgs, chain.slice(0, records)).msgs, 's', thinking)
     const anchor = (m: ApiMsg[]) => {
       if (q.auto) return m
       const x = anchored(m, end, 's', thinking)
@@ -175,7 +177,7 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => nu
     }
     let body = anchor(keep.msgs)
     if (horizon(n) >= 0 && (clock.requests > held.requests || clock.turns > held.turns)) {
-      const next = summarized(apply(q.msgs, policy, clock, conv), q.msgs, chain.slice(0, records))
+      const next = summarized(apply(q.msgs, policy, clock, conv, thinking), q.msgs, chain.slice(0, records))
       const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', q.model, thinking, q.auto, horizon(n))
       if (process.env.DEBUG_N === String(n) && trace) {
         const context: Record<string, number> = {}

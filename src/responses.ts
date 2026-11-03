@@ -158,6 +158,11 @@ export function canonical(wire: Record<string, unknown>): Wire {
     const rendered = msgs.map(renderMsg)
     const reasoning = new Map<string, number>()
     for (const it of rendered.flat()) if (it.type === 'reasoning' && typeof it.encrypted_content === 'string' && tokensOf(it) !== undefined) reasoning.set(it.encrypted_content, tokensOf(it)!)
+    // A call's tokens, its call item's and output's, where it counted all of them.
+    const byCall = new Map<string, Item[]>()
+    for (const it of rendered.flat()) if (typeof it.call_id === 'string') byCall.set(it.call_id, [...(byCall.get(it.call_id) ?? []), it])
+    const calls = new Map<string, number>()
+    for (const [id, its] of byCall) if (sum(its) !== undefined) calls.set(id, sum(its)!)
     // A message's tokens by kind, each item's as counted. An item is mostly of
     // one kind; one that mixes them, a prompt with a reminder say, is split by
     // bytes as log.ts splits a message, but with no envelope, the blocks'
@@ -174,7 +179,7 @@ export function canonical(wire: Record<string, unknown>): Wire {
       }
       return out
     }
-    return { head: sum(head), messages: rendered.map(sum), kinds: rendered.map(kindsOf), reasoning }
+    return { head: sum(head), messages: rendered.map(sum), kinds: rendered.map(kindsOf), reasoning, calls }
   }
   // The head and instructions as they came, but for the parts whose text the
   // core changed; every other item is sent as it came.

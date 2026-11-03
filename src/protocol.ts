@@ -107,9 +107,9 @@ export const openaiError = (status: number, message: string) => JSON.stringify({
 
 // What the API counted, from its usage per input item: the head's tokens and
 // each message's, where it counted every item of it, with those tokens by
-// kind (log.ts, kinds), and what each reasoning item sent back cost, by its
-// encrypted content.
-export type Counted = { head?: number; messages: Array<number | undefined>; kinds: Array<Record<string, number> | undefined>; reasoning: Map<string, number> }
+// kind (log.ts, kinds), what each reasoning item sent back cost, by its
+// encrypted content, and each tool call's call and output items, by call id.
+export type Counted = { head?: number; messages: Array<number | undefined>; kinds: Array<Record<string, number> | undefined>; reasoning: Map<string, number>; calls: Map<string, number> }
 
 export type Wire = { body: Canonical; render(c: Canonical): unknown; ids?: { head: string[]; of(m: ApiMsg): string[] }; counted?(msgs: readonly ApiMsg[], attribution: unknown): Counted | undefined }
 
