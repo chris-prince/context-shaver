@@ -27,6 +27,10 @@
 #                      /private/tmp/shaver-bench/results)
 #   BENCH_SCORER       a script that scores a finished run (optional), run as
 #                      BENCH_SCORER <results>/<name>/repo <results>/<name>
+#   BENCH_CLAUDE_COMMAND, BENCH_CODEX_COMMAND, BENCH_OPENCODE_COMMAND
+#                      how to run each harness on this machine, such as through
+#                      a gateway (optional). Each one set is passed to the agent
+#                      in its environment; the prompt says to use it.
 set -euo pipefail
 B=$(cd "$(dirname "$0")" && pwd)
 REAL=$(cd "$B/.." && pwd)
@@ -133,7 +137,11 @@ agent() { # <prompt>
   [[ -n ${ALLOW_LIVE_TESTING:-} ]] && deny=()
   local session=(--session-id $SID)
   [[ -f $PROJ/$SID.jsonl ]] && session=(--resume $SID)
-  (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=http://127.0.0.1:$PORT ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} \
+  local cmds=() v
+  for v in BENCH_CLAUDE_COMMAND BENCH_CODEX_COMMAND BENCH_OPENCODE_COMMAND; do
+    [[ -z ${!v:-} ]] || cmds+=("$v=${!v}")
+  done
+  (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=http://127.0.0.1:$PORT ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} ${cmds[@]+"${cmds[@]}"} \
     sandbox-exec -f "$B/sandbox.sb" -D REAL="$REAL" -D RUN="$W" -D HOME="$HOME" \
       -D BENCH=/private/tmp/shaver-bench \
       -D PROJECTS="$HOME/.claude/projects/$(esc "$REAL")" \
