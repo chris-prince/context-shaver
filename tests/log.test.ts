@@ -13,7 +13,7 @@ test("after a Codex compaction, its preamble messages are base by section and th
   assert.deepEqual(Object.keys(kinds(JSON.stringify(dev), dev, true).kinds), ['system:skills'])
   // A user message's envelope stays user, as with Claude Code's reminders.
   assert.deepEqual(Object.keys(kinds(JSON.stringify(env), env, true).kinds), ['system:other', 'user'])
-  assert.deepEqual(Object.keys(kinds(JSON.stringify(compaction), compaction, true).kinds), ['harness'])
+  assert.deepEqual(Object.keys(kinds(JSON.stringify(compaction), compaction, true).kinds), ['harness:conversation'])
 })
 
 test('injected content is system in the preamble and harness after it; the prompt is user', () => {
@@ -24,12 +24,12 @@ test('injected content is system in the preamble and harness after it; the promp
   assert.equal(pre.system, JSON.stringify(reminder).length)
   assert.equal(pre.system + pre.user, json.length)
   const later = kinds(json, m).kinds
-  assert.equal(later.harness, JSON.stringify(reminder).length)
+  assert.equal(later['harness:unrecognized'], JSON.stringify(reminder).length)
   assert.equal(later.system, undefined)
 
   const env: ApiMsg = { role: 'system', content: '# Environment' }
   assert.deepEqual(kinds(JSON.stringify(env), env, true).kinds, { 'system:other': JSON.stringify(env).length })
-  assert.deepEqual(kinds(JSON.stringify(env), env).kinds, { harness: JSON.stringify(env).length })
+  assert.deepEqual(kinds(JSON.stringify(env), env).kinds, { 'harness:unrecognized': JSON.stringify(env).length })
 
   // Tools surfaced mid-preamble come as non-text blocks; they are preamble too.
   const tool = { type: 'tool_addition', tool: { name: 'Docs' } }

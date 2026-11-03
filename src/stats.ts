@@ -15,7 +15,8 @@
 // thinking of the replies after it, so those are counted again, at their bytes
 // less the thinking.
 
-import { hash, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
+import { hash, isNote, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
+import { CATEGORIES, firstLine, notesOfBlock } from './notes.ts'
 import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Conventions } from './items.ts'
 import type { Cost } from './cost.ts'
 import { loaded as alwaysLoaded } from './defer.ts'
@@ -55,6 +56,9 @@ export type Sent = {
   // The keys of the parts the request before sent that the records it adds
   // replace (summary.ts, coveredBy); none before 2026-10-27.
   covers?: string[]
+  // The first lines of the notes after the preamble under no heading
+  // (notes.ts), which `shaver info` lists; none before 2026-11-03.
+  unrecognized?: string[]
 }
 
 export type Stats = {
@@ -73,6 +77,8 @@ export type Stats = {
   compacted?: boolean
   // The latest request's Sent.covers.
   covers?: string[]
+  // The latest request's Sent.unrecognized.
+  unrecognized?: string[]
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
@@ -153,6 +159,7 @@ export function describe(body: { model: string; provider?: string; messages: Api
         const name = s === 'system' ? 'system-prompt' : s.slice('system:'.length)
         sections[name] = (sections[name] ?? 0) + n
       }
+  const unrecognized = [...new Set(msgs.flatMap((m, i) => (responded >= 0 && i >= responded ? blocks(m).filter((b) => isNote(b, m)).flatMap(notesOfBlock) : []).filter((n) => n.category === 'unrecognized').map(firstLine)))]
   return {
     time,
     model: body.model,
@@ -162,6 +169,7 @@ export function describe(body: { model: string; provider?: string; messages: Api
     defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0), ...(always && { toolsAlways: inFull.reduce((n, t, i) => n + (alwaysLoaded(t, always) ? full[i].length : 0), 0) }), ...(Object.keys(sections).length && { sections }) },
     ends,
     advanced,
+    ...(unrecognized.length && { unrecognized }),
   }
 }
 
@@ -304,6 +312,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     suggestion: !!r.suggestion,
     ...(r.compacted && { compacted: true }),
     ...(r.covers && { covers: r.covers }),
+    ...(r.unrecognized && { unrecognized: r.unrecognized }),
     inputTokens,
     removedTokens,
     tokens: known,
@@ -346,7 +355,7 @@ function sharesOf(p: Stats['parts'][number], tokens: Record<string, number>): Ar
 // replace (Sent.covers), so its saving is net of what carrying them costs.
 export const BASE = ['tools-shaved', 'skills-shaved']
 export const SUMMARIES = 'summary+memoir'
-const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages', summary: SUMMARIES, memoir: SUMMARIES }
+const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'messages'])), summary: SUMMARIES, memoir: SUMMARIES }
 
 // What a request took out of the conversation, by type of trim: what
 // removedTokens added, a kind at a time. Given the stats before, as cost.ts
@@ -387,8 +396,8 @@ export function settled(s: Sent, tokens: Record<string, number>): number[] {
     return Object.entries(p.kinds).reduce((n, [kind, b]) => (inFrontier(kind, i, s.ends) ? n : n + ((tokens[p.key] ?? 0) * b) / bytes), 0)
   })
 }
-const LABELS: Record<string, string> = { harness: 'system-message' }
-const REST_TYPES = ['toolsLoaded', 'user', 'harness', 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'memoir', 'summary', 'other']
+const LABELS: Record<string, string> = { harness: 'system-message', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'sysmsg-' + { latest: 'save-latest', forever: 'save-forever', tool: 'like-tool', conversation: 'like-convo', unrecognized: 'unrecognized' }[c]])) }
+const REST_TYPES = ['toolsLoaded', 'user', 'harness', ...CATEGORIES.map((c) => 'harness:' + c), 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'memoir', 'summary', 'other']
 
 // A kind as the output shows it: renamed, if at all, then hyphen-cased.
 const label = (k: string) => LABELS[k] ?? k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())
@@ -538,7 +547,13 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const baseRows: Array<[string, number]> = [...toolRows.map((k): [string, number] => [k, by[k]]), ...Object.entries(sections).map(([k, v]): [string, number] => [renamed[k] ?? k, v])]
   for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by type:')
-  for (const k of [...REST_TYPES].sort(byLabel)) if (by[k]) out.push(row(label(k), by[k], total, 2))
+  // Unrecognized notes show even when none are carried, with their first
+  // lines, so a harness's new wording gets noticed (notes.ts).
+  for (const k of [...REST_TYPES].sort(byLabel)) {
+    const unrecognized = k === 'harness:unrecognized' && !by.harness
+    if (by[k] || unrecognized) out.push(row(label(k), by[k] ?? 0, total, 2))
+    if (unrecognized) for (const line of s.unrecognized ?? []) out.push(`        ${line}`)
+  }
   out.push('    by age:')
   if (byDay[0]) out.push(row('today', byDay[0], total, 2))
   for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => a - b)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))

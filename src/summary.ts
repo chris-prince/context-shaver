@@ -14,7 +14,8 @@
 // merged into the memoir: their arcs' titles by date, one line each.
 
 import { blocks, isPrompt, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg, type Block } from './items.ts'
-import { hash, preambleEnd } from './log.ts'
+import { hash, isNote, preambleEnd } from './log.ts'
+import { notesOfBlock, type Note } from './notes.ts'
 import { sizeOf, type Applied, type Thinking } from './trim.ts'
 
 // An arc of a record: the turn it starts at and its title, as the summary fork
@@ -52,22 +53,46 @@ export function startsOf(msgs: readonly ApiMsg[], chain: readonly Summary[]): nu
   return chain.map((_, k) => (k ? prompts[chain[k - 1].endsBefore - 1] : preambleEnd(msgs)))
 }
 
+// The harness's notes in covered messages that a record can't stand in for
+// (notes.ts): every forever one, and of the latest ones the newest for each
+// key, as one system message, or none. Only the covered messages decide, so
+// every request after sends the same. A block whose notes all stay is the
+// block itself, which the wire formats send back as they got it.
+export function keptNotes(covered: readonly ApiMsg[]): ApiMsg | undefined {
+  const found = covered.flatMap((m) => blocks(m).filter((b) => isNote(b, m)).map((b) => ({ b, notes: notesOfBlock(b) })))
+  const newest = new Map<string, Note>()
+  for (const { notes } of found) for (const n of notes) if (n.category === 'latest') for (const k of n.keys) newest.set(k, n)
+  const newestOf = new Set(newest.values())
+  const kept = found.flatMap(({ b, notes }): Block[] => {
+    const keep = notes.filter((n) => n.category === 'forever' || newestOf.has(n))
+    if (!keep.length) return []
+    if (keep.length === notes.length) return [b]
+    const text = keep.map((n) => n.text.replace(/\s*<\/system-reminder>\s*$/, '').trimEnd()).join('\n\n')
+    return [{ type: 'text', text: /^<system-reminder>/.test(String(b.text)) ? `<system-reminder>\n${text}\n</system-reminder>` : text }]
+  })
+  return kept.length ? { role: 'system', content: kept } : undefined
+}
+
 // The messages with everything from the preamble's end up to the last
 // record's end replaced by the records, one assistant message each, oldest
 // first. The messages before it (the preamble and the first prompt) stay. Assistant messages fit after them where a user one can't:
 // they can end with a system message, which the API refuses before a user one.
 // The first `merged` records go as one message, the memoir, before the rest.
+// The covered notes that stay (keptNotes) go first, as a system message,
+// which the harness's own come before an assistant one as.
 export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], merged = 0): Applied {
   if (!chain.length) return a
   const starts = startsOf(msgs, chain)
   const to = promptsOf(msgs)[chain.at(-1)!.endsBefore - 1]
   const out: Applied = { msgs: [], origin: [], treated: a.treated }
   const push = (text: string, k: number) => (out.msgs.push({ role: 'assistant', content: [{ type: 'text', text }] }), out.origin.push(starts[k]))
+  const notes = keptNotes(a.msgs.filter((_, j) => a.origin[j] >= starts[0] && a.origin[j] < to))
   let placed = false
   a.msgs.forEach((m, j) => {
     const i = a.origin[j]
     if (i >= starts[0] && i < to) return
     if (i >= to && !placed) {
+      if (notes) out.msgs.push(notes), out.origin.push(starts[0])
       if (merged) push(memoirOf(chain.slice(0, merged)), 0)
       chain.forEach((s, k) => k >= merged && push(`${SUMMARY_HEAD}\n\n${s.text}`, k))
       placed = true

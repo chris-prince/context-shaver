@@ -11,6 +11,7 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { isMemoir, isPrompt, isSkillBody, isSummary, type ApiMsg, type Block } from './items.ts'
+import { notesOfBlock } from './notes.ts'
 import { isStubbed, STUB } from './trim.ts'
 
 export const LOG_DIR = 'logs'
@@ -51,18 +52,20 @@ export function hash(s: string): string {
 // `system:agents-md` and the like, and the tools it adds there are
 // `system:deferred-tools-list`; text under no heading stays `system`. A system
 // message's own bytes join its first part.
-// Later ones (environment updates, reminders) are `harness`.
+// Later ones (environment updates, reminders) are `harness:<category>`, by
+// how notes.ts sorts each note in them (before 2026-11-03, `harness`).
 export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Record<string, number>; lineage?: string } {
   const out: Record<string, number> = {}
   const add = (k: string, n: number) => n && (out[k] = (out[k] ?? 0) + n)
   const injected = preamble ? 'system' : 'harness'
   const content = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content
   for (const b of content) {
-    const k = isCompaction(b) ? 'harness' : m.role === 'system' || isReminder(b) ? injected : kindOf(b, m.role)
+    const k = isCompaction(b) ? 'harness' : isNote(b, m) ? injected : kindOf(b, m.role)
     if (k === 'system' && b.type === 'text') for (const [s, n] of sections(b)) add(s, n)
+    else if (k === 'harness') for (const [s, n] of noteBytes(b)) add(s, n)
     else add(k === 'system' && b.type === 'tool_addition' ? 'system:deferred-tools-list' : k, JSON.stringify(b).length)
   }
-  const envelope = m.role !== 'system' ? (out.summary ? 'summary' : out.memoir ? 'memoir' : m.role) : preamble ? (Object.keys(out)[0] ?? injected) : injected
+  const envelope = m.role !== 'system' ? (out.summary ? 'summary' : out.memoir ? 'memoir' : m.role) : (Object.keys(out)[0] ?? injected)
   add(envelope, json.length - Object.values(out).reduce((a, b) => a + b, 0))
   const first = content.find((b) => b.type === 'tool_use' || b.type === 'tool_result')
   const id = first?.type === 'tool_use' ? first.id : first?.tool_use_id
@@ -123,6 +126,15 @@ export function sections(b: Block, headings = HEADINGS): Array<[string, number]>
   return out
 }
 
+// A note block's bytes by category (notes.ts), as `harness:<category>`; the
+// block's own JSON joins its first note.
+export function noteBytes(b: Block): Array<[string, number]> {
+  const out = notesOfBlock(b).map((n): [string, number] => ['harness:' + n.category, JSON.stringify(n.text).length - 2])
+  if (!out.length) return [['harness:unrecognized', JSON.stringify(b).length]]
+  out[0][1] += JSON.stringify(b).length - out.reduce((n, [, m]) => n + m, 0)
+  return out
+}
+
 // The index of the message that ends the preamble: the first response. After a
 // /compact Claude Code keeps the last exchange before the compact and puts the
 // preamble after it, with the first prompt, so when no message before the
@@ -146,6 +158,10 @@ export function preambleEnd(msgs: readonly ApiMsg[]): number {
 const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && ['<system-reminder>', ...CODEX_PREAMBLE].some((p) => (b.text as string).startsWith(p))
 // Codex's compaction item, which holds the history before it: conversation, not base.
 const isCompaction = (b: Block) => b.type === 'item' && (b.item as { type?: string } | undefined)?.type === 'compaction'
+
+// Whether a block is the harness's: a system message's, a reminder, or a
+// compaction item.
+export const isNote = (b: Block, m: ApiMsg) => isCompaction(b) || m.role === 'system' || isReminder(b)
 
 function kindOf(b: Block, role: string): string {
   switch (b.type) {

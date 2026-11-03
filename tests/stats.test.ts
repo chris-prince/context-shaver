@@ -89,7 +89,7 @@ test('render prints the stats from the state alone', () => {
   // Model m has no price, so there is no cost to break down.
   assert.match(out, /1 request across 1 turn, spanning 0m\n\nShaver Summary\n  Savings Breakdown\n    MISSING: Shaver lacks cost details for model m\.\n\nContext Details\n\n  1,000 tokens, actual\n  1,000 tokens, if no shaver\n\n  0 summary creation requests\n\n  Base/)
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. Above 15k\? Run `shaver optimize`\./)
-  assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by type:\n      user .*\n    by age:\n      today /)
+  assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by type:\n      sysmsg-unrecognized +0 .*\n      user .*\n    by age:\n      today /)
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
 })
 

@@ -90,6 +90,33 @@ test('records replace the turns they cover, after the base, and go when their pr
   assert.deepEqual(validChain([r1, r2], rewound), [r1])
 })
 
+test("records keep the covered notes a record can't stand in for, as a system message before them", () => {
+  const tools = { role: 'system', content: [{ type: 'tool_addition', tool: { name: 'Docs' } }] } as ApiMsg
+  const cwd = (dir: string) => `# Environment update\n - Primary working directory: ${dir}`
+  const older = { role: 'system', content: [{ type: 'text', text: cwd('/a') }] } as ApiMsg
+  const mixed = { type: 'text', text: `<system-reminder>\nNote: /a/x.ts changed on disk since you last read it.\n     1\tx\n\n${cwd('/b')}\n</system-reminder>` }
+  // A preamble with a heading, so the notes after it don't read as one
+  // re-sent after a /compact (log.ts, preambleEnd).
+  const msgs = session()
+  msgs[2] = { role: 'system', content: '# Environment\n - Primary working directory: /p' }
+  // Turn one's result is followed by the tools and the first move; turn two's
+  // carries the second, in a reminder with a file's change, which goes.
+  msgs.splice(5, 0, tools, older)
+  ;(msgs[10].content as object[]).push(mixed)
+  const f = summaryForkAt(msgs)!
+  const r = recordOf([{ type: 'text', text: 'two\nEnds before: [3]' }], f, 'now')!
+  const out = summarized(none(msgs), msgs, [r])
+  const kept = out.msgs[3]
+  assert.equal(kept.role, 'system')
+  // The tools' block is the one sent; the move to /b replaces the one to /a.
+  assert.equal((kept.content as object[])[0], tools.content[0])
+  assert.deepEqual((kept.content as object[]).slice(1), [{ type: 'text', text: `<system-reminder>\n${cwd('/b')}\n</system-reminder>` }])
+  assert.equal(out.msgs[4].role, 'assistant')
+  assert.equal(out.origin[3], out.origin[4])
+  // Covered turns without such notes leave nothing.
+  assert.equal(summarized(none(session()), session(), [recordOf([{ type: 'text', text: 'one\nEnds before: [2]' }], summaryForkAt(session())!, 'now')!]).msgs[3].role, 'assistant')
+})
+
 test('after a /compact, records keep the preamble Claude Code puts after the exchange it kept', () => {
   const kept: ApiMsg[] = [
     { role: 'user', content: 'This session is being continued' },
