@@ -3,14 +3,16 @@
 // The model's actions are held fixed: same requests, same outputs, so it can't
 // show a model fetching again what a trim took. WAIT, the step wait of the drop
 // policy the run used, also checks the rebuild: what the proxy sent should be
-// what that policy gives the rebuilt request at some clock.
-// Usage: [WAIT=<n>] bin/node-wrapper scripts/replay.ts proxy-data/logs/<conversation> [from ISO] [to ISO]
+// what that policy gives the rebuilt request at some clock. POLICY, a policy
+// file, adds its conversation rules to those priced, less its summaries, which
+// the replay doesn't make.
+// Usage: [WAIT=<n>] [POLICY=<file>] bin/node-wrapper scripts/replay.ts proxy-data/logs/<conversation> [from ISO] [to ISO]
 import { readFileSync } from 'node:fs'
 import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
-import { apply, decide, positionsOf, readThrough, TEXT_TOKENS, type Position } from '../src/trim.ts'
+import { anchored, apply, decide, fullyTrimmed, positionsOf, readThrough, settledEnd, TEXT_TOKENS, type Position } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
-import type { PartRules } from '../src/policy.ts'
+import { parsePolicy, type PartRules } from '../src/policy.ts'
 
 const [dir, from = '', to = '9999'] = process.argv.slice(2)
 const TTL = 3600e3
@@ -18,12 +20,13 @@ const all = readFileSync(dir + '/step_events.jsonl', 'utf8').trim().split('\n').
   .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.tools && !e.bare)
 const reqs = all.filter((e) => e.time >= from && e.time < to)
 const load = (h: string): ApiMsg => JSON.parse(readFileSync(`${dir}/parts/${h}.json`, 'utf8'))
-// A message as sent without breakpoints. Claude Code sends a lone text block
-// carrying one as an array, and as a string once the breakpoint moves on.
+// A message as sent without breakpoints, a lone text block as a string. Claude
+// Code sends one carrying a breakpoint as an array, and as a string once the
+// breakpoint moves on; the proxy's anchor can sit on either form.
 function strip(m: ApiMsg): ApiMsg {
   if (typeof m.content === 'string') return m
   const c = m.content
-  if (c.length === 1 && c[0].type === 'text' && c[0].cache_control && Object.keys(c[0]).length === 3) return { ...m, content: String(c[0].text) }
+  if (c.length === 1 && c[0].type === 'text' && Object.keys(c[0]).every((k) => k === 'type' || k === 'text' || k === 'cache_control')) return { ...m, content: String(c[0].text) }
   return { ...m, content: c.map(({ cache_control, ...b }) => b as Block) }
 }
 const same = (x: ApiMsg, y: ApiMsg) => JSON.stringify(strip(x)) === JSON.stringify(strip(y))
@@ -97,12 +100,12 @@ function defsSize(e: { system: Def[]; tools: Def[] }, msgs: ApiMsg[]): number {
 // the window's first request instead, by filtering `all` to [from, to) as
 // `reqs` is. That request's messages then carry earlier assistant parts, so the
 // base would be shared by bytes with them rather than with the preamble alone,
-// a close estimate rather than an exact count, and the checks below would say
-// so rather than throw.
+// a close estimate rather than an exact count, as the checks below warn of a
+// conversation logged from partway through.
 const sig = (e: { system: (Def & { hash: string })[]; tools: (Def & { hash: string })[] }) =>
   JSON.stringify([e.system.map((d) => d.hash), e.tools.filter((t) => !t.deferred).map((t) => t.hash)])
-if (all[0].parts.some((p: { part: string }) => p.part === 'assistant')) throw new Error(`${dir} was logged from partway through, so its base has no exact count`)
-if (all.some((e) => sig(e) !== sig(all[0]))) throw new Error(`${dir} sent other system blocks or tools than its first request, so its base has no exact count`)
+if (all[0].parts.some((p: { part: string }) => p.part === 'assistant')) console.log(`warning: ${dir} was logged from partway through, so its base has no exact count`)
+if (all.some((e) => sig(e) !== sig(all[0]))) console.log(`warning: ${dir} sent other system blocks or tools than its first request, so its base has no exact count`)
 const kindsOf = (p: { hash: string; part: string; bytes: number }): Record<string, number> => {
   try { return JSON.parse(readFileSync(`${dir}/parts/${p.hash}.kinds.json`, 'utf8')).kinds ?? { [p.part]: p.bytes } } catch { return { [p.part]: p.bytes } }
 }
@@ -163,11 +166,16 @@ function run(policy: PartRules | 'sent', actual?: PartRules): Run {
       const held = heldTo(applied, msgs)
       const clock = clockOf(msgs)
       const keep = apply(msgs, policy, held)
-      body = keep.msgs
+      // The anchor, a breakpoint where the messages stop matching them settled,
+      // as the proxy places it (server.ts).
+      const end = settledEnd(keep.msgs, fullyTrimmed(msgs, policy).msgs, 's', thinking)
+      const reads = (m: ApiMsg[]) => { const ps = positionsOf(m, 's', thinking); return sz(ps.slice(0, readThrough(ps, live, model.lookback) + 1)) }
+      const anchor = (m: ApiMsg[]) => { const x = anchored(m, end, 's', thinking); return reads(x) >= reads(m) ? x : m }
+      body = anchor(keep.msgs)
       if (clock.requests > held.requests || clock.turns > held.turns) {
         const next = apply(msgs, policy, clock)
-        const d = decide(keep.msgs, next.msgs, live, 's', model, thinking)
-        if (d.advanced) { body = next.msgs; applied = clock; if (d.savedChars) out.advanced++ }
+        const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', model, thinking, false, model.horizon(n))
+        if (d.advanced) { body = anchor(next.msgs); applied = clock; if (d.savedChars) out.advanced++ }
       }
     }
     const pos = positionsOf(body, 's', thinking)
@@ -196,3 +204,7 @@ if (actualWait) console.log(`  rebuilt requests the real policy doesn't reproduc
 fmt('no trimming', run({}))
 for (const w of [2, 4, 8, 16]) fmt(`drop wait ${w}`, run(pol(w)))
 fmt('8 + 2 turns', run({ ...pol(8), tool: [{ action: 'drop', after: '8 requests' }, { action: 'drop', after: '2 turns' }] }))
+if (process.env.POLICY) {
+  const { user_and_assistant_text, ...rules } = parsePolicy(JSON.parse(readFileSync(process.env.POLICY, 'utf8'))).conversation_shaver_rules ?? {}
+  fmt('POLICY', run(rules))
+}
