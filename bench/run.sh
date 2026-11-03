@@ -31,6 +31,12 @@
 #                      how to run each harness on this machine, such as through
 #                      a gateway (optional). Each one set is passed to the agent
 #                      in its environment; the prompt says to use it.
+#   BENCH_TEST_HARNESSES
+#                      harnesses the agent may run to test its work, such as
+#                      codex,opencode (optional). Each gets a home in the run,
+#                      with its config and skills but none of its history,
+#                      signed in through the real auth file.
+# The agent also gets BENCH_AGENT_PORT, a port it may run a proxy of its own on.
 set -euo pipefail
 B=$(cd "$(dirname "$0")" && pwd)
 REAL=$(cd "$B/.." && pwd)
@@ -42,7 +48,7 @@ SID=$(uuidgen | tr A-Z a-z)
 # Each run takes a free slot N, so runs can go at once: its own directory,
 # outside the real repo so the run doesn't load its instruction files, and the
 # ten ports from 8800+10N: +1 the proxy the run goes through, +2 the dummy
-# upstream.
+# upstream, +3 BENCH_AGENT_PORT.
 mkdir -p /private/tmp/shaver-bench
 for SLOT in $(seq 0 9); do
   P0=$((8800 + 10 * SLOT))
@@ -57,13 +63,15 @@ RUN=$W/repo
 PCODE=/private/tmp/shaver-bench/proxy$SLOT
 esc() { sed 's/[^A-Za-z0-9]/-/g' <<<"$1"; }
 PROJ=~/.claude/projects/$(esc "$RUN")
-PORT=$((P0 + 1)) DUMMY_PORT=$((P0 + 2))
+PORT=$((P0 + 1)) DUMMY_PORT=$((P0 + 2)) AGENT_PORT=$((P0 + 3))
 # A live run's proxy outlives claude -p, and may be one the agent restarted, so
-# stop whatever is on the port with the slot, and the dummy upstream if the run
-# stopped early.
+# stop whatever is on the port with the slot, and on the agent's own port, and
+# the dummy upstream if the run stopped early.
 done_slot() {
   lsof -tiTCP:$PORT -sTCP:LISTEN | xargs kill 2>/dev/null || true
+  lsof -tiTCP:$AGENT_PORT -sTCP:LISTEN | xargs kill 2>/dev/null || true
   kill $(cat "$W/dummy.pid" 2>/dev/null) 2>/dev/null || true
+  unhome
   rmdir /private/tmp/shaver-bench/slot$SLOT.lock
 }
 trap done_slot EXIT
@@ -79,6 +87,46 @@ checkout() { # <dir> <commit> [patch]
   [[ -z ${3:-} ]] || git -C "$1" am -q --committer-date-is-author-date "$3"
 }
 
+# Each test harness runs through $W/bin/<name>, which points it at its home in
+# $W/home/<name>; the sandbox keeps it out of its real data.
+homes() {
+  local h real
+  for h in ${BENCH_TEST_HARNESSES//,/ }; do
+    real=$(command -v "$h") || { echo "BENCH_TEST_HARNESSES: no $h on PATH" >&2; exit 1; }
+    mkdir -p "$W/bin" "$W/home/$h"
+    case $h in
+      codex)
+        local f
+        for f in config.toml rules skills plugins; do
+          [[ ! -e ~/.codex/$f ]] || cp -cR ~/.codex/$f "$W/home/codex/"
+        done
+        ln -s ~/.codex/auth.json "$W/home/codex/auth.json"
+        printf '#!/bin/bash\nCODEX_HOME=%q exec %q "$@"\n' "$W/home/codex" "$real" >"$W/bin/codex" ;;
+      opencode)
+        # --standalone, as the background service runs outside the sandbox
+        # (and on a fixed port), and service.json holds that service's
+        # password. Sign-ins are in opencode.db with the history, so the run
+        # gets its own database holding only them.
+        mkdir -p "$W/home/opencode/config" "$W/home/opencode/data" "$W/home/opencode/state"
+        cp -cR ~/.config/opencode "$W/home/opencode/config/"
+        rm -f "$W/home/opencode/config/opencode/service.json"
+        printf '#!/bin/bash\nXDG_CONFIG_HOME=%q XDG_DATA_HOME=%q XDG_STATE_HOME=%q exec %q --standalone "$@"\n' \
+          "$W/home/opencode/config" "$W/home/opencode/data" "$W/home/opencode/state" "$real" >"$W/bin/opencode"
+        chmod +x "$W/bin/opencode"
+        (cd "$RUN" && "$W/bin/opencode" auth list >/dev/null)
+        local t sql="ATTACH '$HOME/.local/share/opencode/opencode.db' AS real;"
+        for t in credential account account_state control_account; do sql+="INSERT INTO $t SELECT * FROM real.$t;"; done
+        sqlite3 "$W/home/opencode/data/opencode/opencode.db" "$sql" ;;
+      *) echo "BENCH_TEST_HARNESSES: $h isn't codex or opencode" >&2; exit 1 ;;
+    esac
+    chmod +x "$W/bin/$h"
+  done
+}
+
+# The homes hold copies of the user's config and sign-ins, so they don't
+# outlive the run; the agent's proxy has recorded the test harnesses' requests.
+unhome() { rm -rf "$W/home" "$W/bin"; }
+
 fresh() { # <policy>
   rm -rf "$W" "$PCODE" "$PROJ"
   mkdir -p "$W" "$PROJ"
@@ -88,6 +136,7 @@ fresh() { # <policy>
   if [[ -n ${BENCH_PROXY_COMMIT:-} ]]; then checkout "$PCODE" "$BENCH_PROXY_COMMIT"
   else checkout "$PCODE" "$BENCH_COMMIT" "${BENCH_PATCH:-}"; fi
   [[ -z ${BENCH_PROXY_PATCH:-} ]] || git -C "$PCODE" am -q "$BENCH_PROXY_PATCH"
+  homes
   [[ -z ${BENCH_SETUP:-} ]] || "$BENCH_SETUP" "$W" "$PROJ" "$SID"
   [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${BENCH_PROXY_CONVO_KEY:-} && -f $PROJ/$SID.jsonl ]] && adopt "$1"
   return 0
@@ -137,10 +186,11 @@ agent() { # <prompt>
   [[ -n ${ALLOW_LIVE_TESTING:-} ]] && deny=()
   local session=(--session-id $SID)
   [[ -f $PROJ/$SID.jsonl ]] && session=(--resume $SID)
-  local cmds=() v
+  local cmds=(BENCH_AGENT_PORT=$AGENT_PORT) v
   for v in BENCH_CLAUDE_COMMAND BENCH_CODEX_COMMAND BENCH_OPENCODE_COMMAND; do
     [[ -z ${!v:-} ]] || cmds+=("$v=${!v}")
   done
+  [[ ! -d $W/bin ]] || cmds+=("PATH=$W/bin:$PATH")
   (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=http://127.0.0.1:$PORT ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} ${cmds[@]+"${cmds[@]}"} \
     sandbox-exec -f "$B/sandbox.sb" -D REAL="$REAL" -D RUN="$W" -D HOME="$HOME" \
       -D BENCH=/private/tmp/shaver-bench \
@@ -180,6 +230,7 @@ run)
   [[ $before == "$after" ]] || echo "WARNING: the real repo changed during the run" >&2
   mkdir -p "$RESULTS"
   rm -rf "$RESULTS/$name"
+  unhome
   mv "$W" "$RESULTS/$name"
   [[ ! -f $PROJ/$SID.jsonl ]] || cp "$PROJ/$SID.jsonl" "$RESULTS/$name/transcript.jsonl"
   echo "results in $RESULTS/$name"

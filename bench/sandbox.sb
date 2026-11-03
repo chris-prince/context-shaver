@@ -11,15 +11,23 @@
   (subpath (param "BENCH"))
   (subpath (string-append (param "HOME") "/.codex"))
   (subpath (string-append (param "HOME") "/.local/share/opencode"))
-  (subpath (string-append (param "HOME") "/.config/opencode")))
+  (subpath (string-append (param "HOME") "/.config/opencode"))
+  (subpath (string-append (param "HOME") "/.local/state/opencode")))
+; Codex's binary, and its auth file, which a test Codex signs in with (and may
+; refresh).
 (allow file-read* file-write*
   (subpath (param "RUN"))
   (subpath (param "OWN_SCRATCH"))
-  (subpath (string-append (param "HOME") "/.codex/packages")))
+  (subpath (string-append (param "HOME") "/.codex/packages"))
+  (literal (string-append (param "HOME") "/.codex/auth.json")))
 ; Claude Code opens the scratchpad root at startup; it may read the root itself
 ; (the projects' directory names), but nothing in them.
 (allow file-read*
   (literal (param "SCRATCH")))
+; Resolving a path in the run (as Codex does with its home) looks at each
+; directory above it.
+(allow file-read-metadata
+  (literal (param "BENCH")))
 ; The proxy on run-proxy's default port: a run's own proxy must never reach it,
 ; and run-proxy restarts a proxy from another checkout that it finds on its port.
 (deny network-outbound (remote ip "localhost:18787"))
