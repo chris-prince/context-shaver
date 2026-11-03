@@ -249,7 +249,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
   // A record takes its turns' prompts out of the messages; the stats count them still.
-  const described = { ...describe(body, trimmed, time, d?.advanced || records > before || merged > mergedBefore, conv), turns: msgs.filter(isPrompt).length }
+  const described = { ...describe(body, trimmed, time, d?.advanced || records > before || merged > mergedBefore, conv, h?.alwaysLoaded), turns: msgs.filter(isPrompt).length }
   if (deferred + dropped) described.defs.deferred = deferred + dropped
   if (skills) described.defs.skills = skills
   if (skillsTrimmed) splitShaved(described, skillsTrimmed)
@@ -335,7 +335,7 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   const applied = Math.min(load(key)?.summarized ?? 0, valid)
   const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
   const summaryRequests = { applied, pending, dropped: requests - applied - pending }
-  const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS)
+  const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS, h?.alwaysLoaded)
   if (trimmed) splitShaved(described, trimmed)
   const text = s ? render(s, key, false, withSummaryForks, summaryRequests) : render(estimate(described), key, true, withSummaryForks, summaryRequests)
   const warning = missed ? `\n\nshaver: since it started, the journal missed ${countOf(missed, 'request')}; see proxy.log` : ''

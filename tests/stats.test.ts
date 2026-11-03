@@ -105,6 +105,35 @@ test('Base lists the system prompt, the tools and the preamble\'s sections, by n
   assert.deepEqual(base, ['    other', '    skills', '    system-prompt', '    tools'])
 })
 
+test("Base splits the tools in full into those the harness always loads and the rest, for every harness; unknown, they stay one row", () => {
+  const rowsOf = (s: Stats) => Object.fromEntries(render(s, 'session').split('\n\n').find((b) => b.startsWith('  Base'))!.split('\n').slice(2).map((l) => [l.trim().split(/ +/)[0], Number(l.match(/([\d,]+) +\(/)![1].replace(/,/g, ''))]))
+  const desc = (d: string) => 'x'.repeat(d === 'big' ? 3000 : 1000)
+  const tools = [
+    { name: 'Bash', description: desc('big') },
+    { name: 'WebFetch', description: desc('') },
+    { name: 'Agent', description: desc(''), defer_loading: true },
+    { name: 'functions.exec', description: desc('') },
+    { type: 'tool_search', description: desc('') },
+  ]
+  const req = (always?: readonly string[]) => observe(undefined, describe({ model: 'm', messages: [{ role: 'user', content: 'hi' }], system: 'sys', tools }, ends, '2026-10-11T10:00:00Z', false, undefined, always), 4000, 0)
+  // Claude Code: Bash; a deferred tool counts in neither.
+  const claude = req(['ToolSearch', 'Skill', 'Bash', 'Edit', 'Read', 'Write'])
+  assert.equal(claude.defs.toolsAlways, JSON.stringify(tools[0]).length + JSON.stringify(tools[4]).length)
+  const rows = rowsOf(claude)
+  const bytes = (ts: object[]) => ts.reduce((n, t) => n + JSON.stringify(t).length, 0)
+  const ratio = bytes([tools[0], tools[4]]) / bytes([tools[1], tools[3]])
+  assert.ok(Math.abs(rows['tools-always-loaded'] / rows['tools-optional'] - ratio) < 0.01 && !('tools' in rows), JSON.stringify(rows))
+  // Codex: its exec, and the tool_search type whatever its name.
+  assert.equal(req(['functions.exec', 'functions.wait']).defs.toolsAlways, JSON.stringify(tools[3]).length + JSON.stringify(tools[4]).length)
+  // OpenCode keeps none loaded but the search type; unknown, no split.
+  assert.equal(req([]).defs.toolsAlways, JSON.stringify(tools[4]).length)
+  const unknown = rowsOf(req())
+  assert.ok(unknown.tools > 0 && !('tools-optional' in unknown))
+  // The rows add up to the base either way.
+  const total = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a + b, 0)
+  assert.ok(Math.abs(total(rows) - total(unknown)) <= 2)
+})
+
 test("Base shows the skills the proxy shortened as skills-shaved, Claude Code's from the preamble and Codex's from the system", () => {
   const baseOf = (s: Stats) => Object.fromEntries(render(s, 'session').split('\n\n').find((b) => b.startsWith('  Base'))!.split('\n').slice(2).map((l) => [l.trim().split(/ +/)[0], Number(l.match(/([\d,]+) +\(/)![1].replace(/,/g, ''))]))
   // Claude Code's system has a skills section of its own, which stays.

@@ -18,6 +18,7 @@
 import { hash, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
 import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Conventions } from './items.ts'
 import type { Cost } from './cost.ts'
+import { loaded as alwaysLoaded } from './defer.ts'
 import { modelOf } from './models.ts'
 
 export type Tool = { type?: string; name?: string; defer_loading?: boolean }
@@ -35,8 +36,11 @@ export type Sent = {
   // the tool definitions the proxy deferred (defer.ts) and `skills` those it
   // took off the skill list (skills.ts), which the base would hold without it.
   // Before 2026-10-21 `deferred` held both. `shaves` hashes the tool and
-  // skill rules it was sent with; none before 2026-10-29.
-  defs: { key: string; systemPrompt: number; tools: number; sections?: Record<string, number>; deferred?: number; skills?: number; shaves?: { tools: string; skills: string } }
+  // skill rules it was sent with; none before 2026-10-29. `toolsAlways` is the
+  // bytes of the tools sent in full that the harness always keeps loaded
+  // (Harness.alwaysLoaded), which no rule defers or drops; none with no
+  // harness known, or before 2026-11-03.
+  defs: { key: string; systemPrompt: number; tools: number; toolsAlways?: number; sections?: Record<string, number>; deferred?: number; skills?: number; shaves?: { tools: string; skills: string } }
   ends: { tools: number; reasoning: number }
   // Whether the proxy advanced its trim on this request.
   advanced: boolean
@@ -125,7 +129,7 @@ function referenced(m: ApiMsg): string[] {
   return out
 }
 
-export function describe(body: { model: string; provider?: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[] }, ends: Sent['ends'], time: string, advanced = false, conv: Conventions = CLAUDE_CODE): Sent {
+export function describe(body: { model: string; provider?: string; messages: ApiMsg[]; system?: unknown; tools?: Tool[] }, ends: Sent['ends'], time: string, advanced = false, conv: Conventions = CLAUDE_CODE, always?: readonly string[]): Sent {
   const msgs = body.messages
   const responded = preambleEnd(msgs)
   const tools = body.tools ?? []
@@ -139,7 +143,8 @@ export function describe(body: { model: string; provider?: string; messages: Api
     return { key: keyOf(m), bytes: json.length + loaded, kinds, lineage: k.lineage, role: m.role, thinking: thinking.length ? JSON.stringify(thinking).length : 0 }
   })
   const system: unknown[] = typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : Array.isArray(body.system) ? body.system : []
-  const full = tools.filter((t) => !t.defer_loading).map((t) => JSON.stringify(t))
+  const inFull = tools.filter((t) => !t.defer_loading)
+  const full = inFull.map((t) => JSON.stringify(t))
   const sys = system.map((s) => JSON.stringify(s))
   const sections: Record<string, number> = {}
   if (conv.promptHeadings.length)
@@ -154,7 +159,7 @@ export function describe(body: { model: string; provider?: string; messages: Api
     ...(body.provider && { provider: body.provider }),
     turns: msgs.filter(isPrompt).length,
     parts,
-    defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0), ...(Object.keys(sections).length && { sections }) },
+    defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0), ...(always && { toolsAlways: inFull.reduce((n, t, i) => n + (alwaysLoaded(t, always) ? full[i].length : 0), 0) }), ...(Object.keys(sections).length && { sections }) },
     ends,
     advanced,
   }
@@ -487,7 +492,14 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const fixed = s.tokens[s.defs.key] ?? 0
   const defBytes = s.defs.systemPrompt + s.defs.tools
   add('systemPrompt', (fixed * s.defs.systemPrompt) / defBytes)
-  add('tools', (fixed * s.defs.tools) / defBytes)
+  // The tools always loaded apart from the rest, which rules can defer or drop,
+  // when the harness was known.
+  const always = s.defs.toolsAlways
+  if (always === undefined) add('tools', (fixed * s.defs.tools) / defBytes)
+  else {
+    add('tools-always-loaded', (fixed * always) / defBytes)
+    add('tools-optional', (fixed * (s.defs.tools - always)) / defBytes)
+  }
   for (const [name, n] of Object.entries(s.defs.sections ?? { 'system-prompt': s.defs.systemPrompt })) sections[name] = (sections[name] ?? 0) + (fixed * n) / defBytes
 
   const ref = day(s.time)
@@ -509,7 +521,8 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
       }
     }
   })
-  const base = (by.systemPrompt ?? 0) + (by.tools ?? 0) + (by.preamble ?? 0)
+  const toolRows = ['tools', 'tools-always-loaded', 'tools-optional'].filter((k) => k in by)
+  const base = (by.systemPrompt ?? 0) + toolRows.reduce((n, k) => n + by[k], 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
   const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost)] : unpriced(s, estimated))]
@@ -522,7 +535,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   // side.
   // Stats saved before 2026-10-29 name two sections differently.
   const renamed: Record<string, string> = { 'skills-trimmed': 'skills-shaved', 'tools-deferred': 'deferred-tools-list' }
-  const baseRows: Array<[string, number]> = [['tools', by.tools ?? 0], ...Object.entries(sections).map(([k, v]): [string, number] => [renamed[k] ?? k, v])]
+  const baseRows: Array<[string, number]> = [...toolRows.map((k): [string, number] => [k, by[k]]), ...Object.entries(sections).map(([k, v]): [string, number] => [renamed[k] ?? k, v])]
   for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by type:')
   for (const k of [...REST_TYPES].sort(byLabel)) if (by[k]) out.push(row(label(k), by[k], total, 2))

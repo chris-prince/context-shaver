@@ -36,7 +36,7 @@ export const toolListMessage = (body: Body): number => (body.messages ?? []).fin
 
 // The tools never deferred, whatever the rules say: a search tool, and those
 // the harness always keeps loaded (`always`, Harness.alwaysLoaded).
-const loaded = (t: { type?: string; name?: string }, always: readonly string[]) => t.type === 'tool_search' || always.includes(t.name ?? '')
+export const loaded = (t: { type?: string; name?: string }, always: readonly string[]) => t.type === 'tool_search' || always.includes(t.name ?? '')
 
 // The tools sent in full that `rules` would defer.
 export const deferrable = (body: Body, rules: readonly ToolRule[], always: readonly string[]): string[] =>
