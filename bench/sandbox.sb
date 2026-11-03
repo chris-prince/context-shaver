@@ -1,25 +1,31 @@
 (version 1)
 (allow default)
 ; Nothing the run could look ahead in: the real repo (and so this benchmark and
-; anything kept beside it), this project's real transcripts, every Claude Code
-; scratchpad, the bench's other runs, results and proxy code, and Codex's and
-; OpenCode's own data, outside the run's own directory and its own scratchpad.
+; anything kept beside it), this project's real transcripts, /private/tmp (and
+; so every Claude Code scratchpad, and the bench's other runs, results and proxy
+; code), and Codex's and OpenCode's own data, outside the run's own directory
+; (where its TMPDIR is) and its own scratchpad. The user's temp directory stays
+; open, so a run can read the user's temp files and other runs' mktemp files:
+; on some macOS versions mktemp uses it whatever TMPDIR says, and the xcrun
+; stubs (/usr/bin/git, /usr/bin/python3) cache there. Blocking it breaks mktemp
+; and adds errors to the agent's tool output, which it spends requests on.
 (deny file-read* file-write*
   (subpath (param "REAL"))
   (subpath (param "PROJECTS"))
-  (subpath (param "SCRATCH"))
-  (subpath (param "BENCH"))
+  (subpath "/private/tmp")
   (subpath (string-append (param "HOME") "/.codex"))
   (subpath (string-append (param "HOME") "/.local/share/opencode"))
   (subpath (string-append (param "HOME") "/.config/opencode"))
   (subpath (string-append (param "HOME") "/.local/state/opencode")))
 ; Codex's binary, and its auth file, which a test Codex signs in with (and may
-; refresh).
+; refresh). Claude Code's Bash tool writes its working directory to a file in
+; /private/tmp after each command, whatever TMPDIR says.
 (allow file-read* file-write*
   (subpath (param "RUN"))
   (subpath (param "OWN_SCRATCH"))
   (subpath (string-append (param "HOME") "/.codex/packages"))
-  (literal (string-append (param "HOME") "/.codex/auth.json")))
+  (literal (string-append (param "HOME") "/.codex/auth.json"))
+  (regex #"^/private/tmp/claude-[0-9a-f]+-cwd$"))
 ; Claude Code opens the scratchpad root at startup; it may read the root itself
 ; (the projects' directory names), but nothing in them.
 (allow file-read*
@@ -27,7 +33,12 @@
 ; Resolving a path in the run (as Codex does with its home) looks at each
 ; directory above it.
 (allow file-read-metadata
+  (literal "/private/tmp")
   (literal (param "BENCH")))
 ; The proxy on run-proxy's default port: a run's own proxy must never reach it,
 ; and run-proxy restarts a proxy from another checkout that it finds on its port.
 (deny network-outbound (remote ip "localhost:18787"))
+; No signals to anything outside the run, such as another run's processes or
+; the user's: a pkill matching another run's command line would stop it.
+(deny signal)
+(allow signal (target same-sandbox))

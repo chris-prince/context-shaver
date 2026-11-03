@@ -41,10 +41,28 @@
 #                      codex,opencode (optional). Each gets a home in the run,
 #                      with its config and skills but none of its history,
 #                      signed in through the real auth file.
-# The agent also gets BENCH_AGENT_PORT, a port it may run a proxy of its own on.
+#   BENCH_FIRST_REQUEST_TIMEOUT
+#                      seconds to wait for the run's first request to reach the
+#                      scratch proxy before stopping it (default 180)
+# The agent also gets BENCH_AGENT_PORT, a port it may run a proxy of its own on,
+# and TMPDIR, a temp directory of the run's own.
+#
+# How this machine runs the harnesses (the BENCH_*_COMMAND settings,
+# BENCH_CLAUDE_UPSTREAM, and a PATH that finds the right claude) can go in a
+# file of VAR=value lines named by BENCH_LOCAL_ENV, loaded at the start of every
+# run. A value already set, such as a task's or one given on the command line,
+# wins, except PATH, which the file may build on as PATH=…:$PATH.
 set -euo pipefail
 B=$(cd "$(dirname "$0")" && pwd)
 REAL=$(cd "$B/.." && pwd)
+LOCAL_ENV=${BENCH_LOCAL_ENV:-}
+if [[ -n $LOCAL_ENV ]]; then
+  [[ -f $LOCAL_ENV ]] || { echo "BENCH_LOCAL_ENV: no file $LOCAL_ENV" >&2; exit 1; }
+  while IFS= read -r -d '' kv; do
+    n=${kv%%=*}
+    [[ -n ${!n+x} && $n != PATH ]] || export "$kv"
+  done < <(bash -c 'set -a; . "$1"; env -0' _ "$LOCAL_ENV")
+fi
 : "${BENCH_COMMIT:?}" "${BENCH_PROMPT:?}"
 RESULTS=${BENCH_RESULTS:-/private/tmp/shaver-bench/results}
 # A fresh session ID for each run, so a run never shares one with the session
@@ -134,7 +152,7 @@ unhome() { rm -rf "$W/home" "$W/bin"; }
 
 fresh() { # <policy>
   rm -rf "$W" "$PCODE" "$PROJ"
-  mkdir -p "$W" "$PROJ"
+  mkdir -p "$W/tmp" "$PROJ"
   checkout "$RUN" "$BENCH_COMMIT" "${BENCH_PATCH:-}"
   # The scratch proxy runs the code as of the turn's start, apart from the
   # checkout the agent edits, unless BENCH_PROXY_COMMIT names other code.
@@ -200,15 +218,25 @@ agent() { # <prompt>
   local base=http://127.0.0.1:$PORT
   [[ -z ${BENCH_CLAUDE_UPSTREAM:-} || -n ${DUMMY:-} || -n ${probing:-} ]] ||
     base+=/via/$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$BENCH_CLAUDE_UPSTREAM")
-  (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=$base ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} ${cmds[@]+"${cmds[@]}"} \
+  # The prompt goes on stdin, out of process listings, where a pkill -f or ps
+  # pattern could match it.
+  (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=$base TMPDIR=$W/tmp ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} ${cmds[@]+"${cmds[@]}"} \
     sandbox-exec -f "$B/sandbox.sb" -D REAL="$REAL" -D RUN="$W" -D HOME="$HOME" \
       -D BENCH=/private/tmp/shaver-bench \
       -D PROJECTS="$HOME/.claude/projects/$(esc "$REAL")" \
       -D SCRATCH="/private/tmp/claude-$(id -u)" -D OWN_SCRATCH="/private/tmp/claude-$(id -u)/$(esc "$RUN")" \
     claude -p "${session[@]}" --model claude-opus-5-5 --strict-mcp-config \
       ${MAX_TURNS:+--max-turns $MAX_TURNS} --permission-mode bypassPermissions ${deny[@]+"${deny[@]}"} \
-      --output-format stream-json --verbose "$1")
+      --output-format stream-json --verbose <<<"$1")
 }
+
+# True once the proxy has logged one of the run's requests, and with DUMMY=1
+# once the dummy upstream has had one.
+reached() {
+  [[ -n $(find "$W/proxy/logs" -newer "$W/start" -type f 2>/dev/null | head -1) ]] &&
+    [[ -z ${DUMMY:-} || -n $(ls "$W/bodies") ]]
+}
+kill_tree() { local c; for c in $(pgrep -P "$1"); do kill_tree "$c"; done; kill "$1" 2>/dev/null || true; }
 
 case $1 in
 run)
@@ -234,7 +262,19 @@ run)
   else proxy "$W/proxy" "$policy" $up; fi
   start=$(date +%s)
   date -u +%Y-%m-%dT%H:%M:%S >"$W/start"
-  agent "${PROMPT:-$(cat "$BENCH_PROMPT")}" >"$W/agent.jsonl" 2>"$W/agent.err" || true
+  # A run whose requests go around the proxy (a launcher that sets its own base
+  # URL, or another claude on PATH) measures nothing, and one stuck before its
+  # first request would wait out any outer timeout, so either fails the run.
+  agent "${PROMPT:-$(cat "$BENCH_PROMPT")}" >"$W/agent.jsonl" 2>"$W/agent.err" &
+  apid=$! limit=${BENCH_FIRST_REQUEST_TIMEOUT:-180} waited=0
+  while kill -0 $apid 2>/dev/null && ! reached; do
+    ((waited++ < limit)) || { kill_tree $apid; break; }
+    sleep 1
+  done
+  wait $apid || true
+  bypass=
+  reached || bypass="no request reached the scratch proxy$( ((waited <= limit)) || echo " in $limit s"); check PATH (claude is $(command -v claude)) and BENCH_CLAUDE_UPSTREAM"
+  [[ -z $bypass ]] || echo "$bypass" >>"$W/agent.err"
   echo "seconds $(( $(date +%s) - start ))" >"$W/time"
   kill $(cat "$W/dummy.pid" 2>/dev/null) 2>/dev/null || true
   lsof -tiTCP:$PORT -sTCP:LISTEN | xargs kill 2>/dev/null || true
@@ -246,6 +286,7 @@ run)
   mv "$W" "$RESULTS/$name"
   [[ ! -f $PROJ/$SID.jsonl ]] || cp "$PROJ/$SID.jsonl" "$RESULTS/$name/transcript.jsonl"
   echo "results in $RESULTS/$name"
+  [[ -z $bypass ]] || { echo "FAILED: $bypass" >&2; exit 1; }
   [[ -z ${BENCH_SCORER:-} || -n ${DUMMY:-} ]] || "$BENCH_SCORER" "$RESULTS/$name/repo" "$RESULTS/$name"
   ;;
 esac
