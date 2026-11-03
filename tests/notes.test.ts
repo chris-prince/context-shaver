@@ -12,7 +12,7 @@ const SAMPLES: Record<string, string> = {
   'task-tools-reminder': "The task tools haven't been used recently. If you're working on tasks that would benefit from tracking progress, consider using TaskCreate.",
   'session-name': 'The user named this session "finances". This may indicate what they are working on.',
   skills: 'The following skills are available for use with the Skill tool:\n\n- dataviz: Create charts',
-  'skills-invoked': 'The following skills were invoked EARLIER in this session (before the conversation was compacted), not on the current turn.',
+  'skills-reread':'The following skills were invoked EARLIER in this session (before the conversation was compacted), not on the current turn.',
   'agent-types': 'Available agent types for the Agent tool:\n- claude: Catch-all',
   'deferred-tools': 'The following deferred tools are now available via ToolSearch.\nAgent\nMonitor',
   'tools-added': 'The following tools just became available and are ready to use:\nmcp__docs__batch',
@@ -87,6 +87,11 @@ test('an environment update is keyed by the fields it sets, and the date by one 
   const [update] = notesOf('# Environment update\n - Primary working directory: /p (was /q)\n - The scratchpad directory announced earlier is no longer available')
   assert.deepEqual(update.keys, ['primary working directory', 'scratchpad directory'])
   assert.deepEqual(notesOf(SAMPLES['date-change'])[0].keys, notesOf(SAMPLES.date)[0].keys)
+})
+
+test('an instructions re-read is keyed by the files it gives, present or gone', () => {
+  const [reread] = notesOf(`${SAMPLES['instructions-reread']}:\n\nContents of /p/AGENTS.md (project instructions, checked into the codebase):\n\n# p\n\nInstructions no longer present: /m/MEMORY.md`)
+  assert.deepEqual(reread.keys, ['instructions /p/AGENTS.md', 'instructions /m/MEMORY.md'])
 })
 
 test('blocks that are not text are one note each', () => {

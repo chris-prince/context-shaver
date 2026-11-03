@@ -37,7 +37,8 @@ export const NOTES: Array<[string, string, Category]> = [
   ["The task tools haven't been used recently", 'task-tools-reminder', 'latest'], // unseen
   ['The user named this session', 'session-name', 'latest'],
   ['The following skills are available', 'skills', 'forever'],
-  ['The following skills were invoked EARLIER', 'skills-invoked', 'forever'],
+  // Each lists every skill invoked so far, so the newest has the others.
+  ['The following skills were invoked EARLIER', 'skills-reread', 'latest'],
   ['Available agent types', 'agent-types', 'forever'],
   ['The following deferred tools', 'deferred-tools', 'forever'],
   ['The following tools just became available', 'tools-added', 'forever'],
@@ -48,7 +49,8 @@ export const NOTES: Array<[string, string, Category]> = [
   ['While bypass permissions mode is active', 'permission-mode', 'forever'],
   ['Codebase and user instructions', 'agents-md', 'forever'],
   ['Contents of .*/memory/MEMORY\\.md', 'memory', 'forever'],
-  ['Instruction files were re-read', 'instructions-reread', 'forever'],
+  // Only the files that changed, each replacing its earlier copy: keyed by file.
+  ['Instruction files were re-read', 'instructions-reread', 'latest'],
   ['The session context was re-read', 'session-reread', 'latest'],
   ['As you answer the user', 'guidance', 'forever'],
   ['Attribution for git commits', 'git-attribution', 'forever'],
@@ -88,6 +90,16 @@ function fieldsOf(text: string): string[] {
   return out.length ? out : ['environment-update']
 }
 
+// The files an instructions re-read gives, as keys: each `Contents of <path>
+// (…):` one, and each `Instructions no longer present: <path>` one.
+function filesOf(text: string): string[] {
+  const out = [...text.matchAll(/^(?:Contents of (.+?) \(.*\):|Instructions no longer present: (.+))$/gm)].map((m) => 'instructions ' + (m[1] ?? m[2]).trim())
+  return out.length ? out : ['instructions-reread']
+}
+
+const keysOf = (kind: string, text: string) =>
+  kind === 'environment-update' ? fieldsOf(text) : kind === 'instructions-reread' ? filesOf(text) : [kind === 'date-change' ? 'date' : kind]
+
 // A note text's notes, in order, their texts joined giving it back (less a
 // <system-reminder> wrapper's opening). Text before the first heading is a
 // note of its own, unrecognized.
@@ -105,7 +117,7 @@ export function notesOf(text: string): Note[] {
   else starts.unshift([0, 'unrecognized', 'unrecognized'])
   return starts.map(([at, kind, category], i) => {
     const t = body.slice(at, starts[i + 1]?.[0])
-    return { kind, category, text: t, keys: kind === 'environment-update' ? fieldsOf(t) : [kind === 'date-change' ? 'date' : kind] }
+    return { kind, category, text: t, keys: keysOf(kind, t) }
   })
 }
 
