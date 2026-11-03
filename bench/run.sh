@@ -27,6 +27,11 @@
 #                      /private/tmp/shaver-bench/results)
 #   BENCH_SCORER       a script that scores a finished run (optional), run as
 #                      BENCH_SCORER <results>/<name>/repo <results>/<name>
+#   BENCH_CLAUDE_UPSTREAM
+#                      the base URL the benchmarked Claude's requests go on to,
+#                      such as a gateway (optional; default the proxy's own).
+#                      Sent by /via/, so live runs' proxies honor it too, and
+#                      passed to the agent, for BENCH_CLAUDE_COMMAND to use.
 #   BENCH_CLAUDE_COMMAND, BENCH_CODEX_COMMAND, BENCH_OPENCODE_COMMAND
 #                      how to run each harness on this machine, such as through
 #                      a gateway (optional). Each one set is passed to the agent
@@ -147,7 +152,7 @@ fresh() { # <policy>
 # through the dummy upstream gets: everything the proxy keeps per conversation
 # is named for its key, wherever it is. The resume's turn is undone.
 adopt() { # <policy>
-  local old=$BENCH_PROXY_CONVO_KEY
+  local old=$BENCH_PROXY_CONVO_KEY probing=1
   cp "$PROJ/$SID.jsonl" "$W/transcript.tmp"
   node "$B/dummy.mjs" $DUMMY_PORT & echo $! >"$W/dummy.pid"
   proxy "$W/probe" "$1" http://127.0.0.1:$DUMMY_PORT
@@ -187,11 +192,15 @@ agent() { # <prompt>
   local session=(--session-id $SID)
   [[ -f $PROJ/$SID.jsonl ]] && session=(--resume $SID)
   local cmds=(BENCH_AGENT_PORT=$AGENT_PORT) v
-  for v in BENCH_CLAUDE_COMMAND BENCH_CODEX_COMMAND BENCH_OPENCODE_COMMAND; do
+  for v in BENCH_CLAUDE_UPSTREAM BENCH_CLAUDE_COMMAND BENCH_CODEX_COMMAND BENCH_OPENCODE_COMMAND; do
     [[ -z ${!v:-} ]] || cmds+=("$v=${!v}")
   done
   [[ ! -d $W/bin ]] || cmds+=("PATH=$W/bin:$PATH")
-  (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=http://127.0.0.1:$PORT ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} ${cmds[@]+"${cmds[@]}"} \
+  # The dummy upstream and adopt()'s probe answer here, so they skip /via/.
+  local base=http://127.0.0.1:$PORT
+  [[ -z ${BENCH_CLAUDE_UPSTREAM:-} || -n ${DUMMY:-} || -n ${probing:-} ]] ||
+    base+=/via/$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$BENCH_CLAUDE_UPSTREAM")
+  (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=$base ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} ${cmds[@]+"${cmds[@]}"} \
     sandbox-exec -f "$B/sandbox.sb" -D REAL="$REAL" -D RUN="$W" -D HOME="$HOME" \
       -D BENCH=/private/tmp/shaver-bench \
       -D PROJECTS="$HOME/.claude/projects/$(esc "$REAL")" \
@@ -217,9 +226,12 @@ run)
   # request without reaching the API.
   [[ -n ${DUMMY:-} ]] && { mkdir "$W/bodies"; node "$B/dummy.mjs" $DUMMY_PORT "$W/bodies" & echo $! >"$W/dummy.pid"; }
   # The proxy starts empty: what the turn starts from is in the checkout's
-  # proxy-data, as the task's data.
+  # proxy-data, as the task's data. Its own upstream is the gateway too, for
+  # what Claude Code sends to the base URL's origin, which drops /via/.
+  up=${BENCH_CLAUDE_UPSTREAM:-}
+  [[ -z ${DUMMY:-} ]] || up=http://127.0.0.1:$DUMMY_PORT
   if [[ -n ${ALLOW_LIVE_TESTING:-} ]]; then live_proxy "$policy"
-  else proxy "$W/proxy" "$policy" ${DUMMY:+http://127.0.0.1:$DUMMY_PORT}; fi
+  else proxy "$W/proxy" "$policy" $up; fi
   start=$(date +%s)
   date -u +%Y-%m-%dT%H:%M:%S >"$W/start"
   agent "${PROMPT:-$(cat "$BENCH_PROMPT")}" >"$W/agent.jsonl" 2>"$W/agent.err" || true
