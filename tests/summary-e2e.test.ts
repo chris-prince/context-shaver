@@ -108,7 +108,9 @@ test('each summary fork logs how it went, and each request why it sent none', as
     const dropped = all.filter((l) => l.event === 'summary-dropped')
     assert.deepEqual(dropped.map((l) => [l.index, l.dropped, l.endsBefore]), [[0, 1, 3]])
     // The proxy's log says the same, and the records file keeps the last failure.
-    assert.match(err, /turns 1-2: failed at status/)
+    assert.match(err, /turns 1-2: failed at status: Error, status 500, at /)
+    // Nothing the upstream or the model wrote reaches it.
+    assert.doesNotMatch(err, /boom|read them/)
     assert.match(err, /turns 1-3: rejected, no-ends-before, 20 output tokens, stopped: max_tokens/)
     assert.match(err, /turns 1-4: recorded, ends before \[3\]/)
     assert.match(err, /1 of 1 no longer fit, from record 1, which ends before \[3\]: that turn's prompt changed/)

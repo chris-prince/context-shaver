@@ -893,6 +893,18 @@ async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>,
   return { text, usage }
 }
 
+// A summary fork's error for proxy.log, with nothing of the conversation: an
+// upstream's error body or a parser's message can quote what it was sent or
+// couldn't read, so only the error's name, its code, the status, and where in
+// the code it was thrown. The whole error goes to the step events.
+function bare(err: unknown): string {
+  if (!(err instanceof Error)) return typeof err
+  const code = (err as { code?: unknown }).code ?? (err.cause as { code?: unknown } | undefined)?.code
+  const status = (err as Partial<Staged>).stage === 'status' ? /^\d{3}/.exec(err.message)?.[0] : undefined
+  const frame = err.stack?.split('\n').find((l) => /^\s+at /.test(l))?.trim()
+  return [err.name, typeof code === 'string' && code, status && `status ${status}`, frame].filter(Boolean).join(', ')
+}
+
 // Saves the last summary fork of a conversation that gave no record.
 function failedFork(key: string, failed: NonNullable<Forks['failed']>): void {
   writeFileSync(summariesOf(key), JSON.stringify({ ...loadSummaries(key), failed }))
@@ -973,7 +985,7 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     const at = (err as Partial<Staged>).stage ?? stage
     const body = (err as Partial<Staged>).body ?? answer
     const error = String((err instanceof Error && err.stack) || err)
-    console.error(`${what} failed at ${at}: ${error}`)
+    console.error(`${what} failed at ${at}: ${bare(err)}`)
     try {
       failedFork(key, { time, outcome: 'failed', reason: at })
     } catch (e) {

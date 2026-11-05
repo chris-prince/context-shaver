@@ -685,6 +685,9 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
 
 Whether logging is on or not, `proxy-data/proxy.log` gets a line for each
 summary fork's outcome, and for each way a conversation's records break.
+These lines hold no conversation content: a failure gives only the error's
+name, code, status and the code location it was thrown at, since an upstream's
+error body or a parser's message can quote what it was sent.
 
 Scripts:
 
