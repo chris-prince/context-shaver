@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { conversationId, harnessOf, type Harness } from '../src/harness.ts'
+import { conversationId, harnessOf, loggedHeaders, type Harness } from '../src/harness.ts'
 import { canonical as chat } from '../src/chat.ts'
 import { canonical as responses } from '../src/responses.ts'
 import { withoutPending } from '../src/command.ts'
@@ -18,6 +18,29 @@ test("without one, it is the harness whose headers the request sends", () => {
   assert.equal(of(undefined, { 'x-codex-window-id': 'w' })?.name, 'codex')
   assert.equal(of(undefined, { 'x-opencode-client': 'cli' })?.name, 'opencode')
   assert.equal(of(undefined, { 'user-agent': 'opencode/2.0.30', 'x-session-id': 's' }), undefined)
+})
+
+test('the headers say which requests are side requests, where they know', () => {
+  const claude = of('claude')!
+  const cls = (c: string) => claude.side!({ 'x-claude-code-request-class': c })
+  assert.deepEqual(['main', 'subagent', 'workflow'].map(cls), [false, false, false])
+  assert.deepEqual(['compaction', 'auxiliary', 'side_reply'].map(cls), [true, true, true])
+  // A class not known yet, or none, leaves it to the wording.
+  assert.equal(cls('something_new'), undefined)
+  assert.equal(claude.side!({}), undefined)
+  const codex = of('codex')!
+  const kind = (k: string) => codex.side!({ 'x-codex-turn-metadata': JSON.stringify({ request_kind: k, turn_id: 't' }) })
+  assert.deepEqual([kind('turn'), kind('compaction'), kind('other')], [false, true, undefined])
+  assert.equal(codex.side!({}), undefined)
+  assert.equal(codex.side!({ 'x-codex-turn-metadata': 'not json' }), undefined)
+  assert.equal(of('opencode')!.side, undefined)
+})
+
+test("a harness's own headers are logged, but those that may carry a secret", () => {
+  assert.deepEqual(loggedHeaders(of('claude')!, { 'x-claude-code-request-class': 'main', 'x-claude-code-signature': 's', 'x-claude-code-session-id': 'a', authorization: 'k', 'x-codex-window-id': 'w' }), { 'x-claude-code-request-class': 'main', 'x-claude-code-session-id': 'a' })
+  assert.deepEqual(loggedHeaders(of('codex')!, { 'x-codex-turn-metadata': '{}', 'x-openai-subagent': 'review', 'x-openai-api-key': 'k' }), { 'x-codex-turn-metadata': '{}', 'x-openai-subagent': 'review' })
+  assert.deepEqual(loggedHeaders(of('opencode')!, { 'x-opencode-session-id': 's', 'x-opencode-ticket': 't' }), { 'x-opencode-session-id': 's' })
+  assert.equal(loggedHeaders(of('opencode')!, { 'user-agent': 'x' }), undefined)
 })
 
 test("a Claude Code conversation's id is its session, agent and first message", () => {

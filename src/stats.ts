@@ -47,7 +47,8 @@ export type Sent = {
   advanced: boolean
   // The seconds its breakpoints asked the cache to keep it (trim.ts, markedTtl).
   ttl?: number
-  // Whether it is Claude Code's prompt suggestion (isSuggestion).
+  // Whether it is a side request on the conversation, as Claude Code's prompt
+  // suggestion (isSideRequest); named for that, the first one known.
   suggestion?: boolean
   // Whether the client compacted its conversation since the request before
   // (harness.ts, resends). What it keeps, the base, the user's messages and a
@@ -185,22 +186,32 @@ export function tokensOf(s: Stats, base: Sent, variant: Sent): number | undefine
   return counted(variant.defs.key, size(variant.defs), base.defs.key, size(base.defs)) + variant.parts.reduce((n, p, i) => n + counted(p.key, p.bytes, base.parts[i].key, base.parts[i].bytes), 0)
 }
 
-// Whether a request is Claude Code's prompt suggestion: the conversation so far
-// and a last message asking what the user will type next. It sends one after a
-// reply, interactively, with no header to tell it apart. Its cost and any trim
-// it makes count, but not it as a request or its message as a turn the user
-// took.
-export function isSuggestion(msgs: readonly ApiMsg[]): boolean {
+// How Claude Code's side requests that copy the conversation open the ask they
+// add (its prompt suggestion, its recap for a user coming back), for a request
+// whose headers don't say what kind it is.
+const SIDE_ASKS = ['[SUGGESTION MODE:', 'The user stepped away and is coming back.']
+
+// Whether a request is a side request on the conversation: the conversation so
+// far and a last message with an ask of the harness's own, as Claude Code's
+// prompt suggestion, its recap and its compaction, or Codex's compaction. The
+// harness's headers say so where they can (`side`, harness.ts); otherwise the
+// ask's opening words do. Its cost and any trim it makes count, but not it as
+// a request or its message as a turn the user took.
+export function isSideRequest(msgs: readonly ApiMsg[], side?: boolean): boolean {
+  if (side !== undefined) return side
   const last = msgs.at(-1)
   if (last?.role !== 'user') return false
   const text = typeof last.content === 'string' ? last.content : last.content.find((b) => b.type === 'text')?.text ?? ''
-  return text.startsWith('[SUGGESTION MODE:')
+  return SIDE_ASKS.some((ask) => text.startsWith(ask))
 }
 
-// The messages but a suggestion's own, which is not a prompt the user typed, so
-// does not end the turn before it: the agent may yet go on, as on a background
-// task's notice. The next prompt ends it.
-export const withoutSuggestion = (msgs: ApiMsg[]): ApiMsg[] => (isSuggestion(msgs) ? msgs.slice(0, -1) : msgs)
+// The messages but a side request's ask, which is not a prompt the user typed,
+// so does not end the turn before it: the agent may yet go on, as on a
+// background task's notice. The next prompt ends it.
+export function withoutSideRequest(msgs: ApiMsg[], side?: boolean): ApiMsg[] {
+  const last = msgs.at(-1)
+  return last && isSideRequest(msgs, side) && isPrompt(last) ? msgs.slice(0, -1) : msgs
+}
 
 // Moves the bytes of the skills the proxy shortened (skills.ts) from the
 // skill list's section to `skills-shaved`: in the preamble part holding it,

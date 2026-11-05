@@ -15,7 +15,7 @@
 
 import { copyFileSync, existsSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
-import { describe, isSuggestion, observe, type Sent, type Stats } from '../src/stats.ts'
+import { describe, isSideRequest, observe, type Sent, type Stats } from '../src/stats.ts'
 import { forkOf, history, record, recordBare, recordFork, recordResent } from '../src/journal.ts'
 import type { Usage } from '../src/cost.ts'
 
@@ -80,7 +80,7 @@ export function fromLogs(dir: string): Suggestion[] {
     .filter((e) => e.event === 'request' && e.inputTokens && e.tools && !e.bare)
     .flatMap((r) => {
       const messages = r.parts.map((p: { hash: string }) => part(p.hash))
-      if (!isSuggestion(messages)) return []
+      if (!isSideRequest(messages)) return []
       const body = { model: r.model, messages, system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
       const sent = { ...describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time, advanced.has(r.time)), suggestion: true }
       const usage = {

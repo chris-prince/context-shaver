@@ -10,7 +10,8 @@ import { isDeepStrictEqual } from 'node:util'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
-import { describe, isSuggestion, observe, render, type Stats } from '../src/stats.ts'
+import { describe, isSideRequest, observe, render, type Stats } from '../src/stats.ts'
+import { harnessOf, type Harness } from '../src/harness.ts'
 import { record, replay } from '../src/journal.ts'
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: { request: { type: 'string' }, 'check-journal': { type: 'boolean' } } })
@@ -46,7 +47,9 @@ if (!(Number.isInteger(last) && 0 <= last && last < reqs.length)) {
 const count = (s: Stats | undefined, r: any) => {
   const body = { model: r.model, messages: r.parts.map((p: { hash: string }) => part(p.hash)), system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
   const sent = describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time, advanced.has(r.time))
-  if (isSuggestion(body.messages)) sent.suggestion = true
+  // The headers logged say what the proxy was told, where they say it.
+  const h = r.headers && (harnessOf(undefined, r.headers) as Harness | undefined)
+  if (isSideRequest(body.messages, h?.side?.(r.headers))) sent.suggestion = true
   return observe(s, sent, r.inputTokens, r.outputTokens ?? 0, apiCounts(r))
 }
 // What the API counted, as the proxy reads it (src/responses.ts, counted): the

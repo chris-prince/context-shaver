@@ -472,9 +472,19 @@ A request is an assistant message with the tool results that answer it. The
 latest request, the one the model is answering, is never touched. A turn starts
 at a prompt (user text that is not a tool result, a `<system-reminder>` or a
 command row). The current turn, from the last prompt on, is never touched.
-Claude Code's prompt suggestion is not a prompt: it comes after a reply that
-may not end the turn, as when a background task's notice resumes the agent,
-so a turn ends only at the next prompt.
+A side request's ask is not a prompt either: it copies the conversation and
+adds a question of its own, such as Claude Code's prompt suggestion or its
+recap, after a reply that may not end the turn (as when a background task's
+notice resumes the agent), so a turn ends only at the next prompt. The
+harness's headers say which requests are side requests where they can:
+Claude Code's `x-claude-code-request-class` (sent when
+`CLAUDE_CODE_GATEWAY_HINT_HEADERS` is set, as `bin/claude-via-shaver` does)
+is `compaction`, `auxiliary` or `side_reply` for one and `main`, `subagent`
+or `workflow` for the rest, and the `request_kind` in Codex's
+`x-codex-turn-metadata` is `compaction` or `turn`. Where they don't say, or
+give a value not known yet, its wording does: an ask starting
+`[SUGGESTION MODE:` or `The user stepped away and is coming back.`. A side
+request's last message is left out of the turns only when it is a prompt.
 
 The API constrains what can go:
 
@@ -665,7 +675,12 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     `prompts` is the index of each turn's prompt in those messages, turn 1
     first: `received`, or `parts` when nothing changed. It is the proxy's own
     view of which messages are prompts, so a log stays numbered as the proxy
-    saw it after what counts as a prompt changes;
+    saw it after what counts as a prompt changes. `headers` is the harness's
+    own headers (Claude Code's `x-claude-code-*`, Codex's `x-codex-*` and
+    `x-openai-*`, OpenCode's `x-opencode-*`), all of them so new ones are
+    seen, but those whose names say they may carry a secret (a signature,
+    ticket, token, key and the like). They include Codex's `installation_id`,
+    which identifies the machine. A request logged whole has them too;
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind
@@ -691,7 +706,7 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     `answer` names the response's body, saved under `forks/`, for any
     outcome but `recorded`. A request line's `summaries` is how many records
     it sent, and `summaryCheck` whether it sent a summary fork: `sent`, or
-    why not (`skip`): `suggestion`, `no-breakpoint`, `in-flight` (one is
+    why not (`skip`): `side-request`, `no-breakpoint`, `in-flight` (one is
     running), `turn-continues` (the reply asks for more, such as a tool's
     result, so no prompt could follow it yet), `no-new-turn`, `no-preamble`, or `below-threshold` with the
     turns' `tokens` and the `threshold`;

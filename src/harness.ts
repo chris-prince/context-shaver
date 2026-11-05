@@ -27,7 +27,20 @@ export type Harness = {
   resends: boolean
   // Its session's ID, part of each conversation's (conversationId).
   session(c: Canonical, headers: IncomingHttpHeaders): unknown
+  // The prefixes of the headers of its own that are logged (loggedHeaders).
+  logged: readonly string[]
+  // Whether its headers say a request is a side request on the conversation
+  // (stats.ts, isSideRequest); undefined where they don't say, or say
+  // something not known yet.
+  side?(headers: IncomingHttpHeaders): boolean | undefined
 }
+
+// Claude Code's x-claude-code-request-class, sent when
+// CLAUDE_CODE_GATEWAY_HINT_HEADERS is on (bin/claude-via-shaver): its main
+// loop's, subagents' and workflows' requests, and its side requests (the
+// prompt suggestion and the recap are auxiliary). 2.1.318 has these six.
+const LOOP_CLASSES = new Set(['main', 'subagent', 'workflow'])
+const SIDE_CLASSES = new Set(['compaction', 'auxiliary', 'side_reply'])
 
 // Claude Code sends the session ID with every request, and an agent ID
 // (x-claude-code-agent-id) with each subagent's; the main loop sends none.
@@ -46,6 +59,11 @@ const CLAUDE: Harness = {
       const session = JSON.parse((c.metadata as { user_id?: string } | undefined)?.user_id ?? '{}').session_id
       return session && `${session}-${headers['x-claude-code-agent-id'] ?? 'main'}`
     } catch {}
+  },
+  logged: ['x-claude-code-'],
+  side(headers) {
+    const c = String(headers['x-claude-code-request-class'] ?? '')
+    return SIDE_CLASSES.has(c) ? true : LOOP_CLASSES.has(c) ? false : undefined
   },
 }
 
@@ -69,6 +87,15 @@ const CODEX: Harness = {
   // message before were those after its 3 compactions.
   resends: true,
   session: (c, headers) => c.prompt_cache_key ?? headers['session-id'],
+  logged: ['x-codex-', 'x-openai-'],
+  // Each request's x-codex-turn-metadata has a request_kind: turn, or
+  // compaction (0.166.0's two).
+  side(headers) {
+    try {
+      const kind = JSON.parse(String(headers['x-codex-turn-metadata'])).request_kind
+      return kind === 'compaction' ? true : kind === 'turn' ? false : undefined
+    } catch {}
+  },
 }
 
 // OpenCode's tools, as its 2.x requests name them: edit's and write's text, and
@@ -98,6 +125,8 @@ const OPENCODE: Harness = {
   // Unchecked: no logged OpenCode session has compacted.
   resends: false,
   session: (_, headers) => headers['x-opencode-session-id'],
+  // It sends no header saying what kind a request is.
+  logged: ['x-opencode-'],
 }
 
 const HARNESSES = [CLAUDE, CODEX, OPENCODE]
@@ -109,6 +138,16 @@ export const NO_CONVENTIONS: Conventions = { kinds: {}, stubbedInputs: {}, shell
 export function harnessOf(declared: string | undefined, headers: IncomingHttpHeaders): Harness | undefined | { error: string } {
   if (declared) return HARNESSES.find((h) => h.name === declared) ?? { error: `not a harness: /harness/${declared}` }
   return HARNESSES.find((h) => Object.keys(headers).some((k) => k.startsWith(h.headers)))
+}
+
+// Names that say a header may carry a secret.
+const SECRET = /auth|credential|key|password|secret|signature|ticket|token|cookie/i
+
+// The harness's own headers, for the log: all under its prefixes, so new
+// ones are seen, but those whose names say they may carry a secret.
+export function loggedHeaders(h: Harness, headers: IncomingHttpHeaders): Record<string, string> | undefined {
+  const out = Object.entries(headers).filter(([k, v]) => v !== undefined && h.logged.some((p) => k.startsWith(p)) && !SECRET.test(k))
+  return out.length ? Object.fromEntries(out.map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : String(v)])) : undefined
 }
 
 // A conversation's ID: its harness (or, unknown, its protocol), its session,

@@ -84,10 +84,10 @@ test('each summary fork logs how it went, and each request why it sent none', as
       child.on('exit', (code) => fail(new Error(`the proxy exited (${code}): ${err}`)))
     })
     const history: any[] = []
-    const send = async (messages: any[]) => {
+    const send = async (messages: any[], headers: Record<string, string> = {}) => {
       const last = messages.at(-1)
       const r = await fetch(`${url}/v1/messages`, {
-        method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1' },
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1', ...headers },
         body: JSON.stringify({
           model: 'claude-opus-5-5', max_tokens: 1000, metadata: { user_id: JSON.stringify({ session_id: 's1' }) },
           system: [{ type: 'text', text: 'You are Claude Code.' }],
@@ -116,10 +116,14 @@ test('each summary fork logs how it went, and each request why it sent none', as
       }
       await until(() => logged('summary') >= k, `turn ${k + 1}'s summary fork`)
     }
+    // A side request, which its class header alone tells apart: it sends no
+    // fork, though a turn has ended and it asks in a prompt.
+    await send([...history, { role: 'user', content: [{ type: 'text', text: 'Summarize the session.' }] }], { 'x-claude-code-request-class': 'auxiliary', 'x-claude-code-signature': 'secret' })
+    await until(() => logged('request') === 7, "the side request's line")
     // Rewound to turn 3 with a new prompt: the record that ends before it no
     // longer fits.
     await send([...history.slice(0, 6), { role: 'user', content: [{ type: 'text', text: 'Something else.' }] }])
-    await until(() => logged('request') === 7, "the rewound request's line")
+    await until(() => logged('request') === 8, "the rewound request's line")
     // What the proxy wrote to stderr is all read once it has exited.
     const closed = new Promise((ok) => child.on('close', ok))
     child.kill()
@@ -141,11 +145,15 @@ test('each summary fork logs how it went, and each request why it sent none', as
     // The next fork picks up at the arc cut off.
     assert.deepEqual([forks[3].start, forks[3].endsBefore, forks[3].arcs, forks[3].stop, forks[3].answer], [3, 5, 2, 'end_turn', undefined])
     // Why each request sent none, or that it sent one.
-    const checks = all.filter((l) => l.event === 'request').map((l) => l.summaryCheck?.skip ?? l.summaryCheck)
-    assert.deepEqual(checks.slice(0, 6), ['no-new-turn', 'turn-continues', 'sent', 'sent', 'sent', 'sent'])
+    const reqs = all.filter((l) => l.event === 'request')
+    const checks = reqs.map((l) => l.summaryCheck?.skip ?? l.summaryCheck)
+    assert.deepEqual(checks.slice(0, 7), ['no-new-turn', 'turn-continues', 'sent', 'sent', 'sent', 'sent', 'side-request'])
+    // Each line has the harness's headers, but those that may carry a secret.
+    assert.deepEqual(reqs[6].headers, { 'x-claude-code-session-id': 's1', 'x-claude-code-request-class': 'auxiliary' })
+    assert.deepEqual(reqs[0].headers, { 'x-claude-code-session-id': 's1' })
     // Each request's turn and its prompts' indexes, as records number them:
     // turn 2 goes on after a tool call, and the rewind is back at turn 3.
-    const sent = all.filter((l) => l.event === 'request')
+    const sent = reqs.filter((l) => l.summaryCheck?.skip !== 'side-request')
     assert.deepEqual(sent.map((l) => l.turn), [1, 2, 2, 3, 4, 5, 3])
     assert.deepEqual(sent.at(-2).prompts, [0, 2, 6, 8, 10])
     // Each fork asks as the user's next prompt would: after the reply that

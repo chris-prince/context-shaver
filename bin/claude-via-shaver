@@ -66,5 +66,7 @@ if [[ -z $up ]]; then
 elif [[ ! $up =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
   ANTHROPIC_BASE_URL=http://127.0.0.1:$port/harness/claude/via/$(encode "$up")
 fi
-export ANTHROPIC_BASE_URL ENABLE_TOOL_SEARCH=true
+# The hint headers say what kind each request is (x-claude-code-request-class),
+# so the proxy tells side requests apart without reading their wording.
+export ANTHROPIC_BASE_URL ENABLE_TOOL_SEARCH=true CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
 exec "${real[@]}" "$@"

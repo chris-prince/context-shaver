@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornFrom, bornOf, costLines, describe, estimate, isSuggestion, observe, render, settled, splitShaved, withoutSuggestion, type Stats } from '../src/stats.ts'
+import { bornFrom, bornOf, costLines, describe, estimate, isSideRequest, observe, render, settled, splitShaved, withoutSideRequest, type Stats } from '../src/stats.ts'
 import { clockOf, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -42,13 +42,18 @@ test('a part a side request left out keeps its count when it comes back', () => 
   assert.equal(s.tokens[s.parts[2].key], counted)
 })
 
-test('a prompt suggestion is told apart by its last message', () => {
+test('a side request is told apart by its last message, unless the headers say', () => {
   const a: ApiMsg = { role: 'user', content: 'a' }
   const b: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'b' }] }
-  assert.equal(isSuggestion([a, b, { role: 'user', content: '[SUGGESTION MODE: Suggest what the user might naturally type next]' }]), true)
-  assert.equal(isSuggestion([a, b, { role: 'user', content: [{ type: 'text', text: '[SUGGESTION MODE: …]' }] }]), true)
-  assert.equal(isSuggestion([a, b, { role: 'user', content: 'what is [SUGGESTION MODE:]?' }]), false)
-  assert.equal(isSuggestion([a, b]), false)
+  const suggest: ApiMsg = { role: 'user', content: '[SUGGESTION MODE: Suggest what the user might naturally type next]' }
+  assert.equal(isSideRequest([a, b, suggest]), true)
+  assert.equal(isSideRequest([a, b, { role: 'user', content: [{ type: 'text', text: '[SUGGESTION MODE: …]' }] }]), true)
+  assert.equal(isSideRequest([a, b, { role: 'user', content: 'The user stepped away and is coming back. Recap the session.' }]), true)
+  assert.equal(isSideRequest([a, b, { role: 'user', content: 'what is [SUGGESTION MODE:]?' }]), false)
+  assert.equal(isSideRequest([a, b]), false)
+  // What the headers say wins over the wording.
+  assert.equal(isSideRequest([a, b, suggest], false), false)
+  assert.equal(isSideRequest([a, b, { role: 'user', content: 'Summarize the conversation.' }], true), true)
 })
 
 test('a prompt suggestion does not end the turn before it', () => {
@@ -58,10 +63,15 @@ test('a prompt suggestion does not end the turn before it', () => {
   const r2: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'started a task' }] }
   const ask: ApiMsg = { role: 'user', content: '[SUGGESTION MODE: Suggest what the user might naturally type next]' }
   const turn2 = clockOf([p1, r1, p2])
-  assert.deepEqual(clockOf(withoutSuggestion([p1, r1, p2, r2, ask])), { ...turn2, requests: 1 })
+  assert.deepEqual(clockOf(withoutSideRequest([p1, r1, p2, r2, ask])), { ...turn2, requests: 1 })
   // A background task's notice resumes the agent within the same turn.
   const notice: ApiMsg = { role: 'user', content: '<system-reminder>\nA background task finished.\n</system-reminder>' }
-  assert.deepEqual(clockOf(withoutSuggestion([p1, r1, p2, r2, notice])), clockOf(withoutSuggestion([p1, r1, p2, r2, ask])))
+  assert.deepEqual(clockOf(withoutSideRequest([p1, r1, p2, r2, notice])), clockOf(withoutSideRequest([p1, r1, p2, r2, ask])))
+  // A side request whose last message is no prompt, such as a tool result,
+  // keeps it: only a prompt would start a turn.
+  const result: ApiMsg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'x' }] }
+  assert.equal(withoutSideRequest([p1, r1, p2, r2, result], true).length, 5)
+  assert.equal(withoutSideRequest([p1, r1, p2, r2, { role: 'user', content: 'Summarize.' }], true).length, 4)
   // A typed prompt ends it.
   assert.equal(clockOf([p1, r1, p2, r2, { role: 'user', content: 'three' }]).turns, turn2.turns + 1)
 })

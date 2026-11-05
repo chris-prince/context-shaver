@@ -30,8 +30,8 @@ import { keptWhole, LINE_WORDS, lineOf, linesOf, linesPrompt, listMessage, shave
 import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
-import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSuggestion, type Forks, type Sent, type Stats } from './stats.ts'
+import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isSideRequest, keyOf, observe, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -174,7 +174,7 @@ const latestOf = (key: string) => currentOf(key).stats
 // answered.
 // Why an answered request sent no summary fork: summaryForkOf's reasons, with
 // the threshold the turns fell short of, or the proxy's own.
-type Skip = (ForkSkip & { threshold?: number }) | { skip: 'suggestion' | 'no-breakpoint' | 'in-flight' | 'turn-continues' }
+type Skip = (ForkSkip & { threshold?: number }) | { skip: 'side-request' | 'no-breakpoint' | 'in-flight' | 'turn-continues' }
 type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
@@ -184,14 +184,16 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
-function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number): Prepared | undefined {
+// `side` is whether the harness's headers say it's a side request, where they
+// say (harness.ts).
+function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
   const s = load(key)
-  const suggestion = isSuggestion(msgs)
-  const own = withoutSuggestion(msgs)
+  const suggestion = isSideRequest(msgs, side)
+  const own = withoutSideRequest(msgs, side)
   const held = heldTo(s?.applied ?? { requests: 0, turns: 0 }, own)
   const clock = clockOf(own)
   const marked = markedTtl(body)
@@ -284,7 +286,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   // with none, why.
   const summaryFork = after
     ? (tokens: number[]): SummaryFork | Skip => {
-        if (suggestion) return { skip: 'suggestion' }
+        if (suggestion) return { skip: 'side-request' }
         if (!pos.some((q) => q.breakpoint)) return { skip: 'no-breakpoint' }
         const f = summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m))
         return 'skip' in f && f.tokens !== undefined ? { ...f, threshold: after } : f
@@ -605,6 +607,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   let params: Record<string, unknown> = {}
   // The conversation's key, from the messages as the client sent them, before any are stripped (harness.ts).
   let key: string | undefined
+  // The harness's own headers, logged, and whether they say it's a side request.
+  const logged = h && loggedHeaders(h, req.headers)
+  const side = h?.side?.(req.headers)
   const served = req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length > 0
   if (served) {
     // `shaver` commands are answered here; answered ones are stripped (command.ts).
@@ -651,7 +656,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: commands left in:', err)
     }
     try {
-      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now())
+      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now(), side)
+      if (p?.logLine && logged) p.logLine.headers = logged
     } catch (err) {
       why = 'untrimmed'
       console.error('shaver: request left untrimmed:', err)
@@ -716,7 +722,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const body = c?.body
       // A request sent as the client sent it, not as the proxy prepared it,
       // is logged with its messages whole.
-      const whole = (event: string): WholeLog | undefined => (a['log-step-events'] && body ? { dir: path.join(logRoot, bareKey()), event, side: body, protocol: proto.name, params } : undefined)
+      const whole = (event: string): WholeLog | undefined => (a['log-step-events'] && body ? { dir: path.join(logRoot, bareKey()), event, side: body, protocol: proto.name, params, headers: logged } : undefined)
       if (p && !cut) answered(p, usage, upstream + url, headers)
       else if (resent && !cut) answeredResent(resent, usage, whole('resent'))
       else {
@@ -832,10 +838,10 @@ function answeredResent(p: Prepared, usage: UsageReader, log?: WholeLog): void {
 
 // A request logged with its messages whole, as an event of its own: a side
 // request, or one resent as it came.
-type WholeLog = { dir: string; event: string; side: Canonical; protocol: string; params: Record<string, unknown> }
+type WholeLog = { dir: string; event: string; side: Canonical; protocol: string; params: Record<string, unknown>; headers?: Record<string, string> }
 
 const writeWhole = (log: WholeLog, b: BareLine, counts: Record<string, unknown> | undefined) =>
-  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, parts: writeParts(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...counts })
+  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, ...(log.headers && { headers: log.headers }), parts: writeParts(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...counts })
 
 // Records a request journaled bare (journal.ts): its line and its cost, and
 // with logging its log line. A request the proxy prepared is logged as
