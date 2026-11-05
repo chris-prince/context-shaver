@@ -157,7 +157,7 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
   return { start, current, prompts: turns, chars: charsFrom(start) }
 }
 
-// The instructions a summary fork appends: local/prompts/arcs9d.md, with its
+// The instructions a summary fork appends: local/prompts/arcs9f.md, with its
 // placeholders filled in. `answered` is whether they follow the reply that
 // ended the latest turn, as the user's next prompt would.
 export function instructions(f: SummaryFork, answered = false): string {
