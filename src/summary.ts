@@ -191,7 +191,7 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
 export function instructions(f: SummaryFork, answered = false): string {
   const list = f.prompts.map((p) => `[${p.id}] "${p.quote}"`)
   const current = list.pop()
-  return `I need a record of our work so far for my journal, so that we can resume the work from it later. Write it as text only, without calling any tools; my journaling tool reads your answer automatically, so give only the record. Cover the memorable events of the turns that start with these prompts, each after its turn's internal ID:
+  return `I need a record of our work so far for my journal, so that we can resume the work from it later. Write it as text only, without calling any tools; my journaling tool reads your answer automatically, so give only the record. Cover the memorable events of the turns that start with these prompts (each is prefixed by its turn's internal ID):
 
 ${list.join('\n')}
 
