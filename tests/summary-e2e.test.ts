@@ -52,7 +52,22 @@ const POLICY = {
   skill_shaver_rules: [],
 }
 
-const lines = (dir: string, key: string) => readFileSync(path.join(dir, 'logs', key, 'step_events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+// The step events written so far: none before the file is made, and not a
+// line still being written.
+const lines = (dir: string, key: string) => {
+  const file = path.join(dir, 'logs', key, 'step_events.jsonl')
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8').split('\n').slice(0, -1).map((l) => JSON.parse(l))
+}
+
+// The proxy is another process, and logs a request after the client has its
+// answer: waits for what the test reads next, and fails if it never comes.
+async function until(done: () => boolean, what: string) {
+  for (let t = 0; !done(); t++) {
+    if (t === 800) throw new Error(`timed out waiting for ${what}`)
+    await new Promise((ok) => setTimeout(ok, 25))
+  }
+}
 
 test('each summary fork logs how it went, and each request why it sent none', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'summary-e2e-'))
@@ -82,16 +97,22 @@ test('each summary fork logs how it went, and each request why it sent none', as
       assert.equal(r.status, 200)
       return (await r.json()).content
     }
-    // Each turn waits for the summary fork the last one sent to finish.
-    const summaries = () => (existsSync(path.join(dir, 'logs')) ? lines(dir, readdirSync(path.join(dir, 'logs'))[0]).filter((l) => l.event === 'summary').length : 0)
+    // Each turn waits for its own log line, and for the summary fork it sent
+    // to finish.
+    const logged = (event: string) => (existsSync(path.join(dir, 'logs')) ? readdirSync(path.join(dir, 'logs')).flatMap((key) => lines(dir, key)).filter((l) => l.event === event).length : 0)
     for (const [k, prompt] of ['Read the files.', 'Read more.', 'And more.', 'Last one.'].entries()) {
       history.push({ role: 'user', content: [{ type: 'text', text: prompt + ' ' + 'x'.repeat(400) }] })
       history.push({ role: 'assistant', content: await send(history) })
-      for (let t = 0; summaries() < k && t < 200; t++) await new Promise((ok) => setTimeout(ok, 25))
+      await until(() => logged('request') > k && logged('summary') >= k, `turn ${k + 1}'s request and summary fork`)
     }
     // Rewound to turn 3 with a new prompt: the record that ends before it no
     // longer fits.
     await send([...history.slice(0, 4), { role: 'user', content: [{ type: 'text', text: 'Something else.' }] }])
+    await until(() => logged('request') === 5, "the rewound request's line")
+    // What the proxy wrote to stderr is all read once it has exited.
+    const closed = new Promise((ok) => child.on('close', ok))
+    child.kill()
+    await closed
     const [key] = readdirSync(path.join(dir, 'logs'))
     const all = lines(dir, key)
     const forks = all.filter((l) => l.event === 'summary')
