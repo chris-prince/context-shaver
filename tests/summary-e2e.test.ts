@@ -16,13 +16,15 @@ const ROOT = path.resolve(import.meta.dirname, '..')
 
 // The upstream answers the client's requests with text, but "Read more."
 // first with a tool call; summary forks, by turn, with an error, then an
-// answer with no closing line, then a record. It keeps the forks' messages.
+// answer with no closing line, then one refused partway through its third
+// arc, then a record from that arc on. It keeps the forks' messages.
 async function upstream(): Promise<{ url: string; close(): void; asked: any[][] }> {
   const asked: any[][] = []
   const forks = [
     () => ({ status: 500, body: { type: 'error', error: { type: 'api_error', message: 'boom' } } }),
     () => ({ status: 200, text: '## [1] Read the files.\n- read them', stop: 'max_tokens' }),
-    () => ({ status: 200, text: '## [1] Read the files.\n- read them\n\n## [2] Read more.\n- read more\n\nEnds before: [3]', stop: 'end_turn' }),
+    () => ({ status: 200, text: '## [1] Read the files.\n- read them\n\n## [2] Read more.\n- read more\n\n## [3] And more.\n- partly don', stop: 'refusal' }),
+    () => ({ status: 200, text: '## [3] And more.\n- and more\n\n## [4] Last one.\n- the last\n\nEnds before: [5]', stop: 'end_turn' }),
   ]
   let n = 0
   const server: Server = createServer((req, res) => {
@@ -102,7 +104,7 @@ test('each summary fork logs how it went, and each request why it sent none', as
     // Turn 2's first answer calls a tool, so the turn goes on until its result
     // is answered.
     let requests = 0
-    for (const [k, prompt] of ['Read the files.', 'Read more.', 'And more.', 'Last one.'].entries()) {
+    for (const [k, prompt] of ['Read the files.', 'Read more.', 'And more.', 'Last one.', 'One more.'].entries()) {
       history.push({ role: 'user', content: [{ type: 'text', text: prompt + ' ' + 'x'.repeat(400) }] })
       for (;;) {
         const content = await send(history)
@@ -117,7 +119,7 @@ test('each summary fork logs how it went, and each request why it sent none', as
     // Rewound to turn 3 with a new prompt: the record that ends before it no
     // longer fits.
     await send([...history.slice(0, 6), { role: 'user', content: [{ type: 'text', text: 'Something else.' }] }])
-    await until(() => logged('request') === 6, "the rewound request's line")
+    await until(() => logged('request') === 7, "the rewound request's line")
     // What the proxy wrote to stderr is all read once it has exited.
     const closed = new Promise((ok) => child.on('close', ok))
     child.kill()
@@ -125,16 +127,22 @@ test('each summary fork logs how it went, and each request why it sent none', as
     const [key] = readdirSync(path.join(dir, 'logs'))
     const all = lines(dir, key)
     const forks = all.filter((l) => l.event === 'summary')
-    assert.deepEqual(forks.map((l) => l.outcome), ['failed', 'rejected', 'recorded'])
+    assert.deepEqual(forks.map((l) => l.outcome), ['failed', 'rejected', 'salvaged', 'recorded'])
     assert.equal(forks[0].stage, 'status')
     assert.match(forks[0].error, /500/)
     assert.match(readFileSync(path.join(dir, 'logs', key, forks[0].answer), 'utf8'), /boom/)
+    // One whole heading only: nothing to salvage.
     assert.deepEqual([forks[1].reason, forks[1].stop], ['no-ends-before', 'max_tokens'])
     assert.match(readFileSync(path.join(dir, 'logs', key, forks[1].answer), 'utf8'), /read them/)
-    assert.deepEqual([forks[2].endsBefore, forks[2].arcs, forks[2].stop, forks[2].answer], [3, 2, 'end_turn', undefined])
+    // Refused partway through arc [3]: arcs [1] and [2] are kept, and the
+    // record ends before [3], with the whole answer saved.
+    assert.deepEqual([forks[2].endsBefore, forks[2].arcs, forks[2].stop], [3, 2, 'refusal'])
+    assert.match(readFileSync(path.join(dir, 'logs', key, forks[2].answer), 'utf8'), /partly don/)
+    // The next fork picks up at the arc cut off.
+    assert.deepEqual([forks[3].start, forks[3].endsBefore, forks[3].arcs, forks[3].stop, forks[3].answer], [3, 5, 2, 'end_turn', undefined])
     // Why each request sent none, or that it sent one.
     const checks = all.filter((l) => l.event === 'request').map((l) => l.summaryCheck?.skip ?? l.summaryCheck)
-    assert.deepEqual(checks.slice(0, 5), ['no-new-turn', 'turn-continues', 'sent', 'sent', 'sent'])
+    assert.deepEqual(checks.slice(0, 6), ['no-new-turn', 'turn-continues', 'sent', 'sent', 'sent', 'sent'])
     // Each fork asks as the user's next prompt would: after the reply that
     // ended the turn, in a message of its own.
     for (const m of up.asked) {
@@ -143,19 +151,22 @@ test('each summary fork logs how it went, and each request why it sent none', as
       assert.equal(m.at(-1).content.length, 1)
       assert.match(m.at(-1).content[0].text, /^I need a record of our work.*Exclude the turn of the following prompt, which you just answered/s)
     }
-    assert.equal(up.asked.length, 3)
+    assert.equal(up.asked.length, 4)
+    assert.match(up.asked[3].at(-1).content[0].text, /^\[3\] "And more\./m)
+    assert.match(up.asked[3].at(-1).content[0].text, /Turns before \[3\] are already in my journal/)
     const dropped = all.filter((l) => l.event === 'summary-dropped')
-    assert.deepEqual(dropped.map((l) => [l.index, l.dropped, l.endsBefore]), [[0, 1, 3]])
+    assert.deepEqual(dropped.map((l) => [l.index, l.dropped, l.endsBefore]), [[0, 2, 3]])
     // The proxy's log says the same, and the records file keeps the last failure.
     assert.match(err, /turns 1-2: failed at status: Error, status 500, at /)
     // Nothing the upstream or the model wrote reaches it.
-    assert.doesNotMatch(err, /boom|read them/)
+    assert.doesNotMatch(err, /boom|read them|partly don/)
     assert.match(err, /turns 1-3: rejected, no-ends-before, 20 output tokens, stopped: max_tokens/)
+    assert.match(err, /turns 1-4: cut off \(refusal\), 20 output tokens; kept its whole arcs, ending before \[3\]/)
     // It has problems only: the recorded fork is in the step events alone.
-    assert.doesNotMatch(err, /turns 1-4/)
-    assert.match(err, /1 of 1 no longer fit, from record 1, which ends before \[3\]: that turn's prompt changed/)
+    assert.doesNotMatch(err, /turns 3-5/)
+    assert.match(err, /2 of 2 no longer fit, from record 1, which ends before \[3\]: that turn's prompt changed/)
     const file = JSON.parse(readFileSync(path.join(dir, 'state', `${key}.summaries.json`), 'utf8'))
-    assert.deepEqual([file.failed.outcome, file.failed.reason, file.requests], ['rejected', 'no-ends-before', 3])
+    assert.deepEqual([file.failed.outcome, file.failed.reason, file.requests], ['salvaged', 'refusal', 4])
   } finally {
     child.kill()
     up.close()

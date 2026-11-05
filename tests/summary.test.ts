@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { isMemoir, isSummary, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
-import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, promptHash, recordOf, rejectionOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -27,6 +27,41 @@ const summaryForkAt = (...args: Parameters<typeof forkOrSkip>) => {
   const f = forkOrSkip(...args)
   return 'skip' in f ? undefined : f
 }
+
+test('after a salvage, the next summary fork starts at the turn the cut-off answer was in, once new turns follow', () => {
+  // The fork covering turns 1-3 is offered at turn 4 and cut off in arc [3].
+  const f = summaryForkAt(session())!
+  const cut = '## [1] Turn one\n- did one\n\n## [2] Turn two\n- did two\n\n## [3] Turn three\n- did th'
+  const r = salvagedOf([{ type: 'text', text: cut }], f, 'now', 'refusal', 40)!
+  assert.equal(r.endsBefore, 3)
+  // No new turn since: the cut-off turns wait, rather than being asked again at once.
+  assert.deepEqual(forkOrSkip(session(), [r], f.current), { skip: 'below-threshold', tokens: 0 })
+  // Turn four ends and turn five starts: the next fork starts at turn three,
+  // so the turn the cut-off answer was in is asked for again.
+  const five: ApiMsg[] = [...session(), { role: 'user', content: 'turn five' }]
+  const g = summaryForkAt(five, [r], f.current)!
+  assert.equal(g.start, 3)
+  assert.equal(g.current, 5)
+  assert.deepEqual(g.prompts.map((p) => p.quote), ['turn three', 'turn four', 'turn five'])
+  assert.match(instructions(g), /\[3\] "turn three"/)
+})
+
+test('an answer cut off partway keeps its whole arcs, ending before the arc it was cut off in', () => {
+  const f = summaryForkAt(session())!
+  const cut = '## [1] Turn one\n- did one\n\n## [2] Turn two\n- did two\n\n## [3] Turn three\n- did th'
+  const r = salvagedOf([{ type: 'text', text: cut }], f, 'now', 'refusal', 40)!
+  assert.equal(r.endsBefore, 3)
+  assert.equal(r.prompt, f.prompts[3 - f.start].hash)
+  assert.equal(r.text, '## [1] Turn one\n- did one\n\n## [2] Turn two\n- did two')
+  assert.deepEqual(r.arcs?.map((a) => a.turn), [1, 2])
+  assert.equal(r.tokens, 40)
+  for (const stop of ['max_tokens', 'length', 'content_filter', 'max_output_tokens', 'incomplete']) assert.equal(salvagedOf([{ type: 'text', text: cut }], f, 'now', stop)?.endsBefore, 3)
+  // Not cut off, or nothing whole to keep: no record.
+  for (const stop of ['end_turn', 'stop', 'completed', undefined]) assert.equal(salvagedOf([{ type: 'text', text: cut }], f, 'now', stop), undefined)
+  for (const text of ['## [1] Turn one\n- did o', 'preamble\n## [1] Turn one\n- one\n## [2] Turn two\n- tw', '## [2] Turn two\n- two\n## [1] Turn one\n- on', '## [1] Turn one\n- one\n## [9] Turn nine\n- ni', '## [1] Turn one\n- one\n\nEnds before: [2]'])
+    assert.equal(salvagedOf([{ type: 'text', text }], f, 'now', 'refusal'), undefined, text)
+  assert.equal(salvagedOf([{ type: 'text', text: cut }, { type: 'tool_use', id: 'z', name: 'Bash', input: {} }], f, 'now', 'refusal'), undefined)
+})
 
 test('a summary fork covers the completed turns from the last record on, once they are big enough', () => {
   const msgs = session()

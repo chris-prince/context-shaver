@@ -226,6 +226,31 @@ export function recordOf(content: readonly Block[], f: SummaryFork, time: string
   return { endsBefore: n, prompt: f.prompts[n - f.start].hash, text: record, time, ...(arcs && { arcs }), ...(tokens !== undefined && { tokens }) }
 }
 
+// The stop reasons that mean the answer was cut off partway, by protocol:
+// Messages (refusal, max_tokens), Chat Completions (length, content_filter)
+// and Responses (its incomplete_details reasons, or its status).
+const CUT_OFF = new Set(['refusal', 'max_tokens', 'length', 'content_filter', 'max_output_tokens', 'incomplete'])
+
+// The record a cut-off answer still gives: its complete arcs. An answer cut
+// off partway has no closing line, but every arc starts with its turn, so the
+// arcs before the last heading are whole, and the record ends before that
+// heading's turn. The last arc, the one cut off, is left for a later fork. Only
+// for an answer whose `stop` says it was cut off, without a tool call or a
+// closing line, and with at least one whole arc.
+export function salvagedOf(content: readonly Block[], f: SummaryFork, time: string, stop: string | undefined, tokens?: number): Summary | undefined {
+  if (!stop || !CUT_OFF.has(stop) || content.some((b) => b.type === 'tool_use')) return
+  const text = textOf(content)
+  if (endLine(text)) return
+  const last = [...text.matchAll(/^## \[(\d+)\] (.+)$/gm)].at(-1)
+  if (!last || !last.index) return
+  const n = Number(last[1])
+  if (n <= f.start || n > f.current) return
+  const record = text.slice(0, last.index).trim()
+  const arcs = arcsOf(record, f, n)
+  if (!arcs) return
+  return { endsBefore: n, prompt: f.prompts[n - f.start].hash, text: record, time, arcs, ...(tokens !== undefined && { tokens }) }
+}
+
 // Why a summary fork's answer gives no record, by a fixed reason, with the
 // turn its closing line names when it has one; or undefined when it gives one.
 // A line naming "Ends before" that isn't the closing line exactly is

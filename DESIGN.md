@@ -629,8 +629,8 @@ also shows how many summary forks have been sent, answered or not, and what
 became of them: their records the prompt now sends (applied), those still to
 answer or waiting for a cold cache (pending), and the rest, which failed,
 answered with nothing, were replaced or no longer fit the messages (dropped),
-and the last one to give no record: whether it failed or was rejected, why,
-and when.
+and the last one to give no record, or only part of one: whether it failed,
+was rejected or was salvaged, why (for a salvage, its stop reason), and when.
 
 ## Logs
 
@@ -669,6 +669,11 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     (`end_turn`, `max_tokens` and the like). An outcome is one of:
     - `recorded`: with the turn its record ends before, and its arcs, or
       `unparsed` when their headings don't parse;
+    - `salvaged`: the answer was cut off partway (a `stop` of `refusal`,
+      `max_tokens`, `length`, `content_filter` or the like) before its
+      closing line, and its record is the arcs before its last heading:
+      whole, as each arc starts with its turn's heading. It ends before that
+      heading's turn, so the arc cut off is left for a later fork;
     - `rejected`: the answer gave no record, for a `reason`: `tool-call`,
       `no-ends-before`, `ends-before-misformatted` (a line names "Ends before"
       but isn't the closing line exactly), `ends-before-out-of-range` (with
