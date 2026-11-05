@@ -171,7 +171,7 @@ Under it, write terse bullets covering only the arc's memorable points, told as 
 
 Tell each point as an event, not as a rule drawn from it. Write "I deleted \`old/\` without asking; you had it restored (\`ed24806\`)", not "always ask before deleting". Report where things ended up rather than every step on the way, and leave out dead ends and intermediate versions unless they were land mines.
 
-Stop at the last complete arc. If an arc is still in progress, leave it out entirely: I'll ask for it later, once it is done.
+Stop at the last complete arc. An arc is still in progress if the latest turn carries on its work, such as testing, fixing or committing what it built. Leave an arc in progress out entirely: I'll ask for it later, once it is done.
 
 End your record with one line naming the first turn your arcs do not cover:
 
