@@ -490,8 +490,9 @@ export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')
 
 // What became of a session's summary requests (summary.ts): their records the
 // prompt sends now (applied), those still to answer or waiting for a cold cache
-// (pending), and the rest (dropped).
-export type Forks = { applied: number; pending: number; dropped: number }
+// (pending), and the rest (dropped); and the last that gave no record, how and
+// when.
+export type Forks = { applied: number; pending: number; dropped: number; failed?: { time: string; outcome: string; reason: string } }
 
 export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, dropped: 0 }): string {
   const total = s.inputTokens
@@ -537,8 +538,10 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost)] : unpriced(s, estimated))]
   // The prompt as sent, then as it would be without the shaver, lined up.
   const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
-  const requests = forks.applied + forks.pending + forks.dropped
-  const fates = requests ? [`    ${Object.entries(forks).map(([fate, n]) => `${n} ${fate}`).join(', ')}`] : []
+  const { failed, ...counts } = forks
+  const requests = counts.applied + counts.pending + counts.dropped
+  const last = failed ? [`    last failed: ${failed.outcome}, ${failed.reason}, ${localTime(failed.time)}`] : []
+  const fates = requests ? [`    ${Object.entries(counts).map(([fate, n]) => `${n} ${fate}`).join(', ')}`, ...last] : []
   out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.

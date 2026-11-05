@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { isMemoir, isSummary, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
-import { coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, promptHash, recordOf, rejectionOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -22,7 +22,11 @@ const session = (): ApiMsg[] => [
 const none = (msgs: ApiMsg[]) => apply(msgs, {}, { requests: 0, turns: 0 })
 // Each message's count as the stats have it: a tool result 1,000 tokens, the rest 100.
 const counts = (msgs: ApiMsg[]) => msgs.map((m) => (JSON.stringify(m).includes('tool_result') ? 1000 : 100))
-const summaryForkAt = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000, tokens = counts(msgs)) => summaryForkOf(none(msgs), msgs, chain, offered, threshold, new Map(), tokens)
+const forkOrSkip = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000, tokens = counts(msgs)) => summaryForkOf(none(msgs), msgs, chain, offered, threshold, new Map(), tokens)
+const summaryForkAt = (...args: Parameters<typeof forkOrSkip>) => {
+  const f = forkOrSkip(...args)
+  return 'skip' in f ? undefined : f
+}
 
 test('a summary fork covers the completed turns from the last record on, once they are big enough', () => {
   const msgs = session()
@@ -38,6 +42,9 @@ test('a summary fork covers the completed turns from the last record on, once th
   // Offered at turn 3: only turn 3 counts towards the next, but it still asks from the start.
   assert.equal(summaryForkAt(msgs, [], 3, 1301), undefined)
   assert.equal(summaryForkAt(msgs, [], 3, 1300)?.start, 1)
+  // With none, it says why.
+  assert.deepEqual(forkOrSkip(msgs, [], 0, 3801), { skip: 'below-threshold', tokens: 3800 })
+  assert.deepEqual(forkOrSkip(msgs, [{ endsBefore: 4 } as Summary]), { skip: 'no-new-turn' })
 })
 
 test("a summary fork's record is read back, and only one that covers a complete arc is kept", () => {
@@ -53,6 +60,15 @@ test("a summary fork's record is read back, and only one that covers a complete 
   assert.deepEqual(validChain([r4], later), [r4])
   for (const text of ['Ends before: [1]', 'no closing line', '## Arc\n\nEnds before: [5]']) assert.equal(recordOf([{ type: 'text', text }], f, 'now'), undefined)
   assert.equal(recordOf([{ type: 'text', text: 'x\nEnds before: [3]' }, { type: 'tool_use', id: 'z', name: 'Bash', input: {} }], f, 'now'), undefined)
+  // Why each is refused, and nothing for one that's kept.
+  const why = (text: string) => rejectionOf([{ type: 'text', text }], f)
+  assert.equal(why('## Arc\n- did it\n\nEnds before: [3]'), undefined)
+  assert.deepEqual(why('Ends before: [1]'), { reason: 'ends-before-out-of-range', endsBefore: 1 })
+  assert.deepEqual(why('x\nEnds before: [5]'), { reason: 'ends-before-out-of-range', endsBefore: 5 })
+  assert.deepEqual(why('no closing line'), { reason: 'no-ends-before' })
+  assert.deepEqual(why('x\n**Ends before: [3]**'), { reason: 'ends-before-misformatted' })
+  assert.deepEqual(why('\nEnds before: [3]'), { reason: 'empty', endsBefore: 3 })
+  assert.deepEqual(rejectionOf([{ type: 'text', text: 'x\nEnds before: [3]' }, { type: 'tool_use', id: 'z', name: 'Bash', input: {} }], f), { reason: 'tool-call' })
   assert.match(instructions(f), /\[1\] "turn one"\n\[2\] "turn two"\n\[3\] "turn three"\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
   assert.doesNotMatch(instructions(f), /already in my journal/)
   // A later record's instructions leave out the turns earlier records cover.
@@ -77,7 +93,7 @@ test('records replace the turns they cover, after the base, and go when their pr
   const msgs = session()
   const f = summaryForkAt(msgs)!
   const r1 = recordOf([{ type: 'text', text: 'one\nEnds before: [2]' }], f, 'now')!
-  const r2 = recordOf([{ type: 'text', text: 'two\nEnds before: [3]' }], { ...f, start: 2 }, 'now')!
+  const r2 = recordOf([{ type: 'text', text: 'two\nEnds before: [3]' }], { ...f, start: 2, prompts: f.prompts.slice(1) }, 'now')!
   const out = summarized(none(msgs), msgs, [r1, r2])
   assert.deepEqual(out.msgs.slice(0, 3), msgs.slice(0, 3))
   // One message each, oldest first, each standing for the first message it covers.
@@ -91,6 +107,11 @@ test('records replace the turns they cover, after the base, and go when their pr
   // Rewound to turn 2 with a new prompt: the second record goes.
   const rewound = [...msgs.slice(0, 10), { role: 'user', content: 'turn three, again' }, ...msgs.slice(11)] as ApiMsg[]
   assert.deepEqual(validChain([r1, r2], rewound), [r1])
+  // Where it breaks: the second record, with the prompt now in its place; and
+  // past the end of a shorter conversation, no prompt.
+  assert.deepEqual(chainBreak([r1, r2], rewound), { index: 1, found: promptHash(rewound[10]) })
+  assert.deepEqual(chainBreak([r1, r2], msgs.slice(0, 8)), { index: 1 })
+  assert.equal(chainBreak([r1, r2], msgs), undefined)
 })
 
 test("records keep the covered notes a record can't stand in for, as a system message before them", () => {
@@ -152,7 +173,7 @@ test("a record's arcs are read from its headings and dated by their turns' promp
   const msgs = session()
   // Message i was first sent at minute i.
   const born = (m: ApiMsg) => new Date(Date.UTC(2026, 9, 25, 12, msgs.indexOf(m))).toISOString()
-  const f = summaryForkOf(none(msgs), msgs, [], 0, 1000, new Map(), counts(msgs), born)!
+  const f = summaryForkOf(none(msgs), msgs, [], 0, 1000, new Map(), counts(msgs), born) as SummaryFork
   const r = recordOf([{ type: 'text', text: '## [1] Did one.\n- a\n\n## [2] Did two.\n- b\n\nEnds before: [3]' }], f, 'now', 900)!
   assert.equal(r.tokens, 900)
   // Turn 1's prompt is message 1, turn 2's message 6 and turn 3's message 10;

@@ -99,9 +99,10 @@ test('a summary fork asks after the messages as sent, without streaming', () => 
 })
 
 test("a summary fork's answer becomes blocks and usage", () => {
-  const out = CHAT.summaryForkAnswer(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'the record', reasoning: 'hmm' } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 900 } } }))
+  const out = CHAT.summaryForkAnswer(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'the record', reasoning: 'hmm' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 900 } } }))
   assert.deepEqual(out.content, [{ type: 'text', text: 'the record' }])
   assert.deepEqual(out.usage, { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, output_tokens: 20 })
+  assert.equal(out.stop, 'stop')
 })
 
 test('a stream is held from its finish, and text added is more of the reply', () => {

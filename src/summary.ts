@@ -38,12 +38,20 @@ export const promptsOf = (msgs: readonly ApiMsg[]) => msgs.flatMap((m, i) => (is
 // The records that still fit the messages: each one's prompt is still there.
 // One that doesn't (the conversation was rewound) goes with the ones after it.
 export function validChain(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary[] {
+  const b = chainBreak(chain, msgs)
+  return b ? chain.slice(0, b.index) : [...chain]
+}
+
+// The first record that no longer fits the messages, by its index in the
+// chain, and the hash of the prompt now where its own was, or none when the
+// conversation has fewer turns; undefined when every record fits.
+export function chainBreak(chain: readonly Summary[], msgs: readonly ApiMsg[]): { index: number; found?: string } | undefined {
   const prompts = promptsOf(msgs)
-  const n = chain.findIndex((s) => {
+  for (const [index, s] of chain.entries()) {
     const i = prompts[s.endsBefore - 1]
-    return i === undefined || promptHash(msgs[i]) !== s.prompt
-  })
-  return n < 0 ? [...chain] : chain.slice(0, n)
+    const found = i === undefined ? undefined : promptHash(msgs[i])
+    if (found !== s.prompt) return { index, ...(found && { found }) }
+  }
 }
 
 // The index of the first message each record covers: the preamble's end
@@ -121,8 +129,10 @@ export type SummaryFork = { start: number; current: number; prompts: Array<{ quo
 // end) hold at least `threshold` tokens before the frontier in the messages as
 // sent, by each one's count in `tokens` (stats.ts, settled). `born` is when a
 // message was first sent (stats.ts, bornOf). A turn's last request is the one
-// its last message answered, which sent the message before it.
-export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[], born: (m: ApiMsg) => string | undefined = () => undefined): SummaryFork | undefined {
+// its last message answered, which sent the message before it. With none, it
+// says why (`skip`), and with too few tokens, how many the turns held.
+export type ForkSkip = { skip: 'no-new-turn' | 'no-preamble' | 'below-threshold'; tokens?: number }
+export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[], born: (m: ApiMsg) => string | undefined = () => undefined): SummaryFork | ForkSkip {
   const prompts = promptsOf(msgs)
   const current = prompts.length
   const start = chain.at(-1)?.endsBefore ?? 1
@@ -130,7 +140,10 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
   const covered = (t: number, j: number) => a.origin[j] >= at(t) && a.origin[j] < prompts[current - 1]
   const charsFrom = (t: number) => a.msgs.reduce((n, m, j) => (covered(t, j) ? n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking), 0) : n), 0)
   const from = Math.max(start, Math.min(offered, current))
-  if (current <= start || at(1) < 0 || tokens.reduce((n, k, j) => (covered(from, j) ? n + k : n), 0) < threshold) return
+  if (current <= start) return { skip: 'no-new-turn' }
+  if (at(1) < 0) return { skip: 'no-preamble' }
+  const held = tokens.reduce((n, k, j) => (covered(from, j) ? n + k : n), 0)
+  if (held < threshold) return { skip: 'below-threshold', tokens: held }
   const quote = (m: ApiMsg) => {
     const text = blocks(m).find((b: Block) => b.type === 'text' && !/^\s*<system-reminder>/.test(String(b.text)))?.text ?? '(an image)'
     const flat = String(text).replace(/\s+/g, ' ').trim()
@@ -200,16 +213,32 @@ export function summaryForkMessages(msgs: readonly ApiMsg[], text: string): ApiM
 // without the closing line, ending before a turn after `start` and no later
 // than the current one, and `tokens`, its output tokens.
 export function recordOf(content: readonly Block[], f: SummaryFork, time: string, tokens?: number): Summary | undefined {
-  if (content.some((b) => b.type === 'tool_use')) return
-  const text = content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
-  const m = [...text.matchAll(/^Ends before: \[(\d+)\]\s*$/gm)].at(-1)
-  const n = Number(m?.[1])
-  if (!m || n <= f.start || n > f.current) return
+  if (rejectionOf(content, f)) return
+  const text = textOf(content)
+  const m = endLine(text)!
+  const n = Number(m[1])
   const record = text.slice(0, m.index).trim()
-  if (!record) return
   const arcs = arcsOf(record, f, n)
   return { endsBefore: n, prompt: f.prompts[n - f.start].hash, text: record, time, ...(arcs && { arcs }), ...(tokens !== undefined && { tokens }) }
 }
+
+// Why a summary fork's answer gives no record, by a fixed reason, with the
+// turn its closing line names when it has one; or undefined when it gives one.
+// A line naming "Ends before" that isn't the closing line exactly is
+// misformatted.
+export type Rejection = { reason: 'tool-call' | 'no-ends-before' | 'ends-before-misformatted' | 'ends-before-out-of-range' | 'empty'; endsBefore?: number }
+export function rejectionOf(content: readonly Block[], f: SummaryFork): Rejection | undefined {
+  if (content.some((b) => b.type === 'tool_use')) return { reason: 'tool-call' }
+  const text = textOf(content)
+  const m = endLine(text)
+  if (!m) return { reason: /ends before/i.test(text) ? 'ends-before-misformatted' : 'no-ends-before' }
+  const n = Number(m[1])
+  if (n <= f.start || n > f.current) return { reason: 'ends-before-out-of-range', endsBefore: n }
+  if (!text.slice(0, m.index).trim()) return { reason: 'empty', endsBefore: n }
+}
+
+const textOf = (content: readonly Block[]) => content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
+const endLine = (text: string) => [...text.matchAll(/^Ends before: \[(\d+)\]\s*$/gm)].at(-1)
 
 // A record's arcs, by their heading lines: one starts the record, and their
 // turns rise within those it covers. Each arc runs to the next one's turn, and

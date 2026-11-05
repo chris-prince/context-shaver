@@ -53,7 +53,7 @@ export const MESSAGES: Protocol = {
   defers: true,
   summaryFork: (sent, text) => ({ ...sent, messages: summaryForkMessages(sent.messages as ApiMsg[], text), stream: false }),
   summaryForkAnswer: (body) => {
-    const o = JSON.parse(body) as { content?: Block[]; usage?: Usage }
-    return { content: o.content ?? [], usage: o.usage }
+    const o = JSON.parse(body) as { content?: Block[]; usage?: Usage; stop_reason?: string }
+    return { content: o.content ?? [], usage: o.usage, stop: o.stop_reason }
   },
 }

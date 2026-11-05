@@ -179,9 +179,9 @@ export const CHAT: Protocol = {
     return { ...rest, stream: false, messages: [...(sent.messages as WireMsg[]), { role: 'user', content: text }] }
   },
   summaryForkAnswer: (body) => {
-    const o = JSON.parse(body) as { choices?: { message?: WireMsg }[]; usage?: Parameters<typeof usageOf>[0] }
+    const o = JSON.parse(body) as { choices?: { message?: WireMsg; finish_reason?: string }[]; usage?: Parameters<typeof usageOf>[0] }
     const m = o.choices?.[0]?.message
     const content: Block[] = [...partsOf(m?.content).map((p): Block => ({ type: 'text', text: p.text ?? '' })), ...(m?.tool_calls ?? []).map((c): Block => ({ type: 'tool_use', id: c.id, name: c.function.name, input: c.function.arguments }))]
-    return { content, usage: usageOf(o.usage) }
+    return { content, usage: usageOf(o.usage), stop: o.choices?.[0]?.finish_reason }
   },
 }

@@ -145,7 +145,7 @@ export type Protocol = {
   // A heavy-compaction summary fork (summary.ts): the request as sent, with
   // `text` asked after its messages, so it reads the request's cache entry, and
   // not streamed where the API allows; and the summary fork's answer, from the
-  // response's body, as blocks, with its usage.
+  // response's body, as blocks, with its usage and why it stopped.
   summaryFork(sent: Record<string, unknown>, text: string): Record<string, unknown>
-  summaryForkAnswer(body: string): { content: Block[]; usage?: Usage }
+  summaryForkAnswer(body: string): { content: Block[]; usage?: Usage; stop?: string }
 }

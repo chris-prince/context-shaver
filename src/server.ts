@@ -30,14 +30,14 @@ import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withou
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSuggestion, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isSuggestion, keyOf, observe, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSuggestion, type Forks, type Sent, type Stats } from './stats.ts'
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
-import { coveredBy, summaryForkOf, instructions, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from './summary.ts'
+import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, recordOf, rejectionOf, startsOf, summarized, validChain, type ForkSkip, type SummaryFork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -121,8 +121,9 @@ function save(key: string, s: State): void {
 // A conversation's records (summary.ts), how many of the oldest the memoir
 // holds, and the dollars its summary forks have cost. They are kept apart from
 // its state, which a request answered after a summary fork began, and prepared
-// before it ended, would save over.
-type Summaries = { chain: Summary[]; merged?: number; spent: number; requests: number }
+// before it ended, would save over. `failed` is the last summary fork that gave
+// no record (Forks, stats.ts).
+type Summaries = { chain: Summary[]; merged?: number; spent: number; requests: number; failed?: Forks['failed'] }
 const summariesOf = (key: string) => path.join(stateDir, `${key}.summaries.json`)
 function loadSummaries(key: string): Summaries {
   try {
@@ -170,7 +171,10 @@ const latestOf = (key: string) => currentOf(key).stats
 
 // What a request becomes: the body to send, and what to record once it is
 // answered.
-type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | undefined; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
+// Why an answered request sent no summary fork: summaryForkOf's reasons, with
+// the threshold the turns fell short of, or the proxy's own.
+type Skip = (ForkSkip & { threshold?: number }) | { skip: 'suggestion' | 'no-breakpoint' | 'in-flight' }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
 // are trimmed: those are the main loop and subagents. Side requests (Claude
@@ -204,7 +208,9 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   // The records it sends, and how many of them as the memoir: as sent before,
   // and on a cold cache, all there are.
   const file = summaryAt ? loadSummaries(key) : undefined
-  const chain = file ? validChain(file.chain, msgs) : []
+  const broke = file && chainBreak(file.chain, msgs)
+  if (broke) noteBreak(key, file.chain, broke)
+  const chain = !file ? [] : file.chain.slice(0, broke ? broke.index : undefined)
   const before = Math.min(s?.summarized ?? 0, chain.length)
   const mergedBefore = Math.min(s?.merged ?? 0, before)
   let records = before
@@ -273,8 +279,16 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornFrom(latestOf(key), msgs, starts[merged + k])))
   if (suggestion) described.suggestion = true
   const after = summaryAt && (model.summaryThreshold ?? summaryAt)
-  // Whether to send a summary fork is known once the response's counts are in.
-  const summaryFork = after && !suggestion && pos.some((q) => q.breakpoint) ? (tokens: number[]) => summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m)) : undefined
+  // Whether to send a summary fork is known once the response's counts are in;
+  // with none, why.
+  const summaryFork = after
+    ? (tokens: number[]): SummaryFork | Skip => {
+        if (suggestion) return { skip: 'suggestion' }
+        if (!pos.some((q) => q.breakpoint)) return { skip: 'no-breakpoint' }
+        const f = summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m))
+        return 'skip' in f && f.tokens !== undefined ? { ...f, threshold: after } : f
+      }
+    : undefined
   const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
@@ -335,14 +349,14 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   const trimmed = policy.skill_shaver_rules ? shaveSkills(sent, policy.skill_shaver_rules).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
   // `shaver optimize`'s requests are one-time work, so they aren't counted.
-  const { spent: summaryForks, requests, chain } = loadSummaries(key)
+  const { spent: summaryForks, requests, chain, failed } = loadSummaries(key)
   const withSummaryForks = c && { ...c, actual: c.actual + summaryForks, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks } }
   // Each summary request is running, or left a record or none. A record no
   // longer fitting the messages is dropped, like one replaced or none at all.
   const valid = validChain(chain, sent.messages).length
   const applied = Math.min(load(key)?.summarized ?? 0, valid)
   const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
-  const summaryRequests = { applied, pending, dropped: requests - applied - pending }
+  const summaryRequests = { applied, pending, dropped: requests - applied - pending, ...(failed && { failed }) }
   const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS, h?.alwaysLoaded)
   if (trimmed) splitShaved(described, trimmed)
   const text = s ? render(s, key, false, withSummaryForks, summaryRequests) : render(estimate(described), key, true, withSummaryForks, summaryRequests)
@@ -780,10 +794,11 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   const was = currentOf(p.key)
   record(journalOf(p.key), was.stats, next, u)
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
-  const due = p.summaryFork && !p.suggestion && !summaryForking.has(p.key) ? p.summaryFork(settled(p.sent, next.tokens)) : undefined
+  const check = p.summaryFork && (summaryForking.has(p.key) ? { skip: 'in-flight' as const } : p.summaryFork(settled(p.sent, next.tokens)))
+  const due = check && !('skip' in check) ? check : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList })
   if (due) void summarize(p, due, target, headers)
-  if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }) })
+  if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }), ...(check && { summaryCheck: due ? 'sent' : check }) })
 }
 
 // A log line's counts from a request's usage.
@@ -834,6 +849,11 @@ function answeredBare(key: string, b: BareLine, log?: { dir: string; line: Recor
 // The conversations with a summary fork under way, which get no second one.
 const summaryForking = new Set<string>()
 
+// An error from a fork, marked with the step it failed at, and the response's
+// body when it had one.
+type Staged = Error & { stage: string; body?: string }
+const staged = (err: unknown, stage: string, body?: string): Staged => Object.assign(err instanceof Error ? err : new Error(String(err)), { stage, ...(body !== undefined && { body }) })
+
 // Sends a request the proxy makes of its own, a fork, and journals it as
 // finish journals a client's: once the API answers 200, before the answer is
 // used, with the usage its protocol reads in it, or marked cut off or no usage.
@@ -848,12 +868,12 @@ async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>,
     r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
   } catch (err) {
     log({ error: String(err).slice(0, 2000) })
-    throw err
+    throw staged(err, 'fetch')
   }
   if (r.status !== 200) {
     const error = await r.text()
     log({ status: r.status, error: error.slice(0, 2000) })
-    throw new Error(`${r.status} ${error.slice(0, 500)}`)
+    throw staged(new Error(`${r.status} ${error.slice(0, 500)}`), 'status', error)
   }
   let text: string | undefined
   let usage: Usage | undefined
@@ -862,6 +882,8 @@ async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>,
     const reader = p.proto.usageReader()
     reader.push(Buffer.from(text))
     usage = reader.end().usage
+  } catch (err) {
+    throw staged(err, text === undefined ? 'read' : 'usage', text)
   } finally {
     const why = text === undefined ? 'cut off' : 'no usage'
     const line: ForkLine = { time: new Date().toISOString(), kind, model: p.model, ...(p.provider && { provider: p.provider }), ...(usage ? { usage } : { why }) }
@@ -869,6 +891,33 @@ async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>,
     log({ status: r.status, ...(usage ? usageFields(usage) : { why }) })
   }
   return { text, usage }
+}
+
+// Saves the last summary fork of a conversation that gave no record.
+function failedFork(key: string, failed: NonNullable<Forks['failed']>): void {
+  writeFileSync(summariesOf(key), JSON.stringify({ ...loadSummaries(key), failed }))
+}
+
+// Saves a summary fork's response body that gave no record, beside the
+// conversation's log, to read or parse again; gives its path there.
+function savedAnswer(dir: string, time: string, body: string): string {
+  const name = `forks/summary-${time.replace(/[:.]/g, '-')}.txt`
+  mkdirSync(path.join(dir, 'forks'), { recursive: true })
+  writeFileSync(path.join(dir, name), body)
+  return name
+}
+
+// Logs where a conversation's records stopped fitting its messages, once
+// for each way they're seen to break: always to proxy.log, and with logging,
+// as a `summary-dropped` line. The records from there on are left out.
+const breaks = new Map<string, string>()
+function noteBreak(key: string, chain: readonly Summary[], b: { index: number; found?: string }): void {
+  const seen = `${chain.length}:${b.index}:${b.found ?? ''}`
+  if (breaks.get(key) === seen) return
+  breaks.set(key, seen)
+  const s = chain[b.index]
+  console.error(`shaver: summary records for ${key}: ${chain.length - b.index} of ${chain.length} no longer fit, from record ${b.index + 1}, which ends before [${s.endsBefore}]: that turn's prompt ${b.found ? 'changed' : 'is gone'}`)
+  if (a['log-step-events']) writeLine(path.join(logRoot, key), { event: 'summary-dropped', time: new Date().toISOString(), index: b.index, dropped: chain.length - b.index, records: chain.length, endsBefore: s.endsBefore, stored: s.prompt, found: b.found ?? null })
 }
 
 // Sends a summary fork of an answered request for a record of its turns
@@ -885,26 +934,52 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
   const asked = { start: f.start, current: f.current, maxTokens: body.max_tokens, thinking: body.thinking }
   const before = loadSummaries(key)
   writeFileSync(summariesOf(key), JSON.stringify({ ...before, requests: before.requests + 1 }))
+  const what = `shaver: summary fork for ${key}, turns ${f.start}-${f.current}:`
+  // The step it's at, and the answer and why it stopped, once they're known.
+  let stage = 'request'
+  let answer: string | undefined
+  let stop: string | undefined
   try {
     const { text, usage } = await forked(p, 'summary', body, target, headers)
+    answer = text
+    stage = 'write'
     if (usage) {
       const s = loadSummaries(key)
       writeFileSync(summariesOf(key), JSON.stringify({ ...s, spent: s.spent + spent(p.model, p.provider, usage) }))
     }
+    stage = 'parse'
     const out = p.proto.summaryForkAnswer(text)
+    stop = out.stop
     const time = new Date().toISOString()
+    stage = 'record'
     const record = recordOf(out.content, f, time, usage?.output_tokens)
+    const rejected = record ? undefined : rejectionOf(out.content, f)
+    stage = 'write'
     let merged: number | undefined
     if (record) {
       const s = loadSummaries(key)
       const chain = [...s.chain.filter((r) => r.endsBefore <= f.start), record]
       merged = memoirAt ? mergedOf(chain, s.merged ?? 0, memoirAt) : 0
       writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain, merged }))
+    } else failedFork(key, { time, outcome: 'rejected', reason: rejected?.reason ?? 'unknown' })
+    const tokens = usage ? `, ${usage.output_tokens} output tokens` : ''
+    console.error(`${what} ${record ? `recorded, ends before [${record.endsBefore}]` : `rejected, ${rejected?.reason}`}${tokens}, stopped: ${stop ?? 'unknown'}`)
+    if (logDir) {
+      const why = rejected && { reason: rejected.reason, ...(rejected.endsBefore !== undefined && { foundEndsBefore: rejected.endsBefore }), answer: savedAnswer(logDir, time, text) }
+      writeLine(logDir, { event: 'summary', time, outcome: record ? 'recorded' : 'rejected', ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record && (record.arcs?.length ?? 'unparsed'), merged, usage, stop, ...why })
     }
-    if (logDir) writeLine(logDir, { event: 'summary', time, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record?.arcs?.length, merged, usage })
   } catch (err) {
-    console.error('shaver: summary fork failed:', err)
-    if (logDir) writeLine(logDir, { event: 'summary', time: new Date().toISOString(), ...asked, ms: Date.now() - began, error: String(err).slice(0, 500) })
+    const time = new Date().toISOString()
+    const at = (err as Partial<Staged>).stage ?? stage
+    const body = (err as Partial<Staged>).body ?? answer
+    const error = String((err instanceof Error && err.stack) || err)
+    console.error(`${what} failed at ${at}: ${error}`)
+    try {
+      failedFork(key, { time, outcome: 'failed', reason: at })
+    } catch (e) {
+      console.error(`${what} its failure could not be saved:`, e)
+    }
+    if (logDir) writeLine(logDir, { event: 'summary', time, outcome: 'failed', stage: at, ...asked, ms: Date.now() - began, stop, error: error.slice(0, 4000), ...(body !== undefined && { answer: savedAnswer(logDir, time, body) }) })
   } finally {
     summaryForking.delete(key)
   }

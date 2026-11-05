@@ -620,7 +620,9 @@ A summary fork's cost is in the session's actual cost in `shaver info`, which
 also shows how many summary forks have been sent, answered or not, and what
 became of them: their records the prompt now sends (applied), those still to
 answer or waiting for a cold cache (pending), and the rest, which failed,
-answered with nothing, were replaced or no longer fit the messages (dropped).
+answered with nothing, were replaced or no longer fit the messages (dropped),
+and the last one to give no record: whether it failed or was rejected, why,
+and when.
 
 ## Logs
 
@@ -654,11 +656,35 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     the items whose treatment it changes (or would have, if deferred) by kind
     and treatment, as `{"tool:stub": 2, "reasoning:drop": 1}`;
   - a `summary` line for each summary fork: the turns it was offered (`start`
-    to `current`), the turn its record ends before (none if it made none), the
-    record's characters and the summary fork's usage. A request line's
-    `summaries` is how many records it sent.
+    to `current`), its `outcome`, the record's characters and the summary
+    fork's usage, and `stop`, why the answer stopped as the API says
+    (`end_turn`, `max_tokens` and the like). An outcome is one of:
+    - `recorded`: with the turn its record ends before, and its arcs, or
+      `unparsed` when their headings don't parse;
+    - `rejected`: the answer gave no record, for a `reason`: `tool-call`,
+      `no-ends-before`, `ends-before-misformatted` (a line names "Ends before"
+      but isn't the closing line exactly), `ends-before-out-of-range` (with
+      the turn it named as `foundEndsBefore`) or `empty`;
+    - `failed`: with the `stage` it failed at (`fetch`, `status`, `read`,
+      `usage`, `parse`, `record` or `write`) and the error with its stack.
+
+    `answer` names the response's body, saved under `forks/`, for any
+    outcome but `recorded`. A request line's `summaries` is how many records
+    it sent, and `summaryCheck` whether it sent a summary fork: `sent`, or
+    why not (`skip`): `suggestion`, `no-breakpoint`, `in-flight` (one is
+    running), `no-new-turn`, `no-preamble`, or `below-threshold` with the
+    turns' `tokens` and the `threshold`;
+  - a `summary-dropped` line when the records stop fitting the messages, once
+    for each way they break: the first record that no longer fits (`index`)
+    and the turn it ends before, how many records go from it on, and that
+    turn's prompt hash as stored and as `found` now (null when the
+    conversation has fewer turns).
 - `parts/`, where each distinct message is saved once, together with its bytes
   split by kind. A trimmed message shares a lineage with the original.
+- `forks/`, the bodies of the summary forks that gave no record.
+
+Whether logging is on or not, `proxy-data/proxy.log` gets a line for each
+summary fork's outcome, and for each way a conversation's records break.
 
 Scripts:
 

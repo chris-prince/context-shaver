@@ -244,7 +244,7 @@ export function canonical(wire: Record<string, unknown>): Wire {
   return { body, render, ids: { head: idsOf(head), of: (m) => idsOf(renderMsg(m)) }, counted }
 }
 
-type Response = { output?: Item[]; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; attribution?: unknown } }
+type Response = { output?: Item[]; status?: string; incomplete_details?: { reason?: string }; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; attribution?: unknown } }
 
 // ChatGPT's backend doesn't say what it wrote. Measured through OpenRouter
 // (local/notes.md, "Make Codex's cost and savings figures accurate"), OpenAI
@@ -358,6 +358,6 @@ export const RESPONSES: Protocol = {
         } catch {}
     if (!r) r = JSON.parse(body) as Response
     const content: Block[] = (r.output ?? []).flatMap((it): Block[] => (it.type === 'message' ? [{ type: 'text', text: textOf(it) }] : CALLS.has(it.type) ? [{ type: 'tool_use', id: it.call_id, name: it.name, input: it.input ?? it.arguments }] : []))
-    return { content, usage: usageOf(r.usage) }
+    return { content, usage: usageOf(r.usage), stop: r.incomplete_details?.reason ?? r.status }
   },
 }

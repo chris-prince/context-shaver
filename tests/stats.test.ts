@@ -175,6 +175,8 @@ test('the summaries line counts summary creation requests by what became of them
   assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 0 }), /\n  1 summary creation request\n    1 applied, 0 pending, 0 dropped\n\n/)
   assert.match(render(s, 'session', true, undefined, { applied: 10, pending: 1, dropped: 2 }), /\n  13 summary creation requests\n    10 applied, 1 pending, 2 dropped\n\n/)
   assert.match(render(s, 'session', true), /\n  0 summary creation requests\n\n/)
+  // The last that gave no record says how.
+  assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 1, failed: { time: '2026-11-04T10:00:00Z', outcome: 'rejected', reason: 'no-ends-before' } }), /\n    1 applied, 0 pending, 1 dropped\n    last failed: rejected, no-ends-before, 2026-11-04 \d\d:00 \S+\n\n/)
 })
 
 test('an advance removes what the earlier parts cost less what they cost now', () => {

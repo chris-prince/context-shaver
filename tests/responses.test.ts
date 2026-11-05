@@ -186,6 +186,9 @@ test("a summary fork's streamed answer becomes blocks and usage", () => {
   const out = RESPONSES.summaryForkAnswer(stream)
   assert.deepEqual(out.content, [{ type: 'text', text: 'hello' }])
   assert.equal(out.usage?.cache_read_input_tokens, 900)
+  // Why it stopped: an incomplete one's reason, or else its status.
+  assert.equal(RESPONSES.summaryForkAnswer(JSON.stringify({ output: [], status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } })).stop, 'max_output_tokens')
+  assert.equal(RESPONSES.summaryForkAnswer(JSON.stringify({ output: [], status: 'completed' })).stop, 'completed')
 })
 
 test("a local answer streams as one message, and turn state isn't kept as a limit", () => {
