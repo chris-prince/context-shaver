@@ -71,14 +71,20 @@ export type Item = { kind: Kind; id: string; request: number; turn: number }
 export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'redacted_thinking'
 export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
 
+// A record or memoir is found by the fixed start of its heading, so the rest
+// of the heading can be reworded; logs from before then are found by the
+// headings they had.
+const startsWithAny = (b: Block, starts: string[]) => b.type === 'text' && typeof b.text === 'string' && starts.some((s) => (b.text as string).startsWith(s))
 // The heading of the message heavy compaction's records go in (summary.ts).
-export const SUMMARY_HEAD = "[shaver] My record of this session's earlier turns, compacted in my context:"
-export const isSummary = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith(SUMMARY_HEAD)
+const SUMMARY_TAG = '[shaver] Summary records:'
+export const SUMMARY_HEAD = `${SUMMARY_TAG} distillations of this session's recent arcs of work, by canonical turn number when each arc started.`
+export const isSummary = (b: Block) => startsWithAny(b, [SUMMARY_TAG, "[shaver] My record of this session's earlier turns"])
 // The heading and closing line of the memoir, the oldest records merged into
 // their arcs' titles by date (summary.ts).
-export const MEMOIR_HEAD = "[shaver] My memoir: an overview of this session's work leading up to this point."
-export const MEMOIR_FOOT = 'The details can be found in the session transcripts. What follows is the active work.'
-export const isMemoir = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith(MEMOIR_HEAD)
+const MEMOIR_TAG = '[shaver] Memoir records:'
+export const MEMOIR_HEAD = `${MEMOIR_TAG} titles of this session's oldest arcs of work, by date when each arc started.`
+export const MEMOIR_FOOT = 'The details can be found in the session transcripts.'
+export const isMemoir = (b: Block) => startsWithAny(b, [MEMOIR_TAG, '[shaver] My memoir:'])
 
 // The client's half of what the core needs to know about its tools (DESIGN.md,
 // "Protocols"): which tools' calls are skills and tool loads; which inputs of

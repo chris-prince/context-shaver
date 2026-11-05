@@ -605,10 +605,13 @@ record is kept apart from sending it.
 - **Merged into the memoir once they hold too much.** Each time a record is
   kept, if the records hold more than `memoir_threshold_tokens` by their output
   tokens, the oldest are merged until the rest fit. The memoir is one assistant
-  message before the records left: a line saying it is an overview of the work
-  leading up to this point, then each merged arc's title and minutes under the
-  date it started, each date once, then a line saying the details are in the
-  session transcripts and what follows is the active work. Like a new record,
+  message before the records left: a line saying it holds the titles of the
+  session's oldest arcs of work, then each merged arc's title and minutes under
+  the date it started, each date once, then a line saying the details are in
+  the session transcripts. Records and the memoir are found by the fixed start
+  of their headings, `[shaver] Summary records:` and `[shaver] Memoir
+  records:`, so the rest can be reworded; older logs by their old headings.
+  Like a new record,
   it is sent once the cache is cold. A record without arc headings (made before
   they were asked for) stops the merge, along with every record after it. In
   `shaver info` the memoir counts as `memoir`.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
+import { isMemoir, isSummary, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
 import { coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, recordOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
@@ -190,4 +190,16 @@ test('the memoir lists arc titles under their dates, before the records left', (
   const out = summarized(none(msgs), msgs, [r1, r2, r3], 2)
   assert.deepEqual(out.msgs.slice(3, 5), [memoirOf([r1, r2]), `${SUMMARY_HEAD}\n\nthree`].map((text) => ({ role: 'assistant', content: [{ type: 'text', text }] })))
   assert.deepEqual(out.origin.slice(3, 5), [3, 10])
+})
+
+test('records and the memoir are found by the fixed start of their headings, and by their old headings', () => {
+  const text = (t: string) => ({ type: 'text', text: t })
+  for (const t of [`${SUMMARY_HEAD}\n\nx`, '[shaver] Summary records: reworded\n\nx', "[shaver] My record of this session's earlier turns, compacted in my context:\n\nx"]) {
+    assert.ok(isSummary(text(t)), t)
+    assert.ok(!isMemoir(text(t)), t)
+  }
+  for (const t of [`${MEMOIR_HEAD}\n\nx`, '[shaver] Memoir records: reworded', "[shaver] My memoir: an overview of this session's work leading up to this point."]) {
+    assert.ok(isMemoir(text(t)), t)
+    assert.ok(!isSummary(text(t)), t)
+  }
 })
