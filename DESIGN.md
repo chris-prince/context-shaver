@@ -273,8 +273,8 @@ when the proxy starts, the old text kept beside it as `policy.json.old`.
 `conversation_shaver_rules` gives each kind of part a list of rules. A rule is
 due once its item's request or turn is among the completed ones, leaving out
 the latest few: `"after": "4 requests"` or `"after": "1 turn"`, the unit read
-singular or plural whatever the count. `"after": "15000 tokens"` keeps the
-latest 15000 tokens of the kind: a rule is due to an item of a completed
+singular or plural whatever the count. `"after": "20000 tokens"` keeps the
+latest 20000 tokens of the kind: a rule is due to an item of a completed
 request once the items of its kind after it in completed requests hold that
 many tokens. Thinking counts at the tokens it billed, as the proxy recorded
 them (`thinking` in a session's state), and a Codex tool call, with its output,
