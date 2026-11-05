@@ -54,6 +54,9 @@ test("a summary fork's record is read back, and only one that covers a complete 
   for (const text of ['Ends before: [1]', 'no closing line', '## Arc\n\nEnds before: [5]']) assert.equal(recordOf([{ type: 'text', text }], f, 'now'), undefined)
   assert.equal(recordOf([{ type: 'text', text: 'x\nEnds before: [3]' }, { type: 'tool_use', id: 'z', name: 'Bash', input: {} }], f, 'now'), undefined)
   assert.match(instructions(f), /\[1\] "turn one"\n\[2\] "turn two"\n\[3\] "turn three"\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
+  assert.doesNotMatch(instructions(f), /already in my journal/)
+  // A later record's instructions leave out the turns earlier records cover.
+  assert.match(instructions({ ...f, start: 2, prompts: f.prompts.slice(1) }), /\[3\] "turn three"\n\nTurns before \[2\] are already in my journal; leave them out\.\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
 })
 
 test('a summary fork appends its instructions after the breakpoint, so it reads the cached prefix', () => {

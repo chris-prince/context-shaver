@@ -573,7 +573,10 @@ record is kept apart from sending it.
   sees it, and only one runs at a time per conversation.
 - **Made in parts.** The instructions list the uncovered turns by number, each
   with its prompt quoted, and ask for complete arcs only, ending with the turn
-  the record stops before. Each arc starts with a heading, `## [<turn>] <title>`,
+  the record stops before. They read as the user asking for a record for
+  their journal, to resume the work from later, so the record speaks as the
+  model to the user, as the assistant message it goes back in as does. Each
+  arc starts with a heading, `## [<turn>] <title>`,
   giving the turn it starts at and a one-sentence title that stands on its own.
   The model sees no times (neither protocol puts one on a part), so the proxy
   dates each arc itself when it keeps the record: by when its first turn's

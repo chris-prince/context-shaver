@@ -149,13 +149,11 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
 export function instructions(f: SummaryFork): string {
   const list = f.prompts.map((p, k) => `[${f.start + k}] "${p.quote}"`)
   const current = list.pop()
-  return `[shaver] This message is not from the user, and your answer will not be shown to them. Pause the task: don't call any tools, and answer with text only.
-
-Compact the early part of this session into a record of its memorable events. Your record will replace the turns it covers in your context, so you can keep working from it and the messages that follow. ${f.start > 1 ? `Turns before [${f.start}] are already compacted; leave them out. ` : ''}Cover the turns that start with these prompts:
+  return `I need a record of our work so far for my journal, so that we can resume the work from it later. Write it as text only, without calling any tools; my journaling tool reads your answer automatically, so give only the record. Cover the memorable events of the turns that start with these prompts:
 
 ${list.join('\n')}
 
-The latest prompt, still in progress:
+${f.start > 1 ? `Turns before [${f.start}] are already in my journal; leave them out.\n\n` : ''}The latest prompt, still in progress:
 ${current}
 
 Divide the work into arcs: stretches of the session spent on one goal, such as a feature, a bug hunt or a round of edits to one file. Keep the arcs in the order they happened. Start each arc with a heading line giving the number of the turn it starts at and a title of one sentence saying what the arc did:
@@ -168,12 +166,12 @@ Under it, write terse bullets covering only the arc's memorable points, told as 
 
 - the goal that started the arc
 - outcomes that landed: changes made, commits, results measured
-- decisions the user made
-- land mines: traps that were hit, such as a command that hung, a wrong assumption that looked right, or something the user had to correct
+- decisions I made
+- land mines: traps that were hit, such as a command that hung, a wrong assumption that looked right, or something I had to correct
 
-Tell each point as an event, not as a rule drawn from it. Write "I deleted \`old/\` without asking; the user had it restored (\`ed24806\`)", not "always ask before deleting". Report where things ended up rather than every step on the way, and leave out dead ends and intermediate versions unless they were land mines.
+Tell each point as an event, not as a rule drawn from it. Write "I deleted \`old/\` without asking; you had it restored (\`ed24806\`)", not "always ask before deleting". Report where things ended up rather than every step on the way, and leave out dead ends and intermediate versions unless they were land mines.
 
-Stop at the last complete arc. If an arc is still in progress, leave it out entirely: it will be compacted later, once it is done.
+Stop at the last complete arc. If an arc is still in progress, leave it out entirely: I'll ask for it later, once it is done.
 
 End your record with one line naming the first turn your arcs do not cover:
 
@@ -183,7 +181,7 @@ If no arc is complete yet, answer with only that line, naming [${f.start}].
 
 Your record must be at most a tenth the length of the turns it covers; the turns listed above, up to the latest, are about ${Math.round(f.chars).toLocaleString('en-US')} characters.
 
-Keep exact identifiers you may need: paths, hashes, names, numbers, commands. Drop narration and tool output. Start directly with the first arc.`
+Keep the exact identifiers I, or you, might need: paths, hashes, names, numbers, commands. Drop narration and tool output. Start directly with the first arc.`
 }
 
 // A fork's messages: the request's, with the instructions appended to the last
