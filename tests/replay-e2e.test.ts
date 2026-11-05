@@ -7,9 +7,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { receivedOf } from '../src/log.ts'
+import { promptsOf } from '../src/summary.ts'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 
@@ -102,6 +104,17 @@ test('the replay rebuilds a logged conversation and reprices it consistently', a
     assert.doesNotMatch(row('drop wait 2'), /trims 0$/)
     assert.equal(row('POLICY'), row('drop wait 2'))
     assert.ok(cost('drop wait 2') < cost('no trimming'))
+    // Each request line's turn and prompts are counted over the messages as
+    // the client sent them, `received` where the drops changed them, not over
+    // the parts sent; the first turn's prompt is first, the second's after
+    // the first turn's 14 messages.
+    const lines = readFileSync(path.join(dir, 'logs', key, 'step_events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    const sent = lines.filter((l) => l.event === 'request')
+    assert.deepEqual(sent.map((l) => l.turn), [1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2])
+    assert.deepEqual(sent.at(-1).prompts, [0, 14])
+    const read = (h: string) => JSON.parse(readFileSync(path.join(dir, 'logs', key, 'parts', h + '.json'), 'utf8'))
+    receivedOf(lines).forEach((hashes, n) => assert.deepEqual(sent[n].prompts, promptsOf(hashes.map(read))))
+    assert.ok(sent.some((l) => l.received && JSON.stringify(promptsOf(l.parts.map((q: { hash: string }) => read(q.hash)))) !== JSON.stringify(l.prompts)))
   } finally {
     child.kill()
     up.close()

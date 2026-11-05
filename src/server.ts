@@ -38,7 +38,7 @@ import { localHost, route } from './via.ts'
 import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
-import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, recordOf, rejectionOf, salvagedOf, startsOf, summarized, validChain, type ForkSkip, type SummaryFork, type Summary } from './summary.ts'
+import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, promptsOf, recordOf, rejectionOf, salvagedOf, startsOf, summarized, validChain, type ForkSkip, type SummaryFork, type Summary } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -318,7 +318,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     // The messages as the client sent them, when they went up changed, so
     // what was taken (a newest answer's thinking, say) can be rebuilt.
     const changed = msgs.length !== body.messages.length || msgs.some((m, i) => JSON.stringify(m) !== JSON.stringify(body.messages[i]))
-    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...(changed && { received: writeParts(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, turn: described.turns, prompts: promptsOf(msgs), ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...(changed && { received: writeParts(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }

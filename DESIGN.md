@@ -658,7 +658,14 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     hash, so what a trim took (the newest answer's thinking, say) can be
     rebuilt. It is logged as `{ keep, add }`: how many hashes it shares at
     the start with the previous request line's, and the ones after those.
-    The first line after a restart has no previous one and lists them all;
+    The first line after a restart has no previous one and lists them all.
+    `turn` is the request's turn, the latest prompt's number, counted over
+    the messages as the client sent them, the way records number turns (a
+    summary line's `current`; not the clock's `turns`, the completed ones).
+    `prompts` is the index of each turn's prompt in those messages, turn 1
+    first: `received`, or `parts` when nothing changed. It is the proxy's own
+    view of which messages are prompts, so a log stays numbered as the proxy
+    saw it after what counts as a prompt changes;
   - a `compaction` line for each decision that had something to trim:
     advanced, cache state, saved and rewrite characters, and `transitions`,
     the items whose treatment it changes (or would have, if deferred) by kind

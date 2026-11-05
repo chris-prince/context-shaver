@@ -143,6 +143,11 @@ test('each summary fork logs how it went, and each request why it sent none', as
     // Why each request sent none, or that it sent one.
     const checks = all.filter((l) => l.event === 'request').map((l) => l.summaryCheck?.skip ?? l.summaryCheck)
     assert.deepEqual(checks.slice(0, 6), ['no-new-turn', 'turn-continues', 'sent', 'sent', 'sent', 'sent'])
+    // Each request's turn and its prompts' indexes, as records number them:
+    // turn 2 goes on after a tool call, and the rewind is back at turn 3.
+    const sent = all.filter((l) => l.event === 'request')
+    assert.deepEqual(sent.map((l) => l.turn), [1, 2, 2, 3, 4, 5, 3])
+    assert.deepEqual(sent.at(-2).prompts, [0, 2, 6, 8, 10])
     // Each fork asks as the user's next prompt would: after the reply that
     // ended the turn, in a message of its own.
     for (const m of up.asked) {
