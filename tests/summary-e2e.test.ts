@@ -38,13 +38,6 @@ async function upstream(): Promise<{ url: string; close(): void }> {
   return { url: `http://127.0.0.1:${port}`, close: () => server.close() }
 }
 
-const freePort = async () => {
-  const s = createServer()
-  await new Promise<void>((ok) => s.listen(0, '127.0.0.1', ok))
-  const { port } = s.address() as { port: number }
-  await new Promise((ok) => s.close(ok))
-  return port
-}
 
 const POLICY = {
   conversation_shaver_rules: { user_and_assistant_text: { summary_threshold_tokens: 10, memoir_threshold_tokens: 1e9 } },
@@ -74,18 +67,18 @@ test('each summary fork logs how it went, and each request why it sent none', as
   const up = await upstream()
   const policy = path.join(dir, 'policy.json')
   writeFileSync(policy, JSON.stringify(POLICY))
-  const port = await freePort()
-  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', String(port), '--upstream', up.url, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'] })
+  // Port 0: the proxy takes a free port as it binds, and names it.
+  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up.url, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'] })
   let err = ''
   try {
-    await new Promise<void>((ok, fail) => {
-      child.stderr!.on('data', (d) => { err += d; if (err.includes('listening on')) ok() })
+    const url = await new Promise<string>((ok, fail) => {
+      child.stderr!.on('data', (d) => { err += d; const m = err.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/); if (m) ok(m[1]) })
       child.on('exit', (code) => fail(new Error(`the proxy exited (${code}): ${err}`)))
     })
     const history: any[] = []
     const send = async (messages: any[]) => {
       const last = messages.at(-1)
-      const r = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      const r = await fetch(`${url}/v1/messages`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1' },
         body: JSON.stringify({
           model: 'claude-opus-5-5', max_tokens: 1000, metadata: { user_id: JSON.stringify({ session_id: 's1' }) },

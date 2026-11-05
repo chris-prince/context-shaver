@@ -14,6 +14,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
@@ -1214,7 +1215,7 @@ async function linesFor(proto: Protocol, h: Harness | undefined, key: string, bo
   return asked
 }
 
-createServer((req, res) => {
+const server = createServer((req, res) => {
   handle(req, res).catch((err) => {
     if (abortedBy(err)) return res.end()
     console.error('shaver:', err)
@@ -1223,11 +1224,14 @@ createServer((req, res) => {
       res.end(protocolOf((req.url ?? '/').replace(/^\/via\/[^/?#]*/, '')).error(502, `shaver proxy: ${err}`))
     } else res.end()
   })
-}).on('error', (err: NodeJS.ErrnoException) => {
+})
+// With port 0 the OS picks a free port as it binds; the line gives the one
+// taken.
+server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code !== 'EADDRINUSE') throw err
   console.error(`shaver: ${inUse(a.port)}`)
   process.exit(1)
-}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: listening on http://127.0.0.1:${a.port}, forwarding to ${a.upstream}`))
+}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}`))
 
 function inUse(port: string) {
   return `port ${port} is in use by another program. Set SHAVER_PORT=NNNN to an available port number.`

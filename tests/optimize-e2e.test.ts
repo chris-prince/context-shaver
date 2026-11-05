@@ -55,31 +55,24 @@ async function upstream(fail = (raw: string) => false): Promise<Upstream> {
   return { url: `http://127.0.0.1:${port}`, bodies, close: () => server.close() }
 }
 
-const freePort = async () => {
-  const s = createServer()
-  await new Promise<void>((ok) => s.listen(0, '127.0.0.1', ok))
-  const { port } = s.address() as { port: number }
-  await new Promise((ok) => s.close(ok))
-  return port
-}
-
 // The proxy, with a policy keeping every skill whole, in a directory of its own.
 type Proxy = { url: string; policy: string; child: ChildProcess; err: () => string }
 async function proxy(up: string, args: string[] = []): Promise<Proxy> {
   const dir = mkdtempSync(path.join(tmpdir(), 'optimize-e2e-'))
   const policy = path.join(dir, 'policy.json')
   writeFileSync(policy, JSON.stringify({ skill_shaver_rules: [{ name: '*', action: 'keep' }] }, null, 2) + '\n')
-  const port = await freePort()
-  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', String(port), '--upstream', up, '--dir', dir, '--policy', policy, ...args], { stdio: ['ignore', 'ignore', 'pipe'] })
+  // Port 0: the proxy takes a free port as it binds, and names it.
+  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up, '--dir', dir, '--policy', policy, ...args], { stdio: ['ignore', 'ignore', 'pipe'] })
   let err = ''
-  await new Promise<void>((ok, fail) => {
+  const url = await new Promise<string>((ok, fail) => {
     child.stderr!.on('data', (d) => {
       err += d
-      if (err.includes('listening on')) ok()
+      const m = err.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/)
+      if (m) ok(m[1])
     })
     child.on('exit', (code) => fail(new Error(`the proxy exited (${code}): ${err}`)))
   })
-  return { url: `http://127.0.0.1:${port}`, policy, child, err: () => err }
+  return { url, policy, child, err: () => err }
 }
 
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] })

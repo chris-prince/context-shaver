@@ -33,13 +33,6 @@ async function upstream(): Promise<{ url: string; close(): void }> {
   return { url: `http://127.0.0.1:${port}`, close: () => server.close() }
 }
 
-const freePort = async () => {
-  const s = createServer()
-  await new Promise<void>((ok) => s.listen(0, '127.0.0.1', ok))
-  const { port } = s.address() as { port: number }
-  await new Promise((ok) => s.close(ok))
-  return port
-}
 
 // The replay's own drop policy at wait 2, so WAIT=2 checks the rebuild.
 const POLICY = {
@@ -90,15 +83,15 @@ test('the replay rebuilds a logged conversation and reprices it consistently', a
   const up = await upstream()
   const policy = path.join(dir, 'policy.json')
   writeFileSync(policy, JSON.stringify(POLICY, null, 2) + '\n')
-  const port = await freePort()
-  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', String(port), '--upstream', up.url, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'] })
+  // Port 0: the proxy takes a free port as it binds, and names it.
+  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up.url, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'] })
   try {
     let err = ''
-    await new Promise<void>((ok, fail) => {
-      child.stderr!.on('data', (d) => { err += d; if (err.includes('listening on')) ok() })
+    const url = await new Promise<string>((ok, fail) => {
+      child.stderr!.on('data', (d) => { err += d; const m = err.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/); if (m) ok(m[1]) })
       child.on('exit', (code) => fail(new Error(`the proxy exited (${code}): ${err}`)))
     })
-    await converse(`http://127.0.0.1:${port}`)
+    await converse(url)
     const [key] = readdirSync(path.join(dir, 'logs'))
     const out = execFileSync(process.execPath, [path.join(ROOT, 'scripts/replay.ts'), path.join(dir, 'logs', key)], { env: { ...process.env, WAIT: '2', POLICY: policy }, encoding: 'utf8' })
     const row = (name: string) => out.split('\n').find((l) => l.startsWith(name))!.slice(14)
