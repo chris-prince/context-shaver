@@ -75,7 +75,7 @@ SID=$(uuidgen | tr A-Z a-z)
 mkdir -p /private/tmp/shaver-bench
 for SLOT in $(seq 0 9); do
   P0=$((8800 + 10 * SLOT))
-  lsof -tiTCP:$P0-$((P0 + 9)) -sTCP:LISTEN >/dev/null && continue
+  lsof -tiTCP:$P0-$((P0 + 9)) -sTCP:LISTEN >/dev/null && { SLOT=; continue; }
   mkdir /private/tmp/shaver-bench/slot$SLOT.lock 2>/dev/null && break
   SLOT=
 done
