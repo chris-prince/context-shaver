@@ -38,7 +38,7 @@ import { localHost, route } from './via.ts'
 import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
-import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, promptsOf, recordOf, rejectionOf, salvagedOf, startsOf, summarized, validChain, type ForkSkip, type SummaryFork, type Summary } from './summary.ts'
+import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -119,6 +119,25 @@ function save(key: string, s: State): void {
   writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify({ ...s, entries, thinking: { ...was?.thinking, ...s.thinking }, calls: { ...s.calls, ...was?.calls } }))
 }
 
+// A conversation's internal IDs (summary.ts, turnsOf): the last one given,
+// which every request and fork moves on, and each turn's, by the prompts up to
+// it. Read and written at once, so requests in flight together never share
+// one. `next` false only looks the turns up: a turn not yet seen has none (NaN).
+type Ids = { last: number; turns: Record<string, number> }
+const idsFile = (key: string) => path.join(stateDir, `${key}.ids.json`)
+function idsOf(key: string, msgs: readonly ApiMsg[], next = true): { id: number; turns: Turn[] } {
+  let ids: Ids = { last: 0, turns: {} }
+  try {
+    ids = JSON.parse(readFileSync(idsFile(key), 'utf8'))
+  } catch {}
+  const was = ids.last
+  const turns = turnsOf(msgs, ids.turns, () => (next ? ++ids.last : NaN))
+  if (!next) return { id: was, turns }
+  if (ids.last === was) ids.last++
+  writeFileSync(idsFile(key), JSON.stringify(ids))
+  return { id: ids.last, turns }
+}
+
 // A conversation's records (summary.ts), how many of the oldest the memoir
 // holds, and the dollars its summary forks have cost. They are kept apart from
 // its state, which a request answered after a summary fork began, and prepared
@@ -192,6 +211,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
   const s = load(key)
+  // Over the messages as received, so a side request's ask is a turn too.
+  const { id: requestId, turns } = idsOf(key, msgs)
   const suggestion = isSideRequest(msgs, side)
   const own = withoutSideRequest(msgs, side)
   const held = heldTo(s?.applied ?? { requests: 0, turns: 0 }, own)
@@ -211,26 +232,26 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   // The records it sends, and how many of them as the memoir: as sent before,
   // and on a cold cache, all there are.
   const file = summaryAt ? loadSummaries(key) : undefined
-  const broke = file && chainBreak(file.chain, msgs)
+  const broke = file && chainBreak(file.chain, msgs, turns)
   if (broke) noteBreak(key, file.chain, broke)
   const chain = !file ? [] : file.chain.slice(0, broke ? broke.index : undefined)
   const before = Math.min(s?.summarized ?? 0, chain.length)
   const mergedBefore = Math.min(s?.merged ?? 0, before)
   let records = before
   let merged = mergedBefore
-  let keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain.slice(0, records), merged)
+  let keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain.slice(0, records), merged, turns)
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   const allMerged = Math.min(file?.merged ?? 0, chain.length)
   let covers: string[] | undefined
   if ((records < chain.length || merged < allMerged) && cold(positionsOf(keep.msgs, seed, thinking, auto))) {
-    if (records < chain.length) covers = coveredBy(keep, msgs, chain, records).map(keyOf)
+    if (records < chain.length) covers = coveredBy(keep, msgs, chain, records, turns).map(keyOf)
     records = chain.length
     merged = allMerged
-    keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain, merged)
+    keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain, merged, turns)
   }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
-  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, parts, conv, thinking), msgs, chain.slice(0, records), merged).msgs, seed, thinking)
+  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, parts, conv, thinking), msgs, chain.slice(0, records), merged, turns).msgs, seed, thinking)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
   const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
   const freed = spare > 0 ? undefined : freedSystem(body.system)
@@ -249,7 +270,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   let d: Decision | undefined
   const horizon = model.horizon(latestOf(key)?.requests ?? 0)
   if (clock.requests > held.requests || clock.turns > held.turns) {
-    next = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain.slice(0, records), merged)
+    next = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain.slice(0, records), merged, turns)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
   }
@@ -277,7 +298,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const lastPart = (last?.suggestion ? last.parts.at(-2) : last?.parts.at(-1))?.key
   if (h?.resends && lastPart && !described.parts.some((q) => q.key === lastPart)) described.compacted = true
   // Each record is dated by the first message it covers, the memoir by its first record's.
-  const starts = startsOf(msgs, chain.slice(0, records))
+  const starts = startsOf(msgs, chain.slice(0, records), turns)
   described.parts.filter((q) => q.kinds.memoir).forEach((q) => (q.born = bornFrom(latestOf(key), msgs, starts[0])))
   described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornFrom(latestOf(key), msgs, starts[merged + k])))
   if (suggestion) described.suggestion = true
@@ -288,7 +309,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     ? (tokens: number[]): SummaryFork | Skip => {
         if (suggestion) return { skip: 'side-request' }
         if (!pos.some((q) => q.breakpoint)) return { skip: 'no-breakpoint' }
-        const f = summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m))
+        const f = summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m), turns)
         return 'skip' in f && f.tokens !== undefined ? { ...f, threshold: after } : f
       }
     : undefined
@@ -320,7 +341,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     // The messages as the client sent them, when they went up changed, so
     // what was taken (a newest answer's thinking, say) can be rebuilt.
     const changed = msgs.length !== body.messages.length || msgs.some((m, i) => JSON.stringify(m) !== JSON.stringify(body.messages[i]))
-    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, turn: described.turns, prompts: promptsOf(msgs), ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...(changed && { received: writeParts(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...(changed && { received: writeParts(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -356,7 +377,7 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   const withSummaryForks = c && { ...c, actual: c.actual + summaryForks, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks } }
   // Each summary request is running, or left a record or none. A record no
   // longer fitting the messages is dropped, like one replaced or none at all.
-  const valid = validChain(chain, sent.messages).length
+  const valid = validChain(chain, sent.messages, idsOf(key, sent.messages, false).turns).length
   const applied = Math.min(load(key)?.summarized ?? 0, valid)
   const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
   const summaryRequests = { applied, pending, dropped: requests - applied - pending, ...(failed && { failed }) }
@@ -872,8 +893,10 @@ const staged = (err: unknown, stage: string, body?: string): Staged => Object.as
 // logging, each fork is logged as a `fork` line, whatever it answers.
 async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>, kind: ForkKind, body: Canonical, target: string, headers: Record<string, string>): Promise<{ text: string; usage?: Usage }> {
   const time = new Date().toISOString()
+  // A fork is a request of the conversation's too: it has an internal ID.
+  const { id } = idsOf(p.key, [])
   const log = (fields: Record<string, unknown>) =>
-    a['log-step-events'] && writeLine(path.join(logRoot, p.key), { event: 'fork', kind, time, model: p.model, provider: p.provider, protocol: p.proto.name, params: paramsOf(body), ...fields })
+    a['log-step-events'] && writeLine(path.join(logRoot, p.key), { event: 'fork', kind, id, time, model: p.model, provider: p.provider, protocol: p.proto.name, params: paramsOf(body), ...fields })
   let r: Response
   try {
     r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })

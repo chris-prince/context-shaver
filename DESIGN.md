@@ -589,12 +589,12 @@ record is kept apart from sending it.
   breakpoint, so the summary fork reads the request's cache entry and pays
   only for the reply, the instructions and the record. Claude Code never sees
   it, and only one runs at a time per conversation.
-- **Made in parts.** The instructions list the uncovered turns by number, each
-  with its prompt quoted, and ask for complete arcs only, ending with the turn
+- **Made in parts.** The instructions list the uncovered turns by internal ID,
+  each with its prompt quoted, and ask for complete arcs only, ending with the turn
   the record stops before. They read as the user asking for a record for
   their journal, to resume the work from later, so the record speaks as the
   model to the user, as the assistant message it goes back in as does. Each
-  arc starts with a heading, `## [<turn>] <title>`,
+  arc starts with a heading, `## [<ID>] <title>`,
   giving the turn it starts at and a one-sentence title that stands on its own.
   The model sees no times (neither protocol puts one on a part), so the proxy
   dates each arc itself when it keeps the record: by when its first turn's
@@ -603,6 +603,13 @@ record is kept apart from sending it.
   summary fork's output tokens. A record ending where a turn starts leaves no tool
   call without its result. The next summary fork asks from that turn on. A
   summary fork that finds no complete arc, or calls a tool, makes no record.
+- **Turns by internal ID.** Each conversation has a counter, in
+  `proxy-data/state/<key>.ids.json`, that every request and fork moves on.
+  A prompt seen for the first time takes its next value as its turn's ID,
+  keyed by the prompts up to it, so a rewound turn gets a new ID, a side
+  request's ask is a turn of its own, and no ID names two turns. Records name
+  turns by ID, and so do the logs. A conversation's first request with IDs
+  numbers its prompts 1, 2, 3 in order, as records from before IDs did.
 - **Kept** in `proxy-data/state/<key>.summaries.json`, apart from the state,
   which a request answered while a summary fork runs would save over. Each
   record holds a hash of the prompt it stops before; when that prompt is no
@@ -669,13 +676,11 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     rebuilt. It is logged as `{ keep, add }`: how many hashes it shares at
     the start with the previous request line's, and the ones after those.
     The first line after a restart has no previous one and lists them all.
-    `turn` is the request's turn, the latest prompt's number, counted over
-    the messages as the client sent them, the way records number turns (a
-    summary line's `current`; not the clock's `turns`, the completed ones).
-    `prompts` is the index of each turn's prompt in those messages, turn 1
-    first: `received`, or `parts` when nothing changed. It is the proxy's own
-    view of which messages are prompts, so a log stays numbered as the proxy
-    saw it after what counts as a prompt changes. `headers` is the harness's
+    `id` is the request's internal ID, and `turns` the ID of each prompt in
+    the messages as the client sent them (`received`, or `parts` when nothing
+    changed), oldest first: the last is the request's turn, a summary line's
+    `current` (not the clock's `turns`, the completed ones). Fork lines have
+    their `id` too. `headers` is the harness's
     own headers (Claude Code's `x-claude-code-*`, Codex's `x-codex-*` and
     `x-openai-*`, OpenCode's `x-opencode-*`), all of them so new ones are
     seen, but those whose names say they may carry a secret (a signature,

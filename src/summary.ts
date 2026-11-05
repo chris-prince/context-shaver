@@ -35,20 +35,43 @@ export const promptHash = (m: ApiMsg) => hash(JSON.stringify(typeof m.content ==
 // Each turn's prompt index, by turn: prompts[t - 1] starts turn t.
 export const promptsOf = (msgs: readonly ApiMsg[]) => msgs.flatMap((m, i) => (isPrompt(m) ? [i] : []))
 
+// A turn: its prompt's index in the messages, and its internal ID (turnsOf).
+// Records, summary forks and the logs name turns by ID.
+export type Turn = { index: number; id: number }
+
+// Each prompt's internal ID: the one `known` has for it, by the prompts up to
+// it, so a prompt is the same turn only after the same prompts; or, new, the
+// one `next` gives, which it adds to `known`. With IDs given in the order
+// prompts are seen, a turn's ID is above those before it, and none is reused,
+// even after a rewind.
+export function turnsOf(msgs: readonly ApiMsg[], known: Record<string, number>, next: () => number): Turn[] {
+  let key = ''
+  return promptsOf(msgs).map((index) => {
+    key = hash(key + promptHash(msgs[index]))
+    return { index, id: (known[key] ??= next()) }
+  })
+}
+
+// Turns numbered by position, turn 1 first: how logs from before internal IDs
+// are replayed, and what a conversation's first request with them gives.
+export const positional = (msgs: readonly ApiMsg[]): Turn[] => promptsOf(msgs).map((index, k) => ({ index, id: k + 1 }))
+
+const indexOf = (turns: readonly Turn[], id: number) => turns.find((t) => t.id === id)?.index
+
 // The records that still fit the messages: each one's prompt is still there.
 // One that doesn't (the conversation was rewound) goes with the ones after it.
-export function validChain(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary[] {
-  const b = chainBreak(chain, msgs)
+export function validChain(chain: readonly Summary[], msgs: readonly ApiMsg[], turns = positional(msgs)): Summary[] {
+  const b = chainBreak(chain, msgs, turns)
   return b ? chain.slice(0, b.index) : [...chain]
 }
 
 // The first record that no longer fits the messages, by its index in the
-// chain, and the hash of the prompt now where its own was, or none when the
-// conversation has fewer turns; undefined when every record fits.
-export function chainBreak(chain: readonly Summary[], msgs: readonly ApiMsg[]): { index: number; found?: string } | undefined {
-  const prompts = promptsOf(msgs)
+// chain, and the hash of the prompt now where its own was, or none when its
+// turn is gone; undefined when every record fits. The hash is checked too, for
+// records from before internal IDs, which numbered turns by position.
+export function chainBreak(chain: readonly Summary[], msgs: readonly ApiMsg[], turns = positional(msgs)): { index: number; found?: string } | undefined {
   for (const [index, s] of chain.entries()) {
-    const i = prompts[s.endsBefore - 1]
+    const i = indexOf(turns, s.endsBefore)
     const found = i === undefined ? undefined : promptHash(msgs[i])
     if (found !== s.prompt) return { index, ...(found && { found }) }
   }
@@ -56,9 +79,8 @@ export function chainBreak(chain: readonly Summary[], msgs: readonly ApiMsg[]): 
 
 // The index of the first message each record covers: the preamble's end
 // (log.ts, preambleEnd) for the first record, and the prompt its predecessor ends before for the rest.
-export function startsOf(msgs: readonly ApiMsg[], chain: readonly Summary[]): number[] {
-  const prompts = promptsOf(msgs)
-  return chain.map((_, k) => (k ? prompts[chain[k - 1].endsBefore - 1] : preambleEnd(msgs)))
+export function startsOf(msgs: readonly ApiMsg[], chain: readonly Summary[], turns = positional(msgs)): number[] {
+  return chain.map((_, k) => (k ? indexOf(turns, chain[k - 1].endsBefore)! : preambleEnd(msgs)))
 }
 
 // The harness's notes in covered messages that a record can't stand in for
@@ -88,10 +110,10 @@ export function keptNotes(covered: readonly ApiMsg[]): ApiMsg | undefined {
 // The first `merged` records go as one message, the memoir, before the rest.
 // The covered notes that stay (keptNotes) go first, as a system message,
 // which the harness's own come before an assistant one as.
-export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], merged = 0): Applied {
+export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], merged = 0, turns = positional(msgs)): Applied {
   if (!chain.length) return a
-  const starts = startsOf(msgs, chain)
-  const to = promptsOf(msgs)[chain.at(-1)!.endsBefore - 1]
+  const starts = startsOf(msgs, chain, turns)
+  const to = indexOf(turns, chain.at(-1)!.endsBefore)!
   const out: Applied = { msgs: [], origin: [], treated: a.treated }
   const push = (text: string, k: number) => (out.msgs.push({ role: 'assistant', content: [{ type: 'text', text }] }), out.origin.push(starts[k]))
   const notes = keptNotes(a.msgs.filter((_, j) => a.origin[j] >= starts[0] && a.origin[j] < to))
@@ -112,17 +134,18 @@ export function summarized(a: Applied, msgs: readonly ApiMsg[], chain: readonly 
 
 // The messages of `a`, with the chain's first `from` records applied, that the
 // records after them replace.
-export function coveredBy(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], from: number): ApiMsg[] {
-  const start = startsOf(msgs, chain)[from]
-  const to = promptsOf(msgs)[chain.at(-1)!.endsBefore - 1]
+export function coveredBy(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], from: number, turns = positional(msgs)): ApiMsg[] {
+  const start = startsOf(msgs, chain, turns)[from]
+  const to = indexOf(turns, chain.at(-1)!.endsBefore)!
   return a.msgs.filter((_, j) => a.origin[j] >= start && a.origin[j] < to)
 }
 
 // What a summary fork asks about: the turns from `start` (the last record's
-// end, or the first) to the current one, each prompt quoted and hashed, with
-// when it was sent and when its turn's last request was, and their characters
-// in the messages as sent.
-export type SummaryFork = { start: number; current: number; prompts: Array<{ quote: string; hash: string; time?: string; end?: string }>; chars: number }
+// end, or the first) to the current one, by ID, each prompt with its turn's
+// ID, quoted and hashed, with when it was sent and when its turn's last
+// request was, and their characters in the messages as sent. `recorded` is
+// whether records already cover the turns before `start`.
+export type SummaryFork = { start: number; current: number; recorded: boolean; prompts: Array<{ id: number; quote: string; hash: string; time?: string; end?: string }>; chars: number }
 
 // The summary fork a request calls for: one when the turns completed since
 // `from` (the turn the last summary fork was offered at, or the last record's
@@ -132,16 +155,20 @@ export type SummaryFork = { start: number; current: number; prompts: Array<{ quo
 // its last message answered, which sent the message before it. With none, it
 // says why (`skip`), and with too few tokens, how many the turns held.
 export type ForkSkip = { skip: 'no-new-turn' | 'no-preamble' | 'below-threshold'; tokens?: number }
-export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[], born: (m: ApiMsg) => string | undefined = () => undefined): SummaryFork | ForkSkip {
-  const prompts = promptsOf(msgs)
-  const current = prompts.length
-  const start = chain.at(-1)?.endsBefore ?? 1
-  const at = (t: number) => (t <= 1 ? preambleEnd(msgs) : prompts[t - 1])
-  const covered = (t: number, j: number) => a.origin[j] >= at(t) && a.origin[j] < prompts[current - 1]
+export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[], born: (m: ApiMsg) => string | undefined = () => undefined, turns = positional(msgs)): SummaryFork | ForkSkip {
+  const current = turns.at(-1)?.id ?? 0
+  const start = chain.at(-1)?.endsBefore ?? turns[0]?.id ?? 1
+  // Where turn `t` starts: the first turn's at the preamble's end. A turn no
+  // longer there (offered before a rewind) starts at the first one after it.
+  const at = (t: number) => {
+    const k = turns.findIndex((u) => u.id >= t)
+    return k < 0 ? Infinity : k ? turns[k].index : preambleEnd(msgs)
+  }
+  const covered = (t: number, j: number) => a.origin[j] >= at(t) && a.origin[j] < turns.at(-1)!.index
   const charsFrom = (t: number) => a.msgs.reduce((n, m, j) => (covered(t, j) ? n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking), 0) : n), 0)
   const from = Math.max(start, Math.min(offered, current))
   if (current <= start) return { skip: 'no-new-turn' }
-  if (at(1) < 0) return { skip: 'no-preamble' }
+  if (preambleEnd(msgs) < 0) return { skip: 'no-preamble' }
   const held = tokens.reduce((n, k, j) => (covered(from, j) ? n + k : n), 0)
   if (held < threshold) return { skip: 'below-threshold', tokens: held }
   const quote = (m: ApiMsg) => {
@@ -150,29 +177,30 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
     return flat.length > 100 ? flat.slice(0, 100) + '…' : flat
   }
   const timed = (k: string, v: string | undefined) => (v ? { [k]: v } : {})
-  const turns = prompts.slice(start - 1, current).map((i, k) => {
-    const next = prompts[start + k]
-    return { quote: quote(msgs[i]), hash: promptHash(msgs[i]), ...timed('time', born(msgs[i])), ...timed('end', next === undefined ? undefined : born(msgs[Math.max(i, next - 2)])) }
+  const listed = turns.filter((t) => t.id >= start)
+  const prompts = listed.map(({ index: i, id }, k) => {
+    const next = listed[k + 1]?.index
+    return { id, quote: quote(msgs[i]), hash: promptHash(msgs[i]), ...timed('time', born(msgs[i])), ...timed('end', next === undefined ? undefined : born(msgs[Math.max(i, next - 2)])) }
   })
-  return { start, current, prompts: turns, chars: charsFrom(start) }
+  return { start, current, recorded: chain.length > 0, prompts, chars: charsFrom(start) }
 }
 
-// The instructions a summary fork appends: local/prompts/arcs9f.md, with its
+// The instructions a summary fork appends: local/prompts/arcs9g.md, with its
 // placeholders filled in. `answered` is whether they follow the reply that
 // ended the latest turn, as the user's next prompt would.
 export function instructions(f: SummaryFork, answered = false): string {
-  const list = f.prompts.map((p, k) => `[${f.start + k}] "${p.quote}"`)
+  const list = f.prompts.map((p) => `[${p.id}] "${p.quote}"`)
   const current = list.pop()
-  return `I need a record of our work so far for my journal, so that we can resume the work from it later. Write it as text only, without calling any tools; my journaling tool reads your answer automatically, so give only the record. Cover the memorable events of the turns that start with these prompts:
+  return `I need a record of our work so far for my journal, so that we can resume the work from it later. Write it as text only, without calling any tools; my journaling tool reads your answer automatically, so give only the record. Cover the memorable events of the turns that start with these prompts, each after its turn's internal ID:
 
 ${list.join('\n')}
 
-${f.start > 1 ? `Turns before [${f.start}] are already in my journal; leave them out.\n\n` : ''}${answered ? 'Exclude the turn of the following prompt, which you just answered, because its work may still be in progress, and my next prompt will likely carry on from it:' : 'The latest prompt, still in progress:'}
+${f.recorded ? `Turns before [${f.start}] are already in my journal; leave them out.\n\n` : ''}${answered ? 'Exclude the turn of the following prompt, which you just answered, because its work may still be in progress, and my next prompt will likely carry on from it:' : 'The latest prompt, still in progress:'}
 ${current}
 
-Divide the work into arcs: stretches of the session spent on one goal, such as a feature, a bug hunt or a round of edits to one file. Keep the arcs in the order they happened. Start each arc with a heading line giving the number of the turn it starts at and a title of one sentence saying what the arc did:
+Divide the work into arcs: stretches of the session spent on one goal, such as a feature, a bug hunt or a round of edits to one file. Keep the arcs in the order they happened. Start each arc with a heading line giving the internal ID of the turn it starts at and a title of one sentence saying what the arc did:
 
-## [<turn>] <title>
+## [<ID>] <title>
 
 Make titles stand on their own; don't use unexplained custom terminology.
 
@@ -187,9 +215,9 @@ Tell each point as an event, not as a rule drawn from it. Write "I deleted \`old
 
 Stop at the last complete arc. An arc is still in progress if the latest turn carries on its work, such as testing, fixing or committing what it built. Leave an arc in progress out entirely: I'll ask for it later, once it is done.
 
-End your record with one line naming the first turn your arcs do not cover:
+End your record with one line giving the internal ID of the first turn your arcs do not cover:
 
-Ends before: [<turn>]
+Ends before: [<ID>]
 
 If no arc is complete yet, answer with only that line, naming [${f.start}].
 
@@ -213,9 +241,12 @@ export function summaryForkMessages(msgs: readonly ApiMsg[], text: string, reply
   return [...msgs.slice(0, -1), { ...last, content: [...blocks(last), { type: 'text', text }] }]
 }
 
+// Where a turn the answer names is among those the fork listed; -1 if not.
+const listedAt = (f: SummaryFork, id: number) => f.prompts.findIndex((p) => p.id === id)
+
 // The record a summary fork answered with, if it covers anything: its text
-// without the closing line, ending before a turn after `start` and no later
-// than the current one, and `tokens`, its output tokens.
+// without the closing line, ending before a turn listed after `start`, and
+// `tokens`, its output tokens.
 export function recordOf(content: readonly Block[], f: SummaryFork, time: string, tokens?: number): Summary | undefined {
   if (rejectionOf(content, f)) return
   const text = textOf(content)
@@ -223,7 +254,7 @@ export function recordOf(content: readonly Block[], f: SummaryFork, time: string
   const n = Number(m[1])
   const record = text.slice(0, m.index).trim()
   const arcs = arcsOf(record, f, n)
-  return { endsBefore: n, prompt: f.prompts[n - f.start].hash, text: record, time, ...(arcs && { arcs }), ...(tokens !== undefined && { tokens }) }
+  return { endsBefore: n, prompt: f.prompts[listedAt(f, n)].hash, text: record, time, ...(arcs && { arcs }), ...(tokens !== undefined && { tokens }) }
 }
 
 // The stop reasons that mean the answer was cut off partway, by protocol:
@@ -244,11 +275,11 @@ export function salvagedOf(content: readonly Block[], f: SummaryFork, time: stri
   const last = [...text.matchAll(/^## \[(\d+)\] (.+)$/gm)].at(-1)
   if (!last || !last.index) return
   const n = Number(last[1])
-  if (n <= f.start || n > f.current) return
+  if (listedAt(f, n) < 1) return
   const record = text.slice(0, last.index).trim()
   const arcs = arcsOf(record, f, n)
   if (!arcs) return
-  return { endsBefore: n, prompt: f.prompts[n - f.start].hash, text: record, time, arcs, ...(tokens !== undefined && { tokens }) }
+  return { endsBefore: n, prompt: f.prompts[listedAt(f, n)].hash, text: record, time, arcs, ...(tokens !== undefined && { tokens }) }
 }
 
 // Why a summary fork's answer gives no record, by a fixed reason, with the
@@ -262,7 +293,7 @@ export function rejectionOf(content: readonly Block[], f: SummaryFork): Rejectio
   const m = endLine(text)
   if (!m) return { reason: /ends before/i.test(text) ? 'ends-before-misformatted' : 'no-ends-before' }
   const n = Number(m[1])
-  if (n <= f.start || n > f.current) return { reason: 'ends-before-out-of-range', endsBefore: n }
+  if (listedAt(f, n) < 1) return { reason: 'ends-before-out-of-range', endsBefore: n }
   if (!text.slice(0, m.index).trim()) return { reason: 'empty', endsBefore: n }
 }
 
@@ -270,16 +301,17 @@ const textOf = (content: readonly Block[]) => content.filter((b) => b.type === '
 const endLine = (text: string) => [...text.matchAll(/^Ends before: \[(\d+)\]\s*$/gm)].at(-1)
 
 // A record's arcs, by their heading lines: one starts the record, and their
-// turns rise within those it covers. Each arc runs to the next one's turn, and
-// its minutes are its timed turns' own, from prompt to last request: not the
-// gaps between them.
+// turns, each one listed, rise within those it covers. Each arc runs to the
+// next one's turn, and its minutes are its timed turns' own, from prompt to
+// last request: not the gaps between them.
 function arcsOf(record: string, f: SummaryFork, endsBefore: number): Arc[] | undefined {
   const heads = [...record.matchAll(/^## \[(\d+)\] (.+)$/gm)]
   const turns = heads.map((h) => Number(h[1]))
-  if (heads[0]?.index !== 0 || turns[0] < f.start || turns.some((t, k) => k && t <= turns[k - 1]) || turns.at(-1)! >= endsBefore) return
+  const at = turns.map((t) => listedAt(f, t))
+  if (heads[0]?.index !== 0 || at.some((k, j) => k < 0 || (j && k <= at[j - 1])) || at.at(-1)! >= listedAt(f, endsBefore)) return
   return heads.map((h, k) => {
-    const { time } = f.prompts[turns[k] - f.start]
-    const own = f.prompts.slice(turns[k] - f.start, (turns[k + 1] ?? endsBefore) - f.start).filter((p) => p.time && p.end)
+    const { time } = f.prompts[at[k]]
+    const own = f.prompts.slice(at[k], at[k + 1] ?? listedAt(f, endsBefore)).filter((p) => p.time && p.end)
     const ms = own.length ? own.reduce((n, p) => n + Date.parse(p.end!) - Date.parse(p.time!), 0) : undefined
     const minutes = ms === undefined ? undefined : Math.max(1, Math.round(ms / 60_000))
     return { turn: turns[k], title: h[2].trim(), ...(time && { time }), ...(minutes !== undefined && { minutes }) }

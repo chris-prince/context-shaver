@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { isMemoir, isSummary, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
-import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -109,7 +109,37 @@ test("a summary fork's record is read back, and only one that covers a complete 
   // After the reply that ended it, the latest turn is answered, and still left out.
   assert.match(instructions(f, true), /\n\nExclude the turn of the following prompt, which you just answered, because its work may still be in progress, and my next prompt will likely carry on from it:\n\[4\] "turn four"/)
   // A later record's instructions leave out the turns earlier records cover.
-  assert.match(instructions({ ...f, start: 2, prompts: f.prompts.slice(1) }), /\[3\] "turn three"\n\nTurns before \[2\] are already in my journal; leave them out\.\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
+  assert.match(instructions({ ...f, start: 2, recorded: true, prompts: f.prompts.slice(1) }), /\[3\] "turn three"\n\nTurns before \[2\] are already in my journal; leave them out\.\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
+})
+
+test('turns get internal IDs as their prompts are first seen, never reused, and records follow them', () => {
+  const msgs = session()
+  const known: Record<string, number> = {}
+  let last = 0
+  const next = () => ++last
+  // The first request numbers its prompts in order; the same prompts again keep their IDs.
+  assert.deepEqual(turnsOf(msgs, known, next).map((t) => t.id), [1, 2, 3, 4])
+  assert.deepEqual(turnsOf(msgs, known, next).map((t) => t.id), [1, 2, 3, 4])
+  last = 9 // Other requests and forks moved the counter on.
+  // Rewound to turn 3 with a new prompt: it and the turn after it are new turns.
+  const rewound = [...msgs.slice(0, 10), { role: 'user', content: 'turn three, again' }, ...msgs.slice(11)] as ApiMsg[]
+  const turns = turnsOf(rewound, known, next)
+  assert.deepEqual(turns.map((t) => t.id), [1, 2, 10, 11])
+  assert.deepEqual(turns.map((t) => t.index), [1, 6, 10, 14])
+  // The fork lists them by ID, and its record names them so.
+  const f = summaryForkOf(none(rewound), rewound, [], 0, 1000, new Map(), counts(rewound), undefined, turns) as SummaryFork
+  assert.deepEqual([f.start, f.current, f.prompts.map((p) => p.id)], [1, 11, [1, 2, 10, 11]])
+  assert.match(instructions(f), /\[2\] "turn two"\n\[10\] "turn three, again"\n\nThe latest prompt, still in progress:\n\[11\] "turn four"/)
+  const r = recordOf([{ type: 'text', text: '## [1] One\n- one\n\n## [2] Two\n- two\n\nEnds before: [10]' }], f, 'now')!
+  assert.deepEqual([r.endsBefore, r.prompt, r.arcs?.map((a) => a.turn)], [10, promptHash(rewound[10]), [1, 2]])
+  assert.deepEqual(validChain([r], rewound, turns), [r])
+  assert.equal((summaryForkOf(none(rewound), rewound, [r], 0, 0, new Map(), counts(rewound), undefined, turns) as SummaryFork).start, 10)
+  // An ID it didn't list is out of range, though it falls between listed ones.
+  assert.deepEqual(rejectionOf([{ type: 'text', text: 'x\nEnds before: [5]' }], f), { reason: 'ends-before-out-of-range', endsBefore: 5 })
+  assert.equal(recordOf([{ type: 'text', text: '## [3] Three\n- x\n\nEnds before: [10]' }], f, 'now')?.arcs, undefined)
+  // The original turn 3 is gone, so a record ending before it no longer fits.
+  const old = recordOf([{ type: 'text', text: 'x\nEnds before: [3]' }], summaryForkAt(msgs)!, 'now')!
+  assert.deepEqual(chainBreak([old], rewound, turns), { index: 0 })
 })
 
 test('a summary fork appends its instructions after the breakpoint, so it reads the cached prefix', () => {

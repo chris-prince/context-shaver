@@ -104,17 +104,16 @@ test('the replay rebuilds a logged conversation and reprices it consistently', a
     assert.doesNotMatch(row('drop wait 2'), /trims 0$/)
     assert.equal(row('POLICY'), row('drop wait 2'))
     assert.ok(cost('drop wait 2') < cost('no trimming'))
-    // Each request line's turn and prompts are counted over the messages as
-    // the client sent them, `received` where the drops changed them, not over
-    // the parts sent; the first turn's prompt is first, the second's after
-    // the first turn's 14 messages.
+    // Each request line has its internal ID, and its prompts' turns by ID,
+    // one for each prompt in the messages as the client sent them,
+    // `received` where the drops changed them: the second turn's prompt was
+    // first seen by the eighth request.
     const lines = readFileSync(path.join(dir, 'logs', key, 'step_events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
     const sent = lines.filter((l) => l.event === 'request')
-    assert.deepEqual(sent.map((l) => l.turn), [1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2])
-    assert.deepEqual(sent.at(-1).prompts, [0, 14])
+    assert.deepEqual(sent.map((l) => l.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    assert.deepEqual(sent.map((l) => l.turns), [...Array(7).fill([1]), ...Array(4).fill([1, 8])])
     const read = (h: string) => JSON.parse(readFileSync(path.join(dir, 'logs', key, 'parts', h + '.json'), 'utf8'))
-    receivedOf(lines).forEach((hashes, n) => assert.deepEqual(sent[n].prompts, promptsOf(hashes.map(read))))
-    assert.ok(sent.some((l) => l.received && JSON.stringify(promptsOf(l.parts.map((q: { hash: string }) => read(q.hash)))) !== JSON.stringify(l.prompts)))
+    receivedOf(lines).forEach((hashes, n) => assert.equal(sent[n].turns.length, promptsOf(hashes.map(read)).length))
   } finally {
     child.kill()
     up.close()
