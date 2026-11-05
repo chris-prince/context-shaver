@@ -39,8 +39,10 @@ keeping its logging in the same way. One from this repo at another commit (a
 pull without `--update`, say) is left running, since a restart would cut off a
 reply another session is streaming, with a notice to run `--restart` or
 `--update`. Uncommitted edits don't count. Whether or not requests are
-logged, every 4xx or 5xx answer from the upstream goes to `proxy.log` with its
-body, so the upstream's own error text is on record.
+logged, every 4xx or 5xx answer from the upstream goes to `proxy.log` by its
+shape: the error's type, code and the parameter it names, and its length. Its
+message stays out, since it can quote the request; with requests logged, the
+step events have the whole body.
 
 The port is 18787, or `SHAVER_PORT` if set; `bin/run-proxy`, every wrapper and
 `scripts/backfill-suggestions.ts` read it, so set it once (say in your shell
@@ -684,7 +686,9 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
 - `forks/`, the bodies of the summary forks that gave no record.
 
 Whether logging is on or not, `proxy-data/proxy.log` gets a line for each
-summary fork's outcome, and for each way a conversation's records break.
+summary fork that failed or was rejected, and for each way a conversation's
+records break; like the rest of `proxy.log`, it holds problems only, so a
+fork that recorded is in the step events alone.
 These lines hold no conversation content: a failure gives only the error's
 name, code, status and the code location it was thrown at, since an upstream's
 error body or a parser's message can quote what it was sent.

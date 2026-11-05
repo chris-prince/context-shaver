@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { kinds, paramsOf, receivedOf, withReceivedDelta, writeDefs } from '../src/log.ts'
+import { errorShape, kinds, paramsOf, receivedOf, withReceivedDelta, writeDefs } from '../src/log.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 test("after a Codex compaction, its preamble messages are base by section and the compaction is not", () => {
@@ -104,4 +104,14 @@ test('received is logged as a change from the line before and read back whole', 
   assert.deepEqual(lines[2].received, { keep: 2, add: ['c'] })
   assert.deepEqual(lines[3].received, { keep: 2, add: ['d', 'e'] })
   assert.deepEqual(receivedOf(lines), [['a', 'b'], ['a', 'b', 'c'], ['a', 'b', 'd', 'e']])
+})
+
+test("an error answer is described by its shape, never its message", () => {
+  const anthropic = JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'messages.3: "secret prompt" is bad' } })
+  const openai = JSON.stringify({ error: { type: 'invalid_request_error', code: 'string_above_max_length', param: 'input[3].content', message: "Invalid 'secret prompt'" } })
+  assert.equal(errorShape(anthropic), `type invalid_request_error, ${anthropic.length} chars`)
+  assert.equal(errorShape(openai), `type invalid_request_error, code string_above_max_length, param input[3].content, ${openai.length} chars`)
+  // A body that isn't JSON, as a gateway's HTML page or an echo of the request.
+  assert.equal(errorShape('<html>secret prompt</html>'), '26 chars')
+  for (const s of [anthropic, openai]) assert.doesNotMatch(errorShape(s), /secret/)
 })

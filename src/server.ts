@@ -18,7 +18,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
-import { hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
+import { errorShape, hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
 import { blocks, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
@@ -679,7 +679,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     a['log-step-events'] && served && writeLine(path.join(logRoot, bareKey()), { event: 'failed', time: new Date(arrived).toISOString(), model: c?.body.model ?? 'unknown', provider: c?.body.provider, protocol: proto.name, params, status, error: text.slice(0, 2000), ...more })
   if ((p || raw !== original) && up.status === 400) {
     const text = await up.text()
-    console.error(`shaver: changed request refused, sent as it came: ${text.slice(0, 500)}`)
+    console.error(`shaver: changed request refused, sent as it came: ${errorShape(text)}`)
     failed(up.status, text, { resent: true })
     ;[resent, p] = [p, undefined]
     up = await send(original)
@@ -690,11 +690,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   })
   const re = proto.limits
   if (re && up.status === 200 && Object.keys(out).some((k) => re.test(k))) limits.set(proto, Object.fromEntries(Object.entries(out).filter(([k]) => re.test(k))))
-  // An error answer goes to proxy.log whether or not requests are logged, so
-  // the upstream's own text is always on record.
+  // An error answer goes to proxy.log whether or not requests are logged, by
+  // its shape only, since its text can quote the request; the step events,
+  // with them logged, have the text.
   if (up.status >= 400) {
     const text = Buffer.from(await up.arrayBuffer())
-    console.error(`${new Date().toISOString()} shaver: upstream answered ${up.status} to ${req.method} ${upstream}${url.split('?')[0]}: ${text.toString('utf8').slice(0, 2000)}`)
+    console.error(`${new Date().toISOString()} shaver: upstream answered ${up.status} to ${req.method} ${upstream}${url.split('?')[0]}: ${errorShape(text.toString('utf8'))}`)
     failed(up.status, text.toString('utf8'))
     res.writeHead(up.status, out)
     return void res.end(text)
@@ -975,7 +976,8 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
       writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain, merged }))
     } else failedFork(key, { time, outcome: 'rejected', reason: rejected?.reason ?? 'unknown' })
     const tokens = usage ? `, ${usage.output_tokens} output tokens` : ''
-    console.error(`${what} ${record ? `recorded, ends before [${record.endsBefore}]` : `rejected, ${rejected?.reason}`}${tokens}, stopped: ${stop ?? 'unknown'}`)
+    // proxy.log has problems only: a fork that recorded is in the step events.
+    if (!record) console.error(`${what} rejected, ${rejected?.reason}${tokens}, stopped: ${stop ?? 'unknown'}`)
     if (logDir) {
       const why = rejected && { reason: rejected.reason, ...(rejected.endsBefore !== undefined && { foundEndsBefore: rejected.endsBefore }), answer: savedAnswer(logDir, time, text) }
       writeLine(logDir, { event: 'summary', time, outcome: record ? 'recorded' : 'rejected', ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record && (record.arcs?.length ?? 'unparsed'), merged, usage, stop, ...why })

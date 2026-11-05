@@ -258,3 +258,17 @@ const NOT_PARAMS = new Set(['messages', 'input', 'system', 'instructions', 'tool
 
 export const paramsOf = (wire: Record<string, unknown>): Record<string, unknown> =>
   Object.fromEntries(Object.entries(wire).filter(([k]) => !NOT_PARAMS.has(k)))
+
+// What proxy.log says of an API's error answer: its type, code and the
+// parameter it names, as Anthropic's and OpenAI's error bodies give them, and
+// its length, never its message, which can quote the request. The whole body
+// is in the step events, with them logged.
+export function errorShape(text: string): string {
+  let e: Record<string, unknown> | undefined
+  try {
+    const o = JSON.parse(text)
+    e = typeof o?.error === 'object' && o.error ? o.error : undefined
+  } catch {}
+  const parts = e ? (['type', 'code', 'param'] as const).flatMap((k) => (typeof e[k] === 'string' || typeof e[k] === 'number' ? [`${k} ${e[k]}`] : [])) : []
+  return [...parts, `${text.length} chars`].join(', ')
+}
