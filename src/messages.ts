@@ -10,14 +10,19 @@ import { summaryForkMessages } from './summary.ts'
 // The usage a response reports: message_start's, with message_delta's output
 // tokens, for a stream; the body's for a plain response. Also its content's
 // lengths: each thinking block's signature and the characters of everything
-// else.
+// else. And the reply's text, with whether it ends the turn.
 function usageReader() {
   let usage: Usage | undefined
   const content: Content = { signatures: [], visibleChars: 0 }
+  const text: Record<number, string> = {}
+  let called = false
+  let stop: string | undefined
   return eventReader({
     event(e) {
       if (e.type === 'message_start') usage = { ...e.message?.usage }
       if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
+      if (e.type === 'message_delta' && e.delta?.stop_reason) stop = e.delta.stop_reason
+      if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use') called = true
       if (e.type === 'content_block_start' && e.content_block?.type === 'thinking') content.signatures.push('')
       if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use') content.visibleChars += JSON.stringify(e.content_block.name).length
       if (e.type === 'content_block_delta') {
@@ -25,6 +30,7 @@ function usageReader() {
         if (d.type === 'signature_delta' && content.signatures.length) content.signatures[content.signatures.length - 1] += d.signature
         if (d.type === 'text_delta') content.visibleChars += d.text.length
         if (d.type === 'input_json_delta') content.visibleChars += d.partial_json.length
+        if (d.type === 'text_delta') text[e.index] = (text[e.index] ?? '') + d.text
       }
     },
     body(b) {
@@ -32,8 +38,13 @@ function usageReader() {
         if (c.type === 'thinking') content.signatures.push(c.signature ?? '')
         else content.visibleChars += c.type === 'text' ? c.text.length : c.type === 'tool_use' ? JSON.stringify(c.name).length + JSON.stringify(c.input).length : 0
       usage = b.usage
+      for (const [k, c] of (b.content ?? []).entries()) if (c.type === 'text') text[k] = c.text
+      called = (b.content ?? []).some((c: Block) => c.type === 'tool_use')
+      stop = b.stop_reason
     },
-    result: () => ({ usage, content }),
+    // A turn goes on after a tool call (or a server tool's pause); a reply that
+    // didn't fully arrive is none.
+    result: () => ({ usage, content, reply: stop === undefined ? undefined : { text: Object.values(text), ended: !called && stop !== 'tool_use' && stop !== 'pause_turn' } }),
     final: (e) => e.type === 'message_stop',
   })
 }
@@ -51,7 +62,7 @@ export const MESSAGES: Protocol = {
   limits: /^anthropic-ratelimit-unified-/,
   automatic: false,
   defers: true,
-  summaryFork: (sent, text) => ({ ...sent, messages: summaryForkMessages(sent.messages as ApiMsg[], text), stream: false }),
+  summaryFork: (sent, text, reply) => ({ ...sent, messages: summaryForkMessages(sent.messages as ApiMsg[], text, reply), stream: false }),
   summaryForkAnswer: (body) => {
     const o = JSON.parse(body) as { content?: Block[]; usage?: Usage; stop_reason?: string }
     return { content: o.content ?? [], usage: o.usage, stop: o.stop_reason }

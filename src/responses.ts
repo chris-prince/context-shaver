@@ -14,7 +14,7 @@
 import type { Usage } from './cost.ts'
 import { blocks, type ApiMsg, type Block } from './items.ts'
 import { CODEX_PREAMBLE, kinds, preambleEnd } from './log.ts'
-import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Held, type Protocol, type Replying, type Wire } from './protocol.ts'
+import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Held, type Protocol, type Replying, type Reply, type Wire } from './protocol.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Item = { type: string; role?: string; content?: Part[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: unknown; encrypted_content?: string; summary?: Part[]; [k: string]: unknown }
@@ -275,6 +275,7 @@ function usageReader() {
   let usage: Usage | undefined
   let attribution: unknown
   const content: Content = { signatures: [], visibleChars: 0 }
+  let reply: Reply | undefined
   const read = (r: Response | undefined) => {
     if (!r) return
     usage = usageOf(r.usage) ?? usage
@@ -282,8 +283,12 @@ function usageReader() {
     for (const it of r.output ?? [])
       if (it.type === 'reasoning') content.signatures.push(it.encrypted_content ?? '')
       else content.visibleChars += it.type === 'message' ? textOf(it).length : (it.name?.length ?? 0) + (it.input ?? it.arguments ?? '').length
+    // The reply's text; it ends the turn if it ends with a message, after any
+    // calls the backend ran, rather than with a call for the client to run.
+    const out = r.output ?? []
+    if (out.length) reply = { text: out.filter((it) => it.type === 'message').map(textOf), ended: out.at(-1)!.type === 'message' }
   }
-  return eventReader({ event: (e) => read(finished(e)), body: read, result: () => ({ usage, content, attribution }), final: (e) => !!finished(e) })
+  return eventReader({ event: (e) => read(finished(e)), body: read, result: () => ({ usage, content, attribution, reply }), final: (e) => !!finished(e) })
 }
 
 function replying(model: string, stream: boolean, context: number): Replying {
@@ -347,8 +352,16 @@ export const RESPONSES: Protocol = {
   // searches only for the tools it deferred.
   searchTool: { type: 'tool_search' },
   // The summary fork's question is a user message of its own after the
-  // request's items. ChatGPT's backend only streams, so it stays as it was.
-  summaryFork: (sent, text) => ({ ...sent, input: [...(sent.input as Item[]), { type: 'message', role: 'user', content: [{ type: 'input_text', text }] }] }),
+  // request's items, and the reply's text. ChatGPT's backend only streams, so
+  // it stays as it was.
+  summaryFork: (sent, text, reply) => ({
+    ...sent,
+    input: [
+      ...(sent.input as Item[]),
+      ...(reply ? [{ type: 'message', role: 'assistant', content: reply.map((t) => ({ type: 'output_text', text: t })) }] : []),
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+    ],
+  }),
   summaryForkAnswer: (body) => {
     let r: Response | undefined
     for (const l of body.split('\n'))

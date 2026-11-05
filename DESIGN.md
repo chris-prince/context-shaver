@@ -569,10 +569,16 @@ record is kept apart from sending it.
   the turn the last summary fork was offered at, hold
   `summary_threshold_tokens` tokens as sent before the frontier, counted as the
   stats count them from the API's usage, the proxy sends a summary fork of it
-  after it is answered: the same request with instructions appended to its last
-  message, after the breakpoint. The summary fork reads the request's cache
-  entry and pays only for the instructions and the record. Claude Code never
-  sees it, and only one runs at a time per conversation.
+  after it is answered, as the user's next prompt would come: once a reply
+  ends the turn, it is the same request with that reply's text after it (its
+  reasoning left out, as the policy's rules drop a finished turn's) and the
+  instructions in a user message of their own; while the turn goes on (the
+  reply calls a tool the client runs), none is sent. After a reply with no
+  text, the instructions are appended to the request's last message instead.
+  Either way they go after the
+  breakpoint, so the summary fork reads the request's cache entry and pays
+  only for the reply, the instructions and the record. Claude Code never sees
+  it, and only one runs at a time per conversation.
 - **Made in parts.** The instructions list the uncovered turns by number, each
   with its prompt quoted, and ask for complete arcs only, ending with the turn
   the record stops before. They read as the user asking for a record for
@@ -674,7 +680,8 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     outcome but `recorded`. A request line's `summaries` is how many records
     it sent, and `summaryCheck` whether it sent a summary fork: `sent`, or
     why not (`skip`): `suggestion`, `no-breakpoint`, `in-flight` (one is
-    running), `no-new-turn`, `no-preamble`, or `below-threshold` with the
+    running), `turn-continues` (the reply asks for more, such as a tool's
+    result, so no prompt could follow it yet), `no-new-turn`, `no-preamble`, or `below-threshold` with the
     turns' `tokens` and the `threshold`;
   - a `summary-dropped` line when the records stop fitting the messages, once
     for each way they break: the first record that no longer fits (`index`)

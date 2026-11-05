@@ -14,9 +14,11 @@ import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 
-// The upstream answers the client's requests with text; summary forks, by
-// turn, with an error, then an answer with no closing line, then a record.
-async function upstream(): Promise<{ url: string; close(): void }> {
+// The upstream answers the client's requests with text, but "Read more."
+// first with a tool call; summary forks, by turn, with an error, then an
+// answer with no closing line, then a record. It keeps the forks' messages.
+async function upstream(): Promise<{ url: string; close(): void; asked: any[][] }> {
+  const asked: any[][] = []
   const forks = [
     () => ({ status: 500, body: { type: 'error', error: { type: 'api_error', message: 'boom' } } }),
     () => ({ status: 200, text: '## [1] Read the files.\n- read them', stop: 'max_tokens' }),
@@ -28,14 +30,18 @@ async function upstream(): Promise<{ url: string; close(): void }> {
     req.on('data', (d) => (raw += d))
     req.on('end', () => {
       const body = JSON.parse(raw)
-      const fork = JSON.stringify(body.messages.at(-1)).includes('I need a record of our work') ? forks[n++]() : { status: 200, text: 'Done.', stop: 'end_turn' }
+      const isFork = JSON.stringify(body.messages.at(-1)).includes('I need a record of our work')
+      if (isFork) asked.push(body.messages)
+      const calls = !isFork && body.messages.at(-1).content[0].text?.startsWith('Read more.')
+      const fork = isFork ? forks[n++]() : { status: 200, text: 'Done.', stop: calls ? 'tool_use' : 'end_turn' }
+      const content = calls ? [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] : [{ type: 'text', text: 'text' in fork ? fork.text : '' }]
       res.writeHead(fork.status, { 'content-type': 'application/json' })
-      res.end(JSON.stringify('body' in fork ? fork.body : { id: 'm', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: fork.text }], stop_reason: fork.stop, usage: { input_tokens: Math.ceil(raw.length / 4), output_tokens: 20 } }))
+      res.end(JSON.stringify('body' in fork ? fork.body : { id: 'm', type: 'message', role: 'assistant', model: body.model, content, stop_reason: fork.stop, usage: { input_tokens: Math.ceil(raw.length / 4), output_tokens: 20 } }))
     })
   })
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
   const { port } = server.address() as { port: number }
-  return { url: `http://127.0.0.1:${port}`, close: () => server.close() }
+  return { url: `http://127.0.0.1:${port}`, close: () => server.close(), asked }
 }
 
 
@@ -93,15 +99,25 @@ test('each summary fork logs how it went, and each request why it sent none', as
     // Each turn waits for its own log line, and for the summary fork it sent
     // to finish.
     const logged = (event: string) => (existsSync(path.join(dir, 'logs')) ? readdirSync(path.join(dir, 'logs')).flatMap((key) => lines(dir, key)).filter((l) => l.event === event).length : 0)
+    // Turn 2's first answer calls a tool, so the turn goes on until its result
+    // is answered.
+    let requests = 0
     for (const [k, prompt] of ['Read the files.', 'Read more.', 'And more.', 'Last one.'].entries()) {
       history.push({ role: 'user', content: [{ type: 'text', text: prompt + ' ' + 'x'.repeat(400) }] })
-      history.push({ role: 'assistant', content: await send(history) })
-      await until(() => logged('request') > k && logged('summary') >= k, `turn ${k + 1}'s request and summary fork`)
+      for (;;) {
+        const content = await send(history)
+        history.push({ role: 'assistant', content })
+        await until(() => logged('request') > requests, `request ${requests + 1}'s line`)
+        requests++
+        if (content[0].type !== 'tool_use') break
+        history.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: content[0].id, content: 'the file' }] })
+      }
+      await until(() => logged('summary') >= k, `turn ${k + 1}'s summary fork`)
     }
     // Rewound to turn 3 with a new prompt: the record that ends before it no
     // longer fits.
-    await send([...history.slice(0, 4), { role: 'user', content: [{ type: 'text', text: 'Something else.' }] }])
-    await until(() => logged('request') === 5, "the rewound request's line")
+    await send([...history.slice(0, 6), { role: 'user', content: [{ type: 'text', text: 'Something else.' }] }])
+    await until(() => logged('request') === 6, "the rewound request's line")
     // What the proxy wrote to stderr is all read once it has exited.
     const closed = new Promise((ok) => child.on('close', ok))
     child.kill()
@@ -118,7 +134,16 @@ test('each summary fork logs how it went, and each request why it sent none', as
     assert.deepEqual([forks[2].endsBefore, forks[2].arcs, forks[2].stop, forks[2].answer], [3, 2, 'end_turn', undefined])
     // Why each request sent none, or that it sent one.
     const checks = all.filter((l) => l.event === 'request').map((l) => l.summaryCheck?.skip ?? l.summaryCheck)
-    assert.deepEqual(checks.slice(0, 4), ['no-new-turn', 'sent', 'sent', 'sent'])
+    assert.deepEqual(checks.slice(0, 5), ['no-new-turn', 'turn-continues', 'sent', 'sent', 'sent'])
+    // Each fork asks as the user's next prompt would: after the reply that
+    // ended the turn, in a message of its own.
+    for (const m of up.asked) {
+      assert.deepEqual(m.at(-2), { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] })
+      assert.equal(m.at(-1).role, 'user')
+      assert.equal(m.at(-1).content.length, 1)
+      assert.match(m.at(-1).content[0].text, /^I need a record of our work.*Exclude the turn of the following prompt, which you just answered/s)
+    }
+    assert.equal(up.asked.length, 3)
     const dropped = all.filter((l) => l.event === 'summary-dropped')
     assert.deepEqual(dropped.map((l) => [l.index, l.dropped, l.endsBefore]), [[0, 1, 3]])
     // The proxy's log says the same, and the records file keeps the last failure.

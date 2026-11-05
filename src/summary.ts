@@ -157,16 +157,17 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
   return { start, current, prompts: turns, chars: charsFrom(start) }
 }
 
-// The instructions a summary fork appends: local/prompts/arcs8.md, with its
-// placeholders filled in.
-export function instructions(f: SummaryFork): string {
+// The instructions a summary fork appends: local/prompts/arcs9d.md, with its
+// placeholders filled in. `answered` is whether they follow the reply that
+// ended the latest turn, as the user's next prompt would.
+export function instructions(f: SummaryFork, answered = false): string {
   const list = f.prompts.map((p, k) => `[${f.start + k}] "${p.quote}"`)
   const current = list.pop()
   return `I need a record of our work so far for my journal, so that we can resume the work from it later. Write it as text only, without calling any tools; my journaling tool reads your answer automatically, so give only the record. Cover the memorable events of the turns that start with these prompts:
 
 ${list.join('\n')}
 
-${f.start > 1 ? `Turns before [${f.start}] are already in my journal; leave them out.\n\n` : ''}The latest prompt, still in progress:
+${f.start > 1 ? `Turns before [${f.start}] are already in my journal; leave them out.\n\n` : ''}${answered ? 'Exclude the turn of the following prompt, which you just answered, because its work may still be in progress, and my next prompt will likely carry on from it:' : 'The latest prompt, still in progress:'}
 ${current}
 
 Divide the work into arcs: stretches of the session spent on one goal, such as a feature, a bug hunt or a round of edits to one file. Keep the arcs in the order they happened. Start each arc with a heading line giving the number of the turn it starts at and a title of one sentence saying what the arc did:
@@ -197,13 +198,16 @@ Your record must be at most a tenth the length of the turns it covers; the turns
 Keep the exact identifiers I, or you, might need: paths, hashes, names, numbers, commands. Drop narration and tool output. Start directly with the first arc.`
 }
 
-// A fork's messages: the request's, with the instructions appended to the last
-// message, the user's as a summary fork's is or a system one as Claude Code's
-// base ends with (the API takes no message after a system one but an
-// assistant's), or in one of their own after an assistant's. They go after
-// its blocks, so the prefix through its last breakpoint is the same and the
-// fork reads its cache entry.
-export function summaryForkMessages(msgs: readonly ApiMsg[], text: string): ApiMsg[] {
+// A fork's messages: the request's, then, given the text of the reply that
+// ended the turn, that text and the instructions in a user message of their own, as the
+// user's next prompt would come. With no reply, the instructions are appended
+// to the last message, the user's as a summary fork's is or a system one as
+// Claude Code's base ends with (the API takes no message after a system one
+// but an assistant's), or in one of their own after an assistant's. Either way
+// they go after its blocks, so the prefix through its last breakpoint is the
+// same and the fork reads its cache entry.
+export function summaryForkMessages(msgs: readonly ApiMsg[], text: string, reply?: string[]): ApiMsg[] {
+  if (reply) return [...msgs, { role: 'assistant', content: reply.map((t) => ({ type: 'text', text: t })) }, { role: 'user', content: [{ type: 'text', text }] }]
   const last = msgs.at(-1)!
   if (last.role === 'assistant') return [...msgs, { role: 'user', content: [{ type: 'text', text }] }]
   return [...msgs.slice(0, -1), { ...last, content: [...blocks(last), { type: 'text', text }] }]

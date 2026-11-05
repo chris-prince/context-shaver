@@ -20,7 +20,11 @@ export type Content = { signatures: string[]; visibleChars: number }
 // done is whether the answer has fully arrived, whatever the stream still sends
 // after it. attribution is the usage per input item, as the Responses API
 // gives it, kept for the log.
-export type Read = { usage?: Usage; content: Content; attribution?: unknown }
+// reply is the answer's text, where the protocol reads it, and whether it ends
+// the turn (no tool calls left to answer). Only the text: the reasoning rules
+// drop a finished turn's reasoning from the requests that follow it.
+export type Read = { usage?: Usage; content: Content; attribution?: unknown; reply?: Reply }
+export type Reply = { text: string[]; ended: boolean }
 export type UsageReader = { push(chunk: Uint8Array): void; end(): Read; readonly done: boolean }
 
 // A stream passed on as it arrives but for its close, which is held so text
@@ -144,8 +148,11 @@ export type Protocol = {
   searchTool?: Record<string, unknown>
   // A heavy-compaction summary fork (summary.ts): the request as sent, with
   // `text` asked after its messages, so it reads the request's cache entry, and
-  // not streamed where the API allows; and the summary fork's answer, from the
-  // response's body, as blocks, with its usage and why it stopped.
-  summaryFork(sent: Record<string, unknown>, text: string): Record<string, unknown>
+  // not streamed where the API allows; given the text of the reply that ended
+  // the turn, that reply comes first, in an assistant message of its own, and
+  // `text` after it in a user message, as the user's next prompt would. And the
+  // summary fork's answer, from the response's body, as blocks, with its usage
+  // and why it stopped.
+  summaryFork(sent: Record<string, unknown>, text: string, reply?: string[]): Record<string, unknown>
   summaryForkAnswer(body: string): { content: Block[]; usage?: Usage; stop?: string }
 }

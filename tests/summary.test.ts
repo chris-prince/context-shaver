@@ -71,6 +71,8 @@ test("a summary fork's record is read back, and only one that covers a complete 
   assert.deepEqual(rejectionOf([{ type: 'text', text: 'x\nEnds before: [3]' }, { type: 'tool_use', id: 'z', name: 'Bash', input: {} }], f), { reason: 'tool-call' })
   assert.match(instructions(f), /\[1\] "turn one"\n\[2\] "turn two"\n\[3\] "turn three"\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
   assert.doesNotMatch(instructions(f), /already in my journal/)
+  // After the reply that ended it, the latest turn is answered, and still left out.
+  assert.match(instructions(f, true), /\n\nExclude the turn of the following prompt, which you just answered, because its work may still be in progress, and my next prompt will likely carry on from it:\n\[4\] "turn four"/)
   // A later record's instructions leave out the turns earlier records cover.
   assert.match(instructions({ ...f, start: 2, prompts: f.prompts.slice(1) }), /\[3\] "turn three"\n\nTurns before \[2\] are already in my journal; leave them out\.\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
 })
@@ -87,6 +89,9 @@ test("a fork asks after the last message's blocks, or in a user message after an
   assert.deepEqual(summaryForkMessages(base, 'ask'), [base[0], { role: 'system', content: [{ type: 'text', text: 'base', cache_control: { type: 'ephemeral' } }, { type: 'text', text: 'ask' }] }])
   const answered: ApiMsg[] = [...base, { role: 'assistant', content: 'ok' }]
   assert.deepEqual(summaryForkMessages(answered, 'ask'), [...answered, { role: 'user', content: [{ type: 'text', text: 'ask' }] }])
+
+  // Given the text of the reply that ended the turn, as the user's next prompt: after it, in a message of its own.
+  assert.deepEqual(summaryForkMessages(base, 'ask', ['done']), [...base, { role: 'assistant', content: [{ type: 'text', text: 'done' }] }, { role: 'user', content: [{ type: 'text', text: 'ask' }] }])
 })
 
 test('records replace the turns they cover, after the base, and go when their prompt does', () => {

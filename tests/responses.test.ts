@@ -182,6 +182,30 @@ test('a summary fork asks after the items as sent, still streamed', () => {
   assert.deepEqual(f.input.at(-1), { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'summarize' }] })
 })
 
+test("the reply's text, and whether it ends the turn: a message last, not a call for the client to run", () => {
+  const replyOf = (output: unknown[]) => {
+    const r = RESPONSES.usageReader()
+    r.push(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'response.completed', response: { output, usage: { input_tokens: 1, output_tokens: 1 } } })}\n\n`))
+    return r.end().reply
+  }
+  const said = { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] }
+  assert.deepEqual(replyOf([{ type: 'reasoning', encrypted_content: 'e' }, said]), { text: ['Done.'], ended: true })
+  assert.deepEqual(replyOf([said, { type: 'function_call', name: 'exec', arguments: '{}' }]), { text: ['Done.'], ended: false })
+  const r = RESPONSES.usageReader()
+  r.push(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'response.created', response: {} })}\n\n`))
+  assert.equal(r.end().reply, undefined)
+})
+
+test('given the reply, a summary fork asks after its text, in a user message of its own', () => {
+  const sent = canonical(wire).render(canonical(wire).body) as typeof wire
+  const f = RESPONSES.summaryFork(sent, 'summarize', ['Done.']) as typeof wire
+  assert.deepEqual(f.input.slice(0, -2), sent.input)
+  assert.deepEqual(f.input.slice(-2), [
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'summarize' }] },
+  ])
+})
+
 test("a summary fork's streamed answer becomes blocks and usage", () => {
   const out = RESPONSES.summaryForkAnswer(stream)
   assert.deepEqual(out.content, [{ type: 'text', text: 'hello' }])

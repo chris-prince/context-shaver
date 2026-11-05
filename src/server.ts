@@ -174,7 +174,7 @@ const latestOf = (key: string) => currentOf(key).stats
 // answered.
 // Why an answered request sent no summary fork: summaryForkOf's reasons, with
 // the threshold the turns fell short of, or the proxy's own.
-type Skip = (ForkSkip & { threshold?: number }) | { skip: 'suggestion' | 'no-breakpoint' | 'in-flight' }
+type Skip = (ForkSkip & { threshold?: number }) | { skip: 'suggestion' | 'no-breakpoint' | 'in-flight' | 'turn-continues' }
 type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
@@ -784,7 +784,7 @@ async function answerOf(command: string, proto: Protocol, h: Harness | undefined
 // Records an answered request: its stats, cost and cache entries, the
 // conversation's state, any summary fork due and its log line.
 function answered(p: Prepared, usage: UsageReader, target: string, headers: Record<string, string>): void {
-  const { usage: u, content, attribution } = usage.end()
+  const { usage: u, content, attribution, reply } = usage.end()
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
@@ -796,10 +796,13 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   const was = currentOf(p.key)
   record(journalOf(p.key), was.stats, next, u)
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
-  const check = p.summaryFork && (summaryForking.has(p.key) ? { skip: 'in-flight' as const } : p.summaryFork(settled(p.sent, next.tokens)))
+  // Where the protocol gives the reply, a fork asks as the user's next prompt
+  // would, after a reply that ended the turn; so not while the turn goes on.
+  const check = p.summaryFork && (summaryForking.has(p.key) ? { skip: 'in-flight' as const } : reply?.ended === false ? { skip: 'turn-continues' as const } : p.summaryFork(settled(p.sent, next.tokens)))
   const due = check && !('skip' in check) ? check : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList })
-  if (due) void summarize(p, due, target, headers)
+  // A reply with no text leaves the instructions where they'd go without one.
+  if (due) void summarize(p, due, target, headers, reply?.text.some((t) => t.trim()) ? reply.text : undefined)
   if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }), ...(check && { summaryCheck: due ? 'sent' : check }) })
 }
 
@@ -940,11 +943,11 @@ function noteBreak(key: string, chain: readonly Summary[], b: { index: number; f
 // records whatever it answers. Its record follows the ones the summary fork
 // started after; any later ones no longer fit the messages. Then the oldest
 // go into the memoir, if the records hold too many tokens.
-async function summarize(p: Prepared, f: SummaryFork, target: string, headers: Record<string, string>): Promise<void> {
+async function summarize(p: Prepared, f: SummaryFork, target: string, headers: Record<string, string>, reply?: string[]): Promise<void> {
   const { key, logDir } = p
   summaryForking.add(key)
   const began = Date.now()
-  const body = p.proto.summaryFork(JSON.parse(p.body.toString('utf8')), instructions(f))
+  const body = p.proto.summaryFork(JSON.parse(p.body.toString('utf8')), instructions(f, reply !== undefined), reply)
   const asked = { start: f.start, current: f.current, maxTokens: body.max_tokens, thinking: body.thinking }
   const before = loadSummaries(key)
   writeFileSync(summariesOf(key), JSON.stringify({ ...before, requests: before.requests + 1 }))
