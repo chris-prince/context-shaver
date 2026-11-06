@@ -476,6 +476,13 @@ function difference(heading: string, without: number, now: number, show: (v: num
 // Tokens a byte on a session's first request, which measured 0.345 to 0.367.
 const BYTE_TOKENS = 0.36
 
+// The tokens a prompt of `msgs` holds, near enough to tell how close it is
+// to the client's own compaction (server.ts, prepare): the latest base's
+// count, and each message's as `s` counted it, or converted from its bytes.
+export function promptTokens(s: Stats, msgs: readonly ApiMsg[]): number {
+  return msgs.reduce((n, m) => n + (s.tokens[keyOf(m)] ?? JSON.stringify(m).length * BYTE_TOKENS), s.tokens[s.defs.key] ?? 0)
+}
+
 // The stats before any request is answered: the request alone, its count
 // estimated from its bytes.
 export function estimate(r: Sent): Stats {

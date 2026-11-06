@@ -31,7 +31,7 @@ import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withou
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -205,6 +205,13 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 // there is no breakpoint to add, so no anchor.
 // `side` and `compaction` are whether the harness's headers say it's a side
 // request, and its compaction, where they say (harness.ts).
+// How near the client's own compaction a prompt is let come before
+// trim_before_autocompact trims it, in tokens: a long reply and the tool
+// results after it, which come before the next request can trim, have run to
+// about this (a 12.6K-token reply, logged), and Claude Code has compacted at
+// 144-167K, not always at 165K.
+const AUTOCOMPACT_MARGIN = 20_000
+
 function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
@@ -249,6 +256,26 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     merged = allMerged
     keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain, merged, turns)
   }
+  // With trim_before_autocompact, a prompt within AUTOCOMPACT_MARGIN of the
+  // client's own compaction is sent as a cold cache would send it, every
+  // record and every trim due, whatever the cache: unless that still leaves
+  // it within twice the margin, where the client compacts soon regardless.
+  // Not on a side request, the compaction among them: its messages are never
+  // sent again.
+  const stats = latestOf(key)
+  const at = policy.trim_before_autocompact && stats && !suggestion ? model.compaction?.at : undefined
+  const near = at ? promptTokens(stats!, keep.msgs) : 0
+  let forced: { before: number; after: number; next: typeof keep } | undefined
+  if (at && near >= at - AUTOCOMPACT_MARGIN) {
+    const full = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain, allMerged, turns)
+    const after = promptTokens(stats!, full.msgs)
+    if (after <= at - 2 * AUTOCOMPACT_MARGIN) {
+      if (records < chain.length) covers = coveredBy(keep, msgs, chain, records, turns).map(keyOf)
+      records = chain.length
+      merged = allMerged
+      forced = { before: Math.round(near), after: Math.round(after), next: full }
+    }
+  }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
   const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, parts, conv, thinking), msgs, chain.slice(0, records), merged, turns).msgs, seed, thinking)
@@ -271,7 +298,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   // A compaction's messages are never sent again, so a trim on it pays only
   // where it costs no more on this request: no later ones share its savings.
   const horizon = isCompaction(msgs, compaction) ? 0 : model.horizon(latestOf(key)?.requests ?? 0)
-  if (clock.requests > held.requests || clock.turns > held.turns) {
+  if (forced) [sent, applied, next] = [forced.next, clock, forced.next]
+  else if (clock.requests > held.requests || clock.turns > held.turns) {
     next = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain.slice(0, records), merged, turns)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
@@ -289,7 +317,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
   // A record takes its turns' prompts out of the messages; the stats count them still.
-  const described = { ...describe(body, trimmed, time, d?.advanced || records > before || merged > mergedBefore, conv, h?.alwaysLoaded), turns: msgs.filter(isPrompt).length }
+  const described = { ...describe(body, trimmed, time, !!forced || d?.advanced || records > before || merged > mergedBefore, conv, h?.alwaysLoaded), turns: msgs.filter(isPrompt).length }
   if (deferred + dropped) described.defs.deferred = deferred + dropped
   if (skills) described.defs.skills = skills
   if (skillsTrimmed) splitShaved(described, skillsTrimmed)
@@ -318,6 +346,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
+    if (forced) writeLine(p.logDir, { event: 'autocompact-trim', time, at, beforeTokens: forced.before, afterTokens: forced.after, requests: clock.requests, turns: clock.turns })
     if (d?.savedChars) {
       const context: Record<string, number> = {}
       for (const m of keep.msgs) for (const [k, n] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + n

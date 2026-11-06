@@ -421,6 +421,20 @@ key no record is made or sent.
 more than that many tokens, the oldest are merged into it. It is 15000 in the
 default policy. Without the key no record is merged.
 
+`trim_before_autocompact` (top level, off by default) trades cost for the
+client's compaction never happening while the shaver can prevent it. A warm
+cache holds trims back until they pay, so a long session can reach the
+client's own compaction point (`compaction.at` in `models.ts`, 165K tokens for
+Claude Code) with trims and records pending. With the setting on, a prompt
+within 20K tokens of that point, counted as `promptTokens` counts it, is sent
+as a cold cache would send it: every trim due and every record made, whatever
+the cache. Unless that leaves it within 40K, where the client would compact
+soon anyway and the rewrite would buy little. The step events log each such
+request as `autocompact-trim`, with its tokens before and after. Measured on
+the logged compactions, the client's own was the cheaper over the cycle by
+7–45%, a compaction leaving a smaller prompt than a trim; what the setting
+buys is no wait for the summary and no detail lost to it.
+
 The proxy reads the file when it starts; restart it after editing.
 
 ## What it trims

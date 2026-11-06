@@ -37,7 +37,10 @@ export type PartRules = Partial<Record<Kind, Rule[]>> & { user_and_assistant_tex
 // lists to the model, first matching rule winning (skills.ts); `shaver
 // optimize` writes stubs into it. A file in an older form is put in this one
 // when loaded (upgraded).
-export type Policy = { conversation_shaver_rules?: PartRules; tool_shaver_rules?: Record<string, ToolRule[]>; skill_shaver_rules?: SkillRule[] }
+// `trim_before_autocompact` has the proxy, once the prompt nears the
+// client's own compaction, send it as a cold cache would, whatever the cache
+// (server.ts, prepare).
+export type Policy = { conversation_shaver_rules?: PartRules; tool_shaver_rules?: Record<string, ToolRule[]>; skill_shaver_rules?: SkillRule[]; trim_before_autocompact?: boolean }
 
 // The policy's summary and memoir thresholds, if any.
 export const textRules = (p: Policy): Text => p.conversation_shaver_rules?.user_and_assistant_text ?? {}
@@ -78,6 +81,8 @@ export function parsePolicy(v: unknown): Policy {
       for (const r of value)
         if (typeof r?.name !== 'string' || !['keep', 'stub', 'drop'].includes(r.action) || (r.action === 'stub' ? !stub(r) : r.sentences !== undefined || r.text !== undefined || r.replaces !== undefined))
           throw new Error(`policy: bad skill rule ${JSON.stringify(r)}`)
+    } else if (key === 'trim_before_autocompact') {
+      if (typeof value !== 'boolean') throw new Error('policy: trim_before_autocompact is not true or false')
     } else throw new Error(`policy: unknown key ${key}`)
   }
   return v as Policy
