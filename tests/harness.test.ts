@@ -36,6 +36,14 @@ test('the headers say which requests are side requests, where they know', () => 
   assert.equal(of('opencode')!.side, undefined)
 })
 
+test("Claude Code's headers say which request is its compaction, where they know", () => {
+  const claude = of('claude')!
+  const cls = (c: string) => claude.compaction!({ 'x-claude-code-request-class': c })
+  assert.deepEqual(['compaction', 'main', 'subagent', 'workflow', 'auxiliary', 'side_reply'].map(cls), [true, false, false, false, false, false])
+  assert.equal(cls('something_new'), undefined)
+  assert.equal(claude.compaction!({}), undefined)
+})
+
 test("a harness's own headers are logged, but those that may carry a secret", () => {
   assert.deepEqual(loggedHeaders(of('claude')!, { 'x-claude-code-request-class': 'main', 'x-claude-code-signature': 's', 'x-claude-code-session-id': 'a', authorization: 'k', 'x-codex-window-id': 'w' }), { 'x-claude-code-request-class': 'main', 'x-claude-code-session-id': 'a' })
   assert.deepEqual(loggedHeaders(of('codex')!, { 'x-codex-turn-metadata': '{}', 'x-openai-subagent': 'review', 'x-openai-api-key': 'k' }), { 'x-codex-turn-metadata': '{}', 'x-openai-subagent': 'review' })

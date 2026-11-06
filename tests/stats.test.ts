@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornFrom, bornOf, costLines, describe, estimate, isSideRequest, observe, render, settled, splitShaved, withoutSideRequest, type Stats } from '../src/stats.ts'
+import { bornFrom, bornOf, costLines, describe, estimate, isCompaction, isSideRequest, observe, render, settled, splitShaved, withoutSideRequest, type Stats } from '../src/stats.ts'
 import { clockOf, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -54,6 +54,27 @@ test('a side request is told apart by its last message, unless the headers say',
   // What the headers say wins over the wording.
   assert.equal(isSideRequest([a, b, suggest], false), false)
   assert.equal(isSideRequest([a, b, { role: 'user', content: 'Summarize the conversation.' }], true), true)
+})
+
+test("Claude Code's compaction is told apart by its ask, wherever it sits in the last message, unless the headers say", () => {
+  const a: ApiMsg = { role: 'user', content: 'a' }
+  const b: ApiMsg = { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'Read', input: {} }] }
+  const opens = 'CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, …\n'
+  const ask = { type: 'text', text: opens + 'This conversation is being compacted. … inside <summary></summary> tags …' }
+  // After tool results, as when it comes mid-turn; after a prompt, as when it comes with one.
+  const midTurn: ApiMsg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'r' }, ask] }
+  const withPrompt: ApiMsg = { role: 'user', content: [{ type: 'text', text: 'go on' }, ask] }
+  for (const last of [midTurn, withPrompt]) {
+    assert.equal(isCompaction([a, b, last]), true)
+    assert.equal(isSideRequest([a, b, last]), true)
+  }
+  assert.equal(isCompaction([a, b, { role: 'user', content: 'what does "CRITICAL: Respond with TEXT ONLY." mean?' }]), false)
+  // The opening line on its own, or with a summary asked for but no compaction said, is some other ask.
+  assert.equal(isCompaction([a, b, { role: 'user', content: opens + 'List the files.' }]), false)
+  assert.equal(isCompaction([a, b, { role: 'user', content: opens + 'Answer in a <summary> block.' }]), false)
+  assert.equal(isCompaction([a, { role: 'assistant', content: [ask] }]), false)
+  assert.equal(isCompaction([a, b, midTurn], false), false)
+  assert.equal(isCompaction([a, b, { role: 'user', content: 'Summarize.' }], true), true)
 })
 
 test('a prompt suggestion does not end the turn before it', () => {

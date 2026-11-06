@@ -33,6 +33,8 @@ export type Harness = {
   // (stats.ts, isSideRequest); undefined where they don't say, or say
   // something not known yet.
   side?(headers: IncomingHttpHeaders): boolean | undefined
+  // Whether they say it is its compaction (stats.ts, isCompaction), likewise.
+  compaction?(headers: IncomingHttpHeaders): boolean | undefined
 }
 
 // Claude Code's x-claude-code-request-class, sent when
@@ -64,6 +66,10 @@ const CLAUDE: Harness = {
   side(headers) {
     const c = String(headers['x-claude-code-request-class'] ?? '')
     return SIDE_CLASSES.has(c) ? true : LOOP_CLASSES.has(c) ? false : undefined
+  },
+  compaction(headers) {
+    const c = String(headers['x-claude-code-request-class'] ?? '')
+    return SIDE_CLASSES.has(c) || LOOP_CLASSES.has(c) ? c === 'compaction' : undefined
   },
 }
 

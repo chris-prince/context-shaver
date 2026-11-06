@@ -191,6 +191,25 @@ export function tokensOf(s: Stats, base: Sent, variant: Sent): number | undefine
 // whose headers don't say what kind it is.
 const SIDE_ASKS = ['[SUGGESTION MODE:', 'The user stepped away and is coming back.']
 
+// Claude Code's compaction ask: a text block of the last message, after any
+// tool results, or after the prompt it was sent with. Its wording changes
+// between versions, but each logged one opens with this line, asks for a
+// <summary> block and says it is a compaction ("after compaction", "being
+// compacted"); the opening line alone says nothing of compaction.
+const COMPACTION_OPENS = 'CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.'
+const isCompactionAsk = (text: string) =>
+  text.startsWith(COMPACTION_OPENS) && text.includes('<summary>') && /compact/i.test(text)
+
+// Whether a request is the harness's compaction: the conversation so far and
+// an ask to summarize it, whose answer replaces the conversation, so no later
+// request sends what it sends. The headers say so where they can (`says`,
+// harness.ts); otherwise the ask's wording does.
+export function isCompaction(msgs: readonly ApiMsg[], says?: boolean): boolean {
+  if (says !== undefined) return says
+  const last = msgs.at(-1)
+  return last?.role === 'user' && blocks(last).some((b) => b.type === 'text' && isCompactionAsk(String(b.text)))
+}
+
 // Whether a request is a side request on the conversation: the conversation so
 // far and a last message with an ask of the harness's own, as Claude Code's
 // prompt suggestion, its recap and its compaction, or Codex's compaction. The
@@ -202,7 +221,7 @@ export function isSideRequest(msgs: readonly ApiMsg[], side?: boolean): boolean 
   const last = msgs.at(-1)
   if (last?.role !== 'user') return false
   const text = typeof last.content === 'string' ? last.content : last.content.find((b) => b.type === 'text')?.text ?? ''
-  return SIDE_ASKS.some((ask) => text.startsWith(ask))
+  return SIDE_ASKS.some((ask) => text.startsWith(ask)) || isCompaction(msgs)
 }
 
 // The messages but a side request's ask, which is not a prompt the user typed,

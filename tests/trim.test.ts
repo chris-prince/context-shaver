@@ -29,6 +29,25 @@ const tailed = (msgs: readonly ApiMsg[]): ApiMsg[] =>
 const gate = (before: readonly ApiMsg[], after: readonly ApiMsg[], cached: readonly ApiMsg[], model = 'claude-haiku-5-5', thinking = new Map<string, number>()) =>
   decide(tailed(before), tailed(after), new Set(positionsOf(cached, 's', thinking).map((p) => p.prefix)), 's', modelOf(model), thinking)
 
+test('with no later request to share its savings (horizon 0, a compaction), a trim advances only where it costs nothing more now', () => {
+  const msgs: ApiMsg[] = [
+    { role: 'user', content: 'a' },
+    { role: 'assistant', content: [{ type: 'text', text: long }] },
+    { role: 'user', content: 'b' },
+    // What follows the trim, which advancing writes again.
+    { role: 'assistant', content: [{ type: 'text', text: 'c'.repeat(20_000) }] },
+    { role: 'user', content: 'd' },
+  ]
+  const trimmed = [msgs[0], { role: 'assistant' as const, content: [{ type: 'text', text: 'short' }] }, ...msgs.slice(2)]
+  const at = (cached: readonly ApiMsg[], horizon: number) =>
+    decide(tailed(msgs), tailed(trimmed), new Set(positionsOf(cached, 's', new Map()).map((p) => p.prefix)), 's', modelOf('claude-haiku-5-5'), new Map(), false, horizon).advanced
+  // Warm: the rewrite pays back over later requests, but not on this one.
+  assert.equal(at(msgs.slice(0, 4), 100), true)
+  assert.equal(at(msgs.slice(0, 4), 0), false)
+  // Cold: both write everything, so the trim is cheaper even on this one.
+  assert.equal(at([], 0), true)
+})
+
 // The items an application changed, counted by kind and treatment.
 const counts = (a: Applied) => transitions({ msgs: [], origin: [], treated: new Map() }, a)
 

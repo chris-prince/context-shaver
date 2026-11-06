@@ -31,7 +31,7 @@ import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withou
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isSideRequest, keyOf, observe, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -203,9 +203,9 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
-// `side` is whether the harness's headers say it's a side request, where they
-// say (harness.ts).
-function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean): Prepared | undefined {
+// `side` and `compaction` are whether the harness's headers say it's a side
+// request, and its compaction, where they say (harness.ts).
+function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const conv = h?.conventions ?? NO_CONVENTIONS
@@ -268,7 +268,9 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   let applied = held
   let next = keep
   let d: Decision | undefined
-  const horizon = model.horizon(latestOf(key)?.requests ?? 0)
+  // A compaction's messages are never sent again, so a trim on it pays only
+  // where it costs no more on this request: no later ones share its savings.
+  const horizon = isCompaction(msgs, compaction) ? 0 : model.horizon(latestOf(key)?.requests ?? 0)
   if (clock.requests > held.requests || clock.turns > held.turns) {
     next = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain.slice(0, records), merged, turns)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
@@ -677,7 +679,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: commands left in:', err)
     }
     try {
-      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now(), side)
+      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now(), side, h?.compaction?.(req.headers))
       if (p?.logLine && logged) p.logLine.headers = logged
     } catch (err) {
       why = 'untrimmed'
