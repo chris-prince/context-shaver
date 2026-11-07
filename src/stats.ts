@@ -47,6 +47,10 @@ export type Sent = {
   advanced: boolean
   // The seconds its breakpoints asked the cache to keep it (trim.ts, markedTtl).
   ttl?: number
+  // Where its client compacts, in prompt tokens, as autocompact.ts works it
+  // out; null where it won't. None where that can't be said (models.ts's
+  // figure stands) or before 2026-11-06.
+  compactAt?: number | null
   // Whether it is a side request on the conversation, as Claude Code's prompt
   // suggestion (isSideRequest); named for that, the first one known.
   suggestion?: boolean
@@ -71,6 +75,8 @@ export type Stats = {
   provider?: string
   // The latest request's Sent.ttl; none before 2026-10-22.
   ttl?: number
+  // The latest request's Sent.compactAt.
+  compactAt?: number | null
   // Whether the latest request was a prompt suggestion, which counts as no
   // request or turn; none before 2026-10-23, when suggestions weren't journaled.
   suggestion?: boolean
@@ -339,6 +345,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     model: r.model,
     ...(r.provider && { provider: r.provider }),
     ...(r.ttl && { ttl: r.ttl }),
+    ...(r.compactAt !== undefined && { compactAt: r.compactAt }),
     suggestion: !!r.suggestion,
     ...(r.compacted && { compacted: true }),
     ...(r.covers && { covers: r.covers }),

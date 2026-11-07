@@ -253,3 +253,12 @@ test('what was taken out before a compaction weighs what it keeps against what i
   const [tools, messages] = [d.saved.tools - c.saved.tools, d.saved.messages - c.saved.messages]
   assert.ok(Math.abs(tools / messages - 19_980 / 70_000) < 1e-9)
 })
+
+test("the client compacts where the request's harness said, or not at all", () => {
+  const big = (minute: number, inputTokens: number, removedTokens: number, compactAt?: number | null) =>
+    ({ ...at(minute, inputTokens, removedTokens), compactAt, tokens: { d: 10_000 }, parts: [], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
+  // 170k without the proxy: past models.ts's 165K, short of a 967K window's point.
+  const run = (compactAt?: number | null) =>
+    cost([{ stats: big(0, 100_000, 0, compactAt), usage: usage(0, 0, 100_000) }, { stats: big(1, 70_000, 100_000, compactAt), usage: usage(0, 10_000, 60_000) }], HOUR)!.compactions
+  assert.deepEqual([run(), run(967_000), run(null), run(150_000)], [1, 0, 0, 1])
+})

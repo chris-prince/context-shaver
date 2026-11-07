@@ -424,8 +424,12 @@ default policy. Without the key no record is merged.
 `trim_before_autocompact` (top level, off by default) trades cost for the
 client's compaction never happening while the shaver can prevent it. A warm
 cache holds trims back until they pay, so a long session can reach the
-client's own compaction point (`compaction.at` in `models.ts`, 165K tokens for
-Claude Code) with trims and records pending. With the setting on, a prompt
+client's own compaction point with trims and records pending. That point is
+worked out per request as the harness works it out (`autocompact.ts`): from
+the model and the harness's own settings, config files and caches on this
+machine, such as Claude Code's `autoCompactWindow`, Codex's
+`model_auto_compact_token_limit` and opencode's `compaction.buffer`; where it
+can't be said, `compaction.at` in `models.ts` stands. With the setting on, a prompt
 within 20K tokens of that point, counted as `promptTokens` counts it, is sent
 as a cold cache would send it: every trim due and every record made, whatever
 the cache. Unless that leaves it within 40K, where the client would compact
@@ -839,7 +843,8 @@ Scripts:
   held both), until
   the client compacts it itself: past the model's `compaction.at`, the
   shaverless prompt keeps its base and what that client's compaction keeps,
-  then grows as the client's prompt grows. Claude Code's, at 165K, keeps 20%
+  then grows as the client's prompt grows (at the point `autocompact.ts`
+  worked out for the request, where it could). Claude Code's keeps 20%
   of the rest; each adds a request reading the whole prompt and writing a
   7.6K-token summary, and about 65 seconds of waiting, which the stats show
   as avoided; the figures come from five logged compactions. Codex's (v2,

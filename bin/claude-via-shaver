@@ -69,4 +69,15 @@ fi
 # The hint headers say what kind each request is (x-claude-code-request-class),
 # so the proxy tells side requests apart without reading their wording.
 export ANTHROPIC_BASE_URL ENABLE_TOOL_SEARCH=true CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
+# Where Claude Code compacts depends on these variables, which it sends no
+# header for; one of the proxy's own carries those set (src/autocompact.ts,
+# ENV_HEADER), which the proxy drops before forwarding.
+env=
+for v in CLAUDE_CODE_AUTO_COMPACT_WINDOW CLAUDE_AUTOCOMPACT_PCT_OVERRIDE DISABLE_AUTO_COMPACT DISABLE_COMPACT CLAUDE_CODE_DISABLE_1M_CONTEXT; do
+  [[ -n ${!v:-} ]] && env+=${env:+&}$v=$(encode "${!v}")
+done
+if [[ -n $env ]]; then
+  ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS:+$ANTHROPIC_CUSTOM_HEADERS$'\n'}x-shaver-env: $env"
+  export ANTHROPIC_CUSTOM_HEADERS
+fi
 exec "${real[@]}" "$@"

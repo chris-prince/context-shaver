@@ -7,14 +7,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 
-// Two tool results of this many characters take the prompt past 145K tokens
-// (165K less the margin) with the second, and back under 125K without the first.
+// Two tool results of this many characters take the prompt past 147K tokens
+// (167K less the margin) with the second, and back under 125K without the first.
 const BIG = 250_000
 // A note after each result, so a warm cache would rewrite too much to drop one.
 const NOTE = 40_000
@@ -70,7 +70,14 @@ async function run(setting: boolean, compacting = false): Promise<{ last: any[];
     skill_shaver_rules: [],
     ...(setting && { trim_before_autocompact: true }),
   }))
-  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up.url, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'] })
+  // A home of its own, whose Claude Code settings put the compaction at 167K
+  // (200K less 20K of output less 13K, autocompact.ts), whatever this machine's.
+  const home = path.join(dir, 'home')
+  mkdirSync(path.join(home, '.claude'), { recursive: true })
+  writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 200_000 }))
+  const env = { ...process.env, HOME: home }
+  delete env.CLAUDE_CONFIG_DIR
+  const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up.url, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'], env })
   let err = ''
   try {
     const url = await new Promise<string>((ok, fail) => {
@@ -118,8 +125,8 @@ test('with trim_before_autocompact, a prompt near the limit is sent as a cold ca
   assert.equal(results(last).length, 1)
   assert.equal(String(results(last)[0].content)[0], '1')
   const [line] = events.filter((l) => l.event === 'autocompact-trim')
-  assert.equal(line.at, 165_000)
-  assert.ok(line.beforeTokens >= 145_000 && line.afterTokens <= 125_000, JSON.stringify(line))
+  assert.equal(line.at, 167_000)
+  assert.ok(line.beforeTokens >= 147_000 && line.afterTokens <= 125_000, JSON.stringify(line))
 })
 
 test('with trim_before_autocompact, the compaction request itself is not trimmed for it', async () => {

@@ -123,13 +123,15 @@ export function spent(model: string, provider: string | undefined, u: Usage): nu
 // The cost so far with a request's added, given the stats it leaves, the stats
 // before it, and its usage; none once a request's model has no price.
 export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number): Cost | undefined {
-  const m = modelOf(s.model, s.provider)
+  let m = modelOf(s.model, s.provider)
   const p = m.price
   if (!c || !p) return undefined
   // The TTL the proxy's cache model used for the request (server.ts, prepare).
   const ttl = lifetimeMs(s.ttl ?? m.ttl, ttlMs)
   const actual: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
   const short = (t: Tokens) => (ttl > 300_000 ? 0 : t.writes)
+  // Compacting where the request's harness said it would (stats.ts, compactAt).
+  if (s.compactAt !== undefined) m = { ...m, compaction: s.compactAt === null || !m.compaction ? undefined : { ...m.compaction, at: s.compactAt } }
   const wo = without(prev, s, u, ttl, c.context, m.compaction)
   const all = wo.tokens.uncached + wo.tokens.reads + wo.tokens.writes
   const compaction: Tokens = { uncached: 0, reads: all, writes: 0, output: m.compaction?.summary ?? 0 }
