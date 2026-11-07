@@ -208,8 +208,8 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 // How near the client's own compaction a prompt is let come before
 // trim_before_autocompact trims it, in tokens: a long reply and the tool
 // results after it, which come before the next request can trim, have run to
-// about this (a 12.6K-token reply, logged), and Claude Code has compacted at
-// 144-167K, not always at 165K.
+// about this (a 12.6K-token reply, logged), and Claude Code's compaction
+// requests have read up to 167.1K tokens, not exactly 165K.
 const AUTOCOMPACT_MARGIN = 20_000
 
 function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean): Prepared | undefined {

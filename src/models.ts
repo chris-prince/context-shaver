@@ -37,10 +37,11 @@ export type Compaction = { at: number; kept: number | 'prompts'; summary: number
 // RETAINED_MESSAGE_TOKEN_BUDGET, by osolmaz's reading of its source; local/notes.md).
 export const PROMPTS_KEPT = 64_000
 
-// Claude Code compacts on a 200K window at about 165K: five compactions
-// logged here fired at 144-167K. What came after the base kept 11-29% of its
-// tokens (a median of 18%, rounded to 20%), the summary ran 6.6-8.9K tokens,
-// and the next request came about a minute later.
+// Claude Code compacts on a 200K window at about 165K: the eight automatic
+// compaction requests logged here that the shaver left untrimmed read
+// 164.7-167.1K tokens (usage). In five compactions, what came after the
+// base kept 11-29% of its tokens (a median of 18%, rounded to 20%), the
+// summary ran 6.6-8.9K tokens, and the next request came about a minute later.
 const CLAUDE_CODE = { compaction: { at: 165_000, kept: 0.2, summary: 7600, ms: 65_000 } }
 
 // Backtests of logged sessions (local/notes.md, "A trim's horizon"): Codex and
