@@ -37,7 +37,7 @@ import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction,
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
-import { loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
+import { autocompactMargin, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
@@ -207,13 +207,6 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 // there is no breakpoint to add, so no anchor.
 // `side` and `compaction` are whether the harness's headers say it's a side
 // request, and its compaction, where they say (harness.ts).
-// How near the client's own compaction a prompt is let come before
-// trim_before_autocompact trims it, in tokens: a long reply and the tool
-// results after it, which come before the next request can trim, have run to
-// about this (a 12.6K-token reply, logged), and Claude Code's compaction
-// requests have read up to 167.1K tokens, a little past where it compacts.
-const AUTOCOMPACT_MARGIN = 20_000
-
 function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean, req: { headers: IncomingHttpHeaders; upstream: string; launch?: LaunchVals } = { headers: {}, upstream: '' }): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
@@ -262,20 +255,21 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     merged = allMerged
     keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain, merged, turns)
   }
-  // With trim_before_autocompact, a prompt within AUTOCOMPACT_MARGIN of the
-  // client's own compaction is sent as a cold cache would send it, every
-  // record and every trim due, whatever the cache: unless that still leaves
-  // it within twice the margin, where the client compacts soon regardless.
-  // Not on a side request, the compaction among them: its messages are never
-  // sent again.
+  // With force_trim_before_autocompact_margin, a prompt within that
+  // margin of the client's own compaction is sent as a cold cache would send
+  // it, every record and every trim due, whatever the cache: unless that
+  // still leaves it within twice the margin, so the rewrite buys less room
+  // than the margin before it would fire again. Not on a side request, the
+  // compaction among them: its messages are never sent again.
   const stats = latestOf(key)
-  const at = policy.trim_before_autocompact && stats && !suggestion ? compactAt ?? undefined : undefined
+  const margin = autocompactMargin(policy)
+  const at = margin && stats && !suggestion ? compactAt ?? undefined : undefined
   const near = at ? promptTokens(stats!, keep.msgs) : 0
   let forced: { before: number; after: number; next: typeof keep } | undefined
-  if (at && near >= at - AUTOCOMPACT_MARGIN) {
+  if (at && near >= at - margin!) {
     const full = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain, allMerged, turns)
     const after = promptTokens(stats!, full.msgs)
-    if (after <= at - 2 * AUTOCOMPACT_MARGIN) {
+    if (after <= at - 2 * margin!) {
       if (records < chain.length) covers = coveredBy(keep, msgs, chain, records, turns).map(keyOf)
       records = chain.length
       merged = allMerged

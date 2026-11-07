@@ -1,4 +1,4 @@
-// trim_before_autocompact end to end: the real proxy, in front of a stand-in
+// force_trim_before_autocompact_margin end to end: the real proxy, in front of a stand-in
 // upstream, on a warm cache. A prompt grown near Claude Code's compaction is
 // sent untrimmed without the setting, the cache check holding the trims back,
 // and trimmed as on a cold cache with it, which the log records.
@@ -59,9 +59,9 @@ async function until(done: () => boolean, what: string) {
   }
 }
 
-// One turn of two tool calls through the proxy, with the setting or without:
-// the messages upstream got last, and the step events.
-async function run(setting: boolean, compacting = false, launched = false): Promise<{ last: any[]; events: any[] }> {
+// One turn of two tool calls through the proxy, with the setting's margin or
+// without it: the messages upstream got last, and the step events.
+async function run(margin: number | undefined, compacting = false, launched = false): Promise<{ last: any[]; events: any[] }> {
   const dir = mkdtempSync(path.join(tmpdir(), 'autocompact-e2e-'))
   const up = await upstream()
   const policy = path.join(dir, 'policy.json')
@@ -69,7 +69,7 @@ async function run(setting: boolean, compacting = false, launched = false): Prom
     conversation_shaver_rules: { tool: [{ action: 'drop', after: '0 requests' }] },
     tool_shaver_rules: { claude: [] },
     skill_shaver_rules: [],
-    ...(setting && { trim_before_autocompact: true }),
+    ...(margin && { force_trim_before_autocompact_margin: `${margin} tokens` }),
   }))
   // A home of its own, whose Claude Code settings put the compaction at 167K
   // (200K less 20K of output less 13K, autocompact.ts), whatever this machine's.
@@ -123,14 +123,14 @@ async function run(setting: boolean, compacting = false, launched = false): Prom
 
 const results = (msgs: any[]) => msgs.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b: any) => b.type === 'tool_result' && String(b.content).length >= BIG)
 
-test('without trim_before_autocompact, a warm cache holds the trims back near the limit', async () => {
-  const { last, events } = await run(false)
+test('without force_trim_before_autocompact_margin, a warm cache holds the trims back near the limit', async () => {
+  const { last, events } = await run(undefined)
   assert.equal(results(last).length, 2)
   assert.ok(!events.some((l) => l.event === 'autocompact-trim'))
 })
 
-test('with trim_before_autocompact, a prompt near the limit is sent as a cold cache would send it', async () => {
-  const { last, events } = await run(true)
+test('with force_trim_before_autocompact_margin, a prompt near the limit is sent as a cold cache would send it', async () => {
+  const { last, events } = await run(20_000)
   // The first result is due for dropping and gone; the second, just made, kept.
   assert.equal(results(last).length, 1)
   assert.equal(String(results(last)[0].content)[0], '1')
@@ -139,14 +139,22 @@ test('with trim_before_autocompact, a prompt near the limit is sent as a cold ca
   assert.ok(line.beforeTokens >= 147_000 && line.afterTokens <= 125_000, JSON.stringify(line))
 })
 
-test('with trim_before_autocompact, the compaction request itself is not trimmed for it', async () => {
-  const { last, events } = await run(true, true)
+// The full trim leaves about 119K tokens: within 2 × 30K of the 167K point, so
+// too little room is won for the rewrite, where 2 × 20K is enough.
+test('force_trim_before_autocompact_margin is the margin: a wider one needs the trim to win twice as much room', async () => {
+  const { last, events } = await run(30_000)
   assert.equal(results(last).length, 2)
   assert.ok(!events.some((l) => l.event === 'autocompact-trim'))
 })
 
-test("with trim_before_autocompact, the point follows the launch values the base URL's ID names", async () => {
-  const { events } = await run(true, false, true)
+test('with force_trim_before_autocompact_margin, the compaction request itself is not trimmed for it', async () => {
+  const { last, events } = await run(20_000, true)
+  assert.equal(results(last).length, 2)
+  assert.ok(!events.some((l) => l.event === 'autocompact-trim'))
+})
+
+test("with force_trim_before_autocompact_margin, the point follows the launch values the base URL's ID names", async () => {
+  const { events } = await run(20_000, false, true)
   const [line] = events.filter((l) => l.event === 'autocompact-trim')
   assert.equal(line?.at, 177_000, JSON.stringify(events.filter((l) => l.event === 'request').map((l) => l.compactAt)))
 })

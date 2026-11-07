@@ -102,6 +102,11 @@ test('a policy file is checked', () => {
     assert.throws(() => parsePolicy(bad))
   assert.doesNotThrow(() => parsePolicy(skills([{ name: 'x', action: 'stub', text: 'a line', replaces: 'h' }])))
   assert.doesNotThrow(() => parsePolicy(tools({ claude: [{ name: 'x', action: 'defer' }], codex: [] })))
+  const margin = (v: unknown) => ({ force_trim_before_autocompact_margin: v })
+  for (const bad of [true, 20_000, '0 tokens', '20000', '20k tokens', '1.5 tokens', '-1 tokens', '10%'])
+    assert.throws(() => parsePolicy(margin(bad)), JSON.stringify(bad))
+  assert.throws(() => parsePolicy({ trim_before_autocompact: true }))
+  assert.doesNotThrow(() => parsePolicy(margin('20000 tokens')))
 })
 
 test('a policy in an older form is put in the current one, and one in the current form is left', () => {

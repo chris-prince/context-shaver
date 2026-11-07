@@ -423,9 +423,9 @@ key no record is made or sent.
 more than that many tokens, the oldest are merged into it. It is 15000 in the
 default policy. Without the key no record is merged.
 
-`trim_before_autocompact` (top level, off by default) trades cost for the
-client's compaction never happening while the shaver can prevent it. A warm
-cache holds trims back until they pay, so a long session can reach the
+`force_trim_before_autocompact_margin` (top level, as `"20000 tokens"`, off
+without it) trades cost for the client's compaction never happening while the
+shaver can prevent it. A warm cache holds trims back until they pay, so a long session can reach the
 client's own compaction point with trims and records pending. That point is
 worked out per request as the harness works it out (`autocompact.ts`): from
 the model and the harness's own settings, config files and caches on this
@@ -442,15 +442,20 @@ another launcher, and a wrapper the launcher stands in for may set them. Each
 launcher runs `src/launch-vals.ts`, which saves just those values, if any are
 set, as `proxy-data/launch-vals/<id>.json`, named by a hash of them, and the
 launcher puts `/launch-vals/<id>` in the harness's base URL; the proxy reads
-the file. No keys or prompts go in it. Not yet seen: Claude Code's `--settings`, opencode's managed settings,
-what the harness's login shell sets after the launcher has run, the window a
+the file. No keys or prompts go in it. Not yet seen: Claude Code's
+`--settings`, opencode's managed settings, what the harness's login shell
+sets after the launcher has run, the window a
 Codex custom provider gets, and an opencode provider's own gateway, which its
-launcher bypasses. With the setting on, a prompt
-within 20K tokens of that point, counted as `promptTokens` counts it, is sent
-as a cold cache would send it: every trim due and every record made, whatever
-the cache. Unless that leaves it within 40K, where the client would compact
-soon anyway and the rewrite would buy little. The step events log each such
-request as `autocompact-trim`, with its tokens before and after. Measured on
+launcher bypasses. A prompt within the margin of that point, counted as
+`promptTokens` counts it, is sent as a cold cache would send it: every trim
+due and every record made, whatever the cache. Unless that leaves it within
+twice the margin, so the rewrite would buy less room than the margin before
+the next. 20000 suits a 200K window: a reply and its tool results have run
+to about that between requests (a 12.6K-token reply, logged). A 1M window
+wants more, as a margin of 20K there lets the proxy rewrite up to 927K
+tokens for 20K of room. A margin over half the point never fires. The step
+events log each such request as `autocompact-trim`, with its tokens before
+and after. Measured on
 the logged compactions, the client's own was the cheaper over the cycle by
 7–45%, a compaction leaving a smaller prompt than a trim; what the setting
 buys is no wait for the summary and no detail lost to it.
