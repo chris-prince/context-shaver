@@ -136,11 +136,18 @@ j=$(last "$key")
 [[ -n $j ]] || die "model_provider is $provider, but no $key is given to chain to"
 up=$(value "$j")
 up=${up%/}
+# A base URL already at the proxy is rebuilt with this launch's ID, keeping its
+# gateway.
 if [[ ! $up =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
-  v="$key=\"http://127.0.0.1:$port$base/via/$(encode "$up")\""
-  [[ ${args[j]} == --config=* ]] && v=--config=$v
-  args[j]=$v
+  via=/via/$(encode "$up")
+elif [[ $up =~ /via/[^/]+$ ]]; then
+  via=${BASH_REMATCH[0]}
+else
+  via=
 fi
+v="$key=\"http://127.0.0.1:$port$base$via\""
+[[ ${args[j]} == --config=* ]] && v=--config=$v
+args[j]=$v
 # Right after the base URL, so among the same flags, before any subcommand.
 args=("${args[@]:0:j+1}" -c "model_providers.$provider.supports_websockets=false" "${args[@]:j+1}")
 exec "${real[@]}" "${args[@]}"

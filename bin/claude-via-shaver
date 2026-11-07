@@ -66,10 +66,14 @@ up=${up%/}
 # (src/launch-vals.ts).
 id=$("$bin/node-wrapper" "$bin/../src/launch-vals.ts" claude "$bin/../proxy-data" -- "$@")
 base=http://127.0.0.1:$port/harness/claude${id:+/launch-vals/$id}
-if [[ -z $up ]]; then
-  ANTHROPIC_BASE_URL=$base
-elif [[ ! $up =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
+# A base URL already at the proxy (one a shell inherited from a session run
+# through it, say) is rebuilt with this launch's ID, keeping its gateway.
+if [[ -n $up && ! $up =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
   ANTHROPIC_BASE_URL=$base/via/$(encode "$up")
+elif [[ $up =~ /via/[^/]+$ ]]; then
+  ANTHROPIC_BASE_URL=$base${BASH_REMATCH[0]}
+else
+  ANTHROPIC_BASE_URL=$base
 fi
 # The hint headers say what kind each request is (x-claude-code-request-class),
 # so the proxy tells side requests apart without reading their wording.
