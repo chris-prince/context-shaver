@@ -8,12 +8,15 @@
 // `at` is null where the harness won't compact; no answer at all, where the
 // harness or model isn't known well enough to say (models.ts's figure stands).
 // `source` says which input decided the window, for the request log.
+// `window` is the context window the harness works from, for shaver info;
+// `guessed` where it is the model's as this file's own table has it, as no
+// setting or file of the harness's says.
 import fs from 'node:fs'
 import type { IncomingHttpHeaders } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 
-export type Autocompact = { at: number | null; source: string }
+export type Autocompact = { at: number | null; source: string; window?: number; guessed?: true }
 export type Asked = { model: string; system?: unknown; messages?: unknown; headers: IncomingHttpHeaders; upstream: string }
 
 // The variables bin/claude-via-shaver passes on from Claude Code's
@@ -160,8 +163,7 @@ function claude(r: Asked): Autocompact {
   const env: Obj = { ...envOf(r.headers) }
   for (const s of settings) if (isObj(s.env)) Object.assign(env, s.env)
   const global = json(path.join(dir ?? home(), '.claude.json'))
-  if (truthy(env.DISABLE_AUTO_COMPACT) || truthy(env.DISABLE_COMPACT)) return { at: null, source: 'env' }
-  if (isObj(global) && global.autoCompactEnabled === false) return { at: null, source: 'autoCompactEnabled' }
+  const off = truthy(env.DISABLE_AUTO_COMPACT) || truthy(env.DISABLE_COMPACT) ? 'env' : isObj(global) && global.autoCompactEnabled === false ? 'autoCompactEnabled' : undefined
 
   const key = settingsKey(r.model)
   const model = contextOf(r.model, String(r.headers['anthropic-beta'] ?? ''), env)
@@ -188,10 +190,14 @@ function claude(r: Asked): Autocompact {
       if (served) [configured, source] = [served, 'server']
     }
   }
-  const window = Math.min(context, configured ?? context) - CLAUDE_OUTPUT
+  const whole = Math.min(context, configured ?? context)
+  // A guess where the model's window stands, as no setting lowers it.
+  const shown = { window: whole, ...((configured ?? Infinity) > context && { guessed: true as const }) }
+  if (off) return { at: null, source: off, ...shown }
+  const window = whole - CLAUDE_OUTPUT
   const pct = Number(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)
   const at = pct > 0 && pct <= 100 ? Math.min(Math.floor((window * pct) / 100), window - CLAUDE_BUFFER) : window - CLAUDE_BUFFER
-  return { at, source: pct > 0 && pct <= 100 ? `${source}+pct` : source }
+  return { at, source: pct > 0 && pct <= 100 ? `${source}+pct` : source, ...shown }
 }
 
 // A model's name as settings key it: lowercase, without the [1m] suffix.
@@ -241,7 +247,7 @@ function codex(r: Asked): Autocompact | undefined {
   const limit = setLimit ?? num(m?.auto_compact_token_limit)
   const cap = window && Math.floor((window * 9) / 10)
   const at = cap ? (limit ? Math.min(limit, cap) : cap) : (limit ?? null)
-  return { at, source: setLimit && (!cap || setLimit < cap) ? 'config' : setWindow ? 'config-window' : 'models-cache' }
+  return { at, source: setLimit && (!cap || setLimit < cap) ? 'config' : setWindow ? 'config-window' : 'models-cache', ...(window && { window }) }
 }
 
 // ---- opencode -------------------------------------------------------------
@@ -293,10 +299,10 @@ function opencode(r: Asked): Autocompact | undefined {
     const b = d.compaction.buffer ?? d.compaction.reserved
     if (b !== undefined) buffer = b
   }
-  if (auto === false) return { at: null, source: 'compaction.auto' }
+  if (auto === false) return { at: null, source: 'compaction.auto', window }
   const n = typeof buffer === 'string' ? Math.round((window * Number.parseFloat(buffer)) / 100) : num(buffer)
-  if (n !== undefined && n < window) return { at: window - n, source: `${source}+buffer` }
-  return { at: window - Math.max(Math.floor(window * OPENCODE_SHARE), window >= 2 * OPENCODE_FLOOR ? OPENCODE_FLOOR : 0), source }
+  if (n !== undefined && n < window) return { at: window - n, source: `${source}+buffer`, window }
+  return { at: window - Math.max(Math.floor(window * OPENCODE_SHARE), window >= 2 * OPENCODE_FLOOR ? OPENCODE_FLOOR : 0), source, window }
 }
 
 const hostOf = (url: string) => {

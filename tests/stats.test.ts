@@ -126,7 +126,15 @@ test('render prints the stats from the state alone', () => {
 
 test('render names the provider only when a request pins one', () => {
   const pinned = observe(undefined, describe({ ...body([{ role: 'user', content: 'hi' }]), provider: 'deepinfra' }, ends, '2026-10-11T10:00:00Z'), 1000, 0)
-  assert.match(render(pinned, 'session'), /^Session: session\nModel: m\nProvider: deepinfra\n\n/)
+  assert.match(render(pinned, 'session'), /^Session: session\nModel: m\nContext Window: \(unknown\)\nProvider: deepinfra\n\n/)
+})
+
+test("render gives the client's context window, saying when it is guessed from the model", () => {
+  const sent = describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z')
+  assert.match(render(observe(undefined, { ...sent, window: 200_000 }, 1000, 0), 'session'), /^Session: session\nModel: m\nContext Window: 200,000 tokens\n\n/)
+  assert.match(render(observe(undefined, { ...sent, window: 1_000_000, windowGuessed: true }, 1000, 0), 'session'), /^Session: session\nModel: m\nContext Window: 1,000,000 tokens \(guessing\)\n\n/)
+  // Where the harness's window can't be worked out, the line says so.
+  assert.match(render(observe(undefined, sent, 1000, 0), 'session'), /^Session: session\nModel: m\nContext Window: \(unknown\)\n\n/)
 })
 
 test('Base lists the system prompt, the tools and the preamble\'s sections, by name', () => {

@@ -329,6 +329,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   described.defs.shaves = { tools: hash(JSON.stringify(toolRules ?? [])), skills: hash(JSON.stringify(skillList?.rules ?? [])) }
   if (marked) described.ttl = marked
   if (ac) described.compactAt = ac.at
+  if (ac?.window) described.window = ac.window
+  if (ac?.guessed) described.windowGuessed = true
   if (covers) described.covers = covers
   const last = latestOf(key)
   const lastPart = (last?.suggestion ? last.parts.at(-2) : last?.parts.at(-1))?.key

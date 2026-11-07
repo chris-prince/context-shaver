@@ -51,6 +51,10 @@ export type Sent = {
   // out; null where it won't. None where that can't be said (models.ts's
   // figure stands) or before 2026-11-06.
   compactAt?: number | null
+  // The context window its client works from, and whether that is guessed
+  // from the model (autocompact.ts); none before 2026-11-06.
+  window?: number
+  windowGuessed?: boolean
   // Whether it is a side request on the conversation, as Claude Code's prompt
   // suggestion (isSideRequest); named for that, the first one known.
   suggestion?: boolean
@@ -75,8 +79,10 @@ export type Stats = {
   provider?: string
   // The latest request's Sent.ttl; none before 2026-10-22.
   ttl?: number
-  // The latest request's Sent.compactAt.
+  // The latest request's Sent.compactAt, window and windowGuessed.
   compactAt?: number | null
+  window?: number
+  windowGuessed?: boolean
   // Whether the latest request was a prompt suggestion, which counts as no
   // request or turn; none before 2026-10-23, when suggestions weren't journaled.
   suggestion?: boolean
@@ -346,6 +352,8 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     ...(r.provider && { provider: r.provider }),
     ...(r.ttl && { ttl: r.ttl }),
     ...(r.compactAt !== undefined && { compactAt: r.compactAt }),
+    ...(r.window && { window: r.window }),
+    ...(r.windowGuessed && { windowGuessed: true }),
     suggestion: !!r.suggestion,
     ...(r.compacted && { compacted: true }),
     ...(r.covers && { covers: r.covers }),
@@ -579,7 +587,8 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const base = (by.systemPrompt ?? 0) + toolRows.reduce((n, k) => n + by[k], 0) + (by.preamble ?? 0)
   const conversation = total - base - frontier
 
-  const out = [`Session: ${session}`, `Model: ${s.model}`, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost)] : unpriced(s, estimated))]
+  const window = `Context Window: ${s.window ? `${s.window.toLocaleString('en-US')} tokens${s.windowGuessed ? ' (guessing)' : ''}` : '(unknown)'}`
+  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost)] : unpriced(s, estimated))]
   // The prompt as sent, then as it would be without the shaver, lined up.
   const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
   const { failed, ...counts } = forks
