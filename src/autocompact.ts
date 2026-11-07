@@ -13,30 +13,20 @@
 // setting or file of the harness's says.
 //
 // The harness's environment, and flags that move its settings, count only as
-// its launcher passes them on (launchOf): never the proxy's own environment,
-// as the proxy is a long-running process another launcher may have started,
-// and a wrapper the launcher stands in for may have set them for this
-// harness alone.
+// its launcher passes them on (launch-vals.ts), never from the proxy's own
+// environment.
 import fs from 'node:fs'
 import type { IncomingHttpHeaders } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import type { LaunchVals } from './launch-vals.ts'
 
 export type Autocompact = { at: number | null; source: string; window?: number; guessed?: true }
-export type Asked = { model: string; system?: unknown; messages?: unknown; headers: IncomingHttpHeaders; upstream: string; launch?: string }
-
-// What the launcher passes on, URL-encoded: the harness's environment
-// variables that bear on compaction, by name, and for Codex the -c and -p
-// values that do, by key (bin/codex-via-shaver). bin/claude-via-shaver sends
-// them in this header, which the proxy drops before the request goes upstream
-// (server.ts, forwarded); bin/codex-via-shaver and bin/opencode-via-shaver, in
-// the base URL's /launch/ segment (via.ts), as neither harness can be given a
-// header of the launcher's.
-export const ENV_HEADER = 'x-shaver-env'
-function launchOf(r: Asked): Obj {
-  const v = r.headers[ENV_HEADER]
-  return { ...Object.fromEntries(new URLSearchParams(r.launch ?? '')), ...(v && Object.fromEntries(new URLSearchParams(String(v)))) }
-}
+// `launch` is what the launcher passed on (launch-vals.ts): the harness's
+// environment variables that bear on compaction, by name, and for Codex the
+// -p and -c values that do, by key.
+export type Asked = { model: string; system?: unknown; messages?: unknown; headers: IncomingHttpHeaders; upstream: string; launch?: LaunchVals }
+const launchOf = (r: Asked): Obj => r.launch ?? {}
 
 export function autocompactAt(harness: string | undefined, r: Asked): Autocompact | undefined {
   if (harness === 'claude') return claude(r)
@@ -149,7 +139,7 @@ function workdir(r: Asked, re: RegExp): string | undefined {
 // ~/.claude.json. An experiment's window, which it gets from Anthropic's flag
 // service, can't be seen from here. DISABLE_AUTO_COMPACT, DISABLE_COMPACT or
 // autoCompactEnabled: false turns it off. Environment variables count from the
-// launcher's header (ENV_HEADER) and from the settings files' `env`.
+// launcher (launch-vals.ts) and from the settings files' `env`.
 const CLAUDE_OUTPUT = 20_000 // min(max output, 20K): every Claude model's max output is above it
 const CLAUDE_BUFFER = 13_000
 const CLAUDE_WINDOW = 200_000

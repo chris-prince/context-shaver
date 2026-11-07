@@ -13,18 +13,6 @@
 set -euo pipefail
 
 bin=$(dirname "$(readlink -f "$0")")
-# Percent-encodes all but unreserved characters (RFC 3986), for a path segment.
-encode() {
-  local LC_ALL=C s=$1 out= c i
-  for ((i = 0; i < ${#s}; i++)); do
-    c=${s:i:1}
-    case $c in
-      [a-zA-Z0-9.~_-]) out+=$c ;;
-      *) printf -v c '%%%02X' "'$c"; out+=$c ;;
-    esac
-  done
-  printf %s "$out"
-}
 die() { echo "opencode-via-shaver: $*" >&2; exit 1; }
 # As in claude-via-shaver: a parent with the PID this last ran `opencode` as is
 # that `opencode` running this again, an alias or wrapper, which would loop.
@@ -35,45 +23,25 @@ export SHAVER_LAUNCHER_PID=$$ SHAVER_DEPTH=$((depth + 1))
 real=("${SHELL:-bash}" -lic 'opencode "$@"' opencode)
 "$bin/run-proxy"
 port=${SHAVER_PORT:-18787}
-# What says where OpenCode compacts and that the proxy can't see itself, as a
-# /launch/ segment (src/via.ts, src/autocompact.ts): the variables that move
-# its config, and of the user's own OPENCODE_CONFIG_CONTENT only its compaction
-# settings and model limits, as the rest may hold keys. The proxy never reads
-# its own environment for them, as another launcher may have started it.
+# What says where OpenCode compacts and that the proxy can't see itself, the
+# variables that move its config and the compaction settings and model limits
+# of the user's own OPENCODE_CONFIG_CONTENT, is saved for the proxy, and its
+# ID goes in the base URLs (src/launch-vals.ts).
+id=$("$bin/node-wrapper" "$bin/../src/launch-vals.ts" opencode "$bin/../proxy-data" -- "$@")
 # Our providers are merged over the user's own OPENCODE_CONFIG_CONTENT, which
 # would otherwise be lost; one that isn't JSON is dropped, with a warning.
-out=$(node -e '
-const [user, port] = process.argv.slice(1)
+OPENCODE_CONFIG_CONTENT=$(node -e '
+const [user, base] = process.argv.slice(1)
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
 const merge = (a, b) => isObj(a) && isObj(b) ? Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map((k) => [k, k in b ? merge(a[k], b[k]) : a[k]])) : b
 let mine = {}
 if (user) try { mine = JSON.parse(user) } catch { console.error("opencode-via-shaver: OPENCODE_CONFIG_CONTENT is not JSON, so it is left out") }
 if (!isObj(mine)) mine = {}
-const via = (up) => ({ options: { baseURL: `http://127.0.0.1:${port}/harness/opencode/LAUNCH/via/${encodeURIComponent(up)}` } })
+const via = (up) => ({ options: { baseURL: `${base}/via/${encodeURIComponent(up)}` } })
 const ours = { provider: { openrouter: via("https://openrouter.ai/api/v1"), openai: via("https://api.openai.com/v1"), anthropic: via("https://api.anthropic.com/v1") } }
-const kept = {}
-if (isObj(mine.compaction)) kept.compaction = mine.compaction
-for (const key of ["provider", "providers"]) for (const [p, v] of Object.entries(isObj(mine[key]) ? mine[key] : {}))
-  for (const [m, x] of Object.entries(isObj(v) && isObj(v.models) ? v.models : {}))
-    if (isObj(x) && isObj(x.limit)) (((kept[key] ??= {})[p] ??= { models: {} }).models[m] = { limit: x.limit })
 console.log(JSON.stringify(merge(mine, ours)))
-console.log("kept:" + (Object.keys(kept).length ? JSON.stringify(kept) : ""))
-' "${OPENCODE_CONFIG_CONTENT:-}" "$port")
-content=${out%%$'\n'*}
-kept=${out#*$'\n'kept:}
-launch=
-add() { if [[ -n $2 ]]; then launch+=${launch:+&}$1=$(encode "$2"); fi; }
-absolute() { if [[ -n $1 && $1 != /* ]]; then printf %s "$PWD/$1"; else printf %s "$1"; fi; }
-add OPENCODE_CONFIG "$(absolute "${OPENCODE_CONFIG:-}")"
-add OPENCODE_CONFIG_DIR "$(absolute "${OPENCODE_CONFIG_DIR:-}")"
-add XDG_CONFIG_HOME "${XDG_CONFIG_HOME:-}"
-add XDG_CACHE_HOME "${XDG_CACHE_HOME:-}"
-add OPENCODE_DISABLE_PROJECT_CONFIG "${OPENCODE_DISABLE_PROJECT_CONFIG:-}"
-add OPENCODE_CONFIG_PROJECT_DISABLE "${OPENCODE_CONFIG_PROJECT_DISABLE:-}"
-add OPENCODE_CONFIG_CONTENT "$kept"
-segment=${launch:+launch/$(encode "$launch")/}
-content=${content//\/LAUNCH\//\/$segment}
-export OPENCODE_CONFIG_CONTENT=$content
+' "${OPENCODE_CONFIG_CONTENT:-}" "http://127.0.0.1:$port/harness/opencode${id:+/launch-vals/$id}")
+export OPENCODE_CONFIG_CONTENT
 case ${1:-} in
   run | mini) exec "${real[@]}" "$1" --standalone "${@:2}" ;;
   "" | -* ) exec "${real[@]}" --standalone "$@" ;;

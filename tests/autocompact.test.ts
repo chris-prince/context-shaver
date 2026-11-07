@@ -21,7 +21,7 @@ function at(harness: string, files: Record<string, unknown> | string, r: Partial
   process.env.HOME = typeof files === 'string' ? files : home(files)
   const { values, ...rest } = r
   try {
-    return autocompactAt(harness, { model: '', headers: {}, upstream: '', ...(values && { launch: new URLSearchParams(values).toString() }), ...rest })
+    return autocompactAt(harness, { model: '', headers: {}, upstream: '', ...(values && { launch: values }), ...rest })
   } finally {
     process.env.HOME = was
   }
@@ -59,16 +59,15 @@ test('Claude Code: settings lower the window, per model or for all', () => {
 })
 
 test('Claude Code: the environment, then the window the server set, then none', () => {
-  const env = (v: string) => ({ 'x-shaver-env': v })
   const set = { '.claude/settings.json': { autoCompactWindow: 200_000 } }
-  assert.deepEqual(claude(set, { headers: env('CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000') }), { at: 467_000, source: 'env', ...w(500_000) })
-  assert.deepEqual(claude(set, { headers: env('CLAUDE_CODE_AUTO_COMPACT_WINDOW=300k') }), { at: 267_000, source: 'env', ...w(300_000) })
-  assert.deepEqual(claude(set, { headers: env('CLAUDE_CODE_AUTO_COMPACT_WINDOW=50000') }), { at: 67_000, source: 'env', ...w(100_000) })
+  assert.deepEqual(claude(set, { launch: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '500000' } }), { at: 467_000, source: 'env', ...w(500_000) })
+  assert.deepEqual(claude(set, { launch: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '300k' } }), { at: 267_000, source: 'env', ...w(300_000) })
+  assert.deepEqual(claude(set, { launch: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '50000' } }), { at: 67_000, source: 'env', ...w(100_000) })
   assert.deepEqual(claude({ '.claude/settings.json': { env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '300000' } } }), { at: 267_000, source: 'env', ...w(300_000) })
   assert.deepEqual(claude({ '.claude.json': { autoCompactWindowsCache: { 'claude-opus-5-5': 400_000 } } }), { at: 367_000, source: 'server', ...w(400_000) })
-  assert.deepEqual(claude({}, { headers: env('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50') }), { at: 490_000, source: 'model+pct', ...g(1_000_000) })
+  assert.deepEqual(claude({}, { launch: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '50' } }), { at: 490_000, source: 'model+pct', ...g(1_000_000) })
   // Turned off, the window still shows.
-  assert.deepEqual(claude(set, { headers: env('DISABLE_AUTO_COMPACT=1') }), { at: null, source: 'env', ...w(200_000) })
+  assert.deepEqual(claude(set, { launch: { DISABLE_AUTO_COMPACT: '1' } }), { at: null, source: 'env', ...w(200_000) })
   assert.deepEqual(claude({ '.claude.json': { autoCompactEnabled: false } }), { at: null, source: 'autoCompactEnabled', ...g(1_000_000) })
 })
 
@@ -111,8 +110,8 @@ test("the harness's environment counts as its launcher passes it on, never the p
     for (const [k, v] of Object.entries(was)) if (v === undefined) delete process.env[k]
     else process.env[k] = v
   }
-  // Passed on by the launcher, in its header or the /launch/ segment, they do.
-  assert.deepEqual(at('claude', h, { model: 'claude-opus-5-5', headers: { 'x-shaver-env': `CLAUDE_CONFIG_DIR=${encodeURIComponent(`${h}/elsewhere/claude`)}` } }), { at: 267_000, source: 'settings', ...w(300_000) })
+  // Passed on by the launcher, they do.
+  assert.deepEqual(at('claude', h, { model: 'claude-opus-5-5', values: { CLAUDE_CONFIG_DIR: `${h}/elsewhere/claude` } }), { at: 267_000, source: 'settings', ...w(300_000) })
   assert.deepEqual(at('codex', h, { model: 'gpt-6-luna', values: { CODEX_HOME: `${h}/elsewhere/codex` } }), { at: 90_000, source: 'config-window', ...w(100_000) })
 })
 

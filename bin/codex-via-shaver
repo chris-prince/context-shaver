@@ -117,28 +117,11 @@ value() {
   printf %s "$v"
 }
 
-# What says where Codex compacts and that the proxy can't see itself, as a
-# /launch/ segment (src/via.ts, src/autocompact.ts): CODEX_HOME from this
-# environment, which a wrapper may have set, and the profile and the two
-# limits from the command line. The proxy never reads its own environment for
-# them, as another launcher may have started it.
-launch=
-add() { if [[ -n $2 ]]; then launch+=${launch:+&}$1=$(encode "$2"); fi; }
-add CODEX_HOME "${CODEX_HOME:-}"
-profile=
-for ((i = 0; i < ${#args[@]}; i++)); do
-  case ${args[i]} in
-    --) break ;;
-    -p | --profile) ((++i < ${#args[@]})) && profile=${args[i]} ;;
-    --profile=*) profile=${args[i]#--profile=} ;;
-  esac
-done
-add profile "$profile"
-for k in model_context_window model_auto_compact_token_limit; do
-  j=$(last "$k")
-  if [[ -n $j ]]; then add "$k" "$(value "$j")"; fi
-done
-base=/harness/codex${launch:+/launch/$(encode "$launch")}
+# What says where Codex compacts and that the proxy can't see itself, CODEX_HOME
+# and the profile and limits on the command line, is saved for the proxy, and
+# its ID goes in the base URL (src/launch-vals.ts).
+id=$("$bin/node-wrapper" "$bin/../src/launch-vals.ts" codex "$bin/../proxy-data" -- "$@")
+base=/harness/codex${id:+/launch-vals/$id}
 
 j=$(last model_provider)
 if [[ -z $j ]]; then

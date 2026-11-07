@@ -31,7 +31,8 @@ import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withou
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
-import { autocompactAt, ENV_HEADER } from './autocompact.ts'
+import { autocompactAt } from './autocompact.ts'
+import { load as loadLaunch, type LaunchVals } from './launch-vals.ts'
 import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, render, splitShaved, SUMMARIES, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
@@ -213,7 +214,7 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 // requests have read up to 167.1K tokens, a little past where it compacts.
 const AUTOCOMPACT_MARGIN = 20_000
 
-function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean, req: { headers: IncomingHttpHeaders; upstream: string; launch?: string } = { headers: {}, upstream: '' }): Prepared | undefined {
+function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean, req: { headers: IncomingHttpHeaders; upstream: string; launch?: LaunchVals } = { headers: {}, upstream: '' }): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const conv = h?.conventions ?? NO_CONVENTIONS
@@ -452,7 +453,7 @@ function billedThinking(msgs: readonly ApiMsg[], billed: ReadonlyMap<string, num
 }
 
 // With the proxy's own header from bin/claude-via-shaver (autocompact.ts).
-const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive', 'upgrade', ENV_HEADER])
+const HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive', 'upgrade'])
 // The account's usage limits from the latest answer each protocol's API sent,
 // which Claude Code shows in the status line. Answers made here carry them
 // too, or the status line loses them for that turn.
@@ -717,7 +718,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: commands left in:', err)
     }
     try {
-      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now(), side, h?.compaction?.(req.headers), { headers: req.headers, upstream, launch: r.launch })
+      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now(), side, h?.compaction?.(req.headers), { headers: req.headers, upstream, launch: r.launch ? loadLaunch(a.dir, r.launch) : undefined })
       if (p?.logLine && logged) p.logLine.headers = logged
     } catch (err) {
       why = 'untrimmed'

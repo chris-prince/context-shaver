@@ -10,6 +10,7 @@ import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { save } from '../src/launch-vals.ts'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 
@@ -60,7 +61,7 @@ async function until(done: () => boolean, what: string) {
 
 // One turn of two tool calls through the proxy, with the setting or without:
 // the messages upstream got last, and the step events.
-async function run(setting: boolean, compacting = false): Promise<{ last: any[]; events: any[] }> {
+async function run(setting: boolean, compacting = false, launched = false): Promise<{ last: any[]; events: any[] }> {
   const dir = mkdtempSync(path.join(tmpdir(), 'autocompact-e2e-'))
   const up = await upstream()
   const policy = path.join(dir, 'policy.json')
@@ -77,6 +78,15 @@ async function run(setting: boolean, compacting = false): Promise<{ last: any[];
   writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 200_000 }))
   const env = { ...process.env, HOME: home }
   delete env.CLAUDE_CONFIG_DIR
+  // Launched with CLAUDE_CONFIG_DIR at a folder whose settings put it at 177K
+  // instead, which only the launch values' file says.
+  let base = ''
+  if (launched) {
+    const alt = path.join(dir, 'alt')
+    mkdirSync(alt)
+    writeFileSync(path.join(alt, 'settings.json'), JSON.stringify({ autoCompactWindow: 210_000 }))
+    base = `/harness/claude/launch-vals/${save(dir, { CLAUDE_CONFIG_DIR: alt })}`
+  }
   const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up.url, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'], env })
   let err = ''
   try {
@@ -87,7 +97,7 @@ async function run(setting: boolean, compacting = false): Promise<{ last: any[];
     const history: any[] = [{ role: 'user', content: [{ type: 'text', text: 'Read the files.' }] }]
     for (let k = 0; k < 3; k++) {
       const last = history.at(-1)
-      const r = await fetch(`${url}/v1/messages`, {
+      const r = await fetch(`${url}${base}/v1/messages`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1' },
         body: JSON.stringify({
           model: 'claude-opus-5-5', max_tokens: 1000, metadata: { user_id: JSON.stringify({ session_id: 's1' }) },
@@ -133,4 +143,10 @@ test('with trim_before_autocompact, the compaction request itself is not trimmed
   const { last, events } = await run(true, true)
   assert.equal(results(last).length, 2)
   assert.ok(!events.some((l) => l.event === 'autocompact-trim'))
+})
+
+test("with trim_before_autocompact, the point follows the launch values the base URL's ID names", async () => {
+  const { events } = await run(true, false, true)
+  const [line] = events.filter((l) => l.event === 'autocompact-trim')
+  assert.equal(line?.at, 177_000, JSON.stringify(events.filter((l) => l.event === 'request').map((l) => l.compactAt)))
 })

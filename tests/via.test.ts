@@ -35,11 +35,12 @@ test('a /harness/ path names its harness and is stripped, before any /via/', () 
   assert.deepEqual(route(`/harness/opencode${via('https://openrouter.ai/api/v1', '/chat/completions')}`, API), { upstream: 'https://openrouter.ai/api/v1', url: '/chat/completions', harness: 'opencode' })
 })
 
-test('a /launch/ segment after /harness/ gives the launch values and is stripped, before any /via/', () => {
-  const values = encodeURIComponent('CODEX_HOME=%2Fx%2Fcodex&profile=small')
-  assert.deepEqual(route(`/harness/codex/launch/${values}${via('https://chatgpt.com/backend-api/codex', '/responses')}`, API), { upstream: 'https://chatgpt.com/backend-api/codex', url: '/responses', harness: 'codex', launch: 'CODEX_HOME=%2Fx%2Fcodex&profile=small' })
-  assert.deepEqual(route(`/harness/codex/launch/${values}/v1/responses`, API), { upstream: API, url: '/v1/responses', harness: 'codex', launch: 'CODEX_HOME=%2Fx%2Fcodex&profile=small' })
+test('a /launch-vals/ segment after /harness/ gives the launch values ID and is stripped, before any /via/', () => {
+  const id = '0123456789abcdef'
+  assert.deepEqual(route(`/harness/codex/launch-vals/${id}${via('https://chatgpt.com/backend-api/codex', '/responses')}`, API), { upstream: 'https://chatgpt.com/backend-api/codex', url: '/responses', harness: 'codex', launch: id })
+  assert.deepEqual(route(`/harness/claude/launch-vals/${id}/v1/messages`, API), { upstream: API, url: '/v1/messages', harness: 'claude', launch: id })
   // Only after /harness/; elsewhere it is part of the path.
-  assert.deepEqual(route('/launch/x/v1/responses', API), { upstream: API, url: '/launch/x/v1/responses' })
-  assert.ok('error' in route('/harness/codex/launch/%E0%A4%A/v1/responses', API))
+  assert.deepEqual(route(`/launch-vals/${id}/v1/responses`, API), { upstream: API, url: `/launch-vals/${id}/v1/responses` })
+  // Only an ID, so no path can be read through it.
+  for (const bad of ['..%2F..%2Fetc', '0123', 'ABCDEF0123456789']) assert.ok('error' in route(`/harness/codex/launch-vals/${bad}/v1/responses`, API), bad)
 })

@@ -436,11 +436,13 @@ or overrides them from the harness's environment or command line (Claude
 Code's `CLAUDE_CONFIG_DIR` and window variables; Codex's `CODEX_HOME`, `-p`
 and `-c` limits; opencode's `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `XDG_*`
 and the compaction settings and model limits of the user's own
-`OPENCODE_CONFIG_CONTENT`) counts only as the launcher passes it on, in a
-header (Claude Code) or a `/launch/` segment of the base URL (Codex,
-opencode): never from the proxy's own environment, as the proxy may have been
-started by another launcher, and a wrapper the launcher stands in for may set
-them. Not yet seen: Claude Code's `--settings`, opencode's managed settings,
+`OPENCODE_CONFIG_CONTENT`) counts only as the launcher passes it on: never
+from the proxy's own environment, as the proxy may have been started by
+another launcher, and a wrapper the launcher stands in for may set them. Each
+launcher runs `src/launch-vals.ts`, which saves just those values, if any are
+set, as `proxy-data/launch-vals/<id>.json`, named by a hash of them, and the
+launcher puts `/launch-vals/<id>` in the harness's base URL; the proxy reads
+the file. No keys or prompts go in it. Not yet seen: Claude Code's `--settings`, opencode's managed settings,
 what the harness's login shell sets after the launcher has run, the window a
 Codex custom provider gets, and an opencode provider's own gateway, which its
 launcher bypasses. With the setting on, a prompt
