@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornFrom, bornOf, costLines, describe, estimate, isCompaction, isSideRequest, observe, render, settled, splitShaved, withoutSideRequest, type Stats } from '../src/stats.ts'
+import { bornFrom, bornOf, costLines, describe, estimate, isCompaction, isSideRequest, observe, render, splitShaved, textTokens, withoutSideRequest, type Stats } from '../src/stats.ts'
 import { clockOf, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -287,21 +287,22 @@ test('a message sent trimmed, with no lineage, is dated by the first message aft
   assert.equal(bornFrom(s, [prompt, reply, next], 1), '2026-10-08T10:00:00Z')
 })
 
-test('settled leaves out what the frontier holds, and only that', () => {
+test("textTokens counts the user's and the assistant's text, and only that", () => {
   const prompt: ApiMsg = { role: 'user', content: 'run it' }
   const call: ApiMsg = { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] }
   const result: ApiMsg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'a\nb\nc'.repeat(50) }] }
   const reply: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'done' }] }
-  const next: ApiMsg = { role: 'user', content: 'thanks' }
-  // The tools frontier starts at the result: the call before it is settled.
-  const sent = describe(body([prompt, call, result, reply, next]), { tools: 2, reasoning: 0 }, '2026-10-11T10:00:00Z')
+  const reminder: ApiMsg = { role: 'user', content: [{ type: 'text', text: '<system-reminder>' + 'r'.repeat(500) + '</system-reminder>' }, { type: 'text', text: 'thanks' }] }
+  // Tool calls and results count for nothing, before the frontier or not.
+  const sent = describe(body([prompt, call, result, reply, reminder]), { tools: 2, reasoning: 0 }, '2026-10-11T10:00:00Z')
   const tokens = Object.fromEntries(sent.parts.map((p) => [p.key, 100]))
-  const out = settled(sent, tokens)
-  assert.equal(out[1], 100)
+  const out = textTokens(sent, tokens)
+  assert.equal(out[0], 100)
   assert.equal(out[3], 100)
-  assert.equal(out[4], 100)
-  // Only the result's message wrapper is left, as the stats count it.
-  assert.ok(out[2] > 0 && out[2] < 10, `the result's settled share is ${out[2]}`)
+  // Of the call and the result, only their messages' wrappers are left, as the stats count them.
+  assert.ok(out[1] < 50 && out[2] < 10, `the call's and the result's shares are ${out[1]}, ${out[2]}`)
+  // The harness's reminder is not the user's text.
+  assert.ok(out[4] < 10, `the reminder's message's share is ${out[4]}`)
   const s = observe(undefined, sent, 1000, 0)
   const frontier = Number(/\n  Frontier +([\d,]+)/.exec(render(s, 'x'))![1].replace(/,/g, ''))
   assert.ok(frontier > 0)

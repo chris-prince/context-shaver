@@ -149,8 +149,9 @@ export type SummaryFork = { start: number; current: number; recorded: boolean; p
 
 // The summary fork a request calls for: one when the turns completed since
 // `from` (the turn the last summary fork was offered at, or the last record's
-// end) hold at least `threshold` tokens before the frontier in the messages as
-// sent, by each one's count in `tokens` (stats.ts, settled). `born` is when a
+// end) hold at least `threshold` tokens of the user's and the assistant's text
+// in the messages as sent, by each one's count in `tokens` (stats.ts,
+// textTokens). `born` is when a
 // message was first sent (stats.ts, bornOf). A turn's last request is the one
 // its last message answered, which sent the message before it. With none, it
 // says why (`skip`), and with too few tokens, how many the turns held.

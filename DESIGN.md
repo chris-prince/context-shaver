@@ -415,7 +415,7 @@ summarized, so their entry in `conversation_shaver_rules`,
 holds two thresholds rather than rules.
 `summary_threshold_tokens` turns on heavy compaction (below): a summary fork is
 made once the completed turns past the last one offered hold that many tokens
-before the frontier. The default is 20000; a model can set its own
+of the user's and the assistant's text. The default is 15000; a model can set its own
 (`summaryThreshold` in `models.ts`, 7000 for DeepSeek at DeepInfra). Without the
 key no record is made or sent.
 
@@ -609,8 +609,9 @@ record is kept apart from sending it.
 
 - **Made while the cache is warm.** Once a request's completed turns, since
   the turn the last summary fork was offered at, hold
-  `summary_threshold_tokens` tokens as sent before the frontier, counted as the
-  stats count them from the API's usage, the proxy sends a summary fork of it
+  `summary_threshold_tokens` tokens of the user's and the assistant's text as
+  sent (not tool calls or results, reasoning, or the harness's messages),
+  counted as the stats count them from the API's usage, the proxy sends a summary fork of it
   after it is answered, as the user's next prompt would come: once a reply
   ends the turn, it is the same request with that reply's text after it (its
   reasoning left out, as the policy's rules drop a finished turn's) and the

@@ -32,7 +32,7 @@ import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsk
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { autocompactAt, ENV_HEADER } from './autocompact.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, render, settled, splitShaved, SUMMARIES, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, render, splitShaved, SUMMARIES, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -865,7 +865,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
   // Where the protocol gives the reply, a fork asks as the user's next prompt
   // would, after a reply that ended the turn; so not while the turn goes on.
-  const check = p.summaryFork && (summaryForking.has(p.key) ? { skip: 'in-flight' as const } : reply?.ended === false ? { skip: 'turn-continues' as const } : p.summaryFork(settled(p.sent, next.tokens)))
+  const check = p.summaryFork && (summaryForking.has(p.key) ? { skip: 'in-flight' as const } : reply?.ended === false ? { skip: 'turn-continues' as const } : p.summaryFork(textTokens(p.sent, next.tokens)))
   const due = check && !('skip' in check) ? check : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList })
   // A reply with no text leaves the instructions where they'd go without one.

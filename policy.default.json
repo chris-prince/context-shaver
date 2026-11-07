@@ -15,7 +15,7 @@
       { "action": "drop", "after": "0 turns" },
       { "action": "drop", "after": "20000 tokens" }
     ],
-    "user_and_assistant_text": { "summary_threshold_tokens": 20000, "memoir_threshold_tokens": 15000 }
+    "user_and_assistant_text": { "summary_threshold_tokens": 15000, "memoir_threshold_tokens": 15000 }
   },
   "tool_shaver_rules": {
     "claude": []

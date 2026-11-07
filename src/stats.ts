@@ -433,12 +433,12 @@ export const promptsOf = (s: Stats): number => s.parts.reduce((n, p) => n + shar
 const FRONTIER: Record<string, 'tools' | 'reasoning'> = { reasoning: 'reasoning', toolCalls: 'tools', toolResults: 'tools' }
 const inFrontier = (kind: string, i: number, ends: Sent['ends']) => kind in FRONTIER && i >= ends[FRONTIER[kind]]
 
-// Each part's tokens before the frontier: its count, less the share of its
-// kinds the frontier holds.
-export function settled(s: Sent, tokens: Record<string, number>): number[] {
-  return s.parts.map((p, i) => {
+// Each part's tokens of the user's and the assistant's text: its count's share
+// of those two kinds, which the frontier never holds.
+export function textTokens(s: Sent, tokens: Record<string, number>): number[] {
+  return s.parts.map((p) => {
     const bytes = Object.values(p.kinds).reduce((a, b) => a + b, 0)
-    return Object.entries(p.kinds).reduce((n, [kind, b]) => (inFrontier(kind, i, s.ends) ? n : n + ((tokens[p.key] ?? 0) * b) / bytes), 0)
+    return bytes && ((tokens[p.key] ?? 0) * ((p.kinds.user ?? 0) + (p.kinds.assistant ?? 0))) / bytes
   })
 }
 const LABELS: Record<string, string> = { harness: 'system-message', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'sysmsg-' + { latest: 'save-latest', forever: 'save-forever', tool: 'like-tool', conversation: 'like-convo', unrecognized: 'unrecognized' }[c]])) }
