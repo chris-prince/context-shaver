@@ -71,9 +71,10 @@ fi
 export ANTHROPIC_BASE_URL ENABLE_TOOL_SEARCH=true CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
 # Where Claude Code compacts depends on these variables, which it sends no
 # header for; one of the proxy's own carries those set (src/autocompact.ts,
-# ENV_HEADER), which the proxy drops before forwarding.
+# ENV_HEADER), which the proxy drops before forwarding. The proxy reads none of
+# its own environment for them, as another launcher may have started it.
 env=
-for v in CLAUDE_CODE_AUTO_COMPACT_WINDOW CLAUDE_AUTOCOMPACT_PCT_OVERRIDE DISABLE_AUTO_COMPACT DISABLE_COMPACT CLAUDE_CODE_DISABLE_1M_CONTEXT; do
+for v in CLAUDE_CODE_AUTO_COMPACT_WINDOW CLAUDE_AUTOCOMPACT_PCT_OVERRIDE DISABLE_AUTO_COMPACT DISABLE_COMPACT CLAUDE_CODE_DISABLE_1M_CONTEXT CLAUDE_CONFIG_DIR; do
   [[ -n ${!v:-} ]] && env+=${env:+&}$v=$(encode "${!v}")
 done
 if [[ -n $env ]]; then

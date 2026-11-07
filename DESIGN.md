@@ -241,7 +241,9 @@ through the proxy as `claude-via-shaver` runs Claude Code, leaving their
 configs alone. OpenCode reaches it through `/via/` with each provider's base
 URL (OpenRouter's is `/via/https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1`; OpenAI's
 and Anthropic's are set the same way), in `OPENCODE_CONFIG_CONTENT`, which
-OpenCode merges over its config. Its background service doesn't read that, so
+OpenCode merges over its config, after merging the user's own
+`OPENCODE_CONFIG_CONTENT` under it (left out, with a warning, if it isn't
+JSON). Its background service doesn't read that, so
 the TUI, `run` and `mini` get `--standalone`. Through OpenAI it uses Responses
 and tries a WebSocket first, which the proxy refuses with 426; through
 Anthropic it uses Messages. Codex keeps its own OpenAI provider, given the
@@ -429,7 +431,19 @@ worked out per request as the harness works it out (`autocompact.ts`): from
 the model and the harness's own settings, config files and caches on this
 machine, such as Claude Code's `autoCompactWindow`, Codex's
 `model_auto_compact_token_limit` and opencode's `compaction.buffer`; where it
-can't be said, `compaction.at` in `models.ts` stands. With the setting on, a prompt
+can't be said, `compaction.at` in `models.ts` stands. What moves those files
+or overrides them from the harness's environment or command line (Claude
+Code's `CLAUDE_CONFIG_DIR` and window variables; Codex's `CODEX_HOME`, `-p`
+and `-c` limits; opencode's `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `XDG_*`
+and the compaction settings and model limits of the user's own
+`OPENCODE_CONFIG_CONTENT`) counts only as the launcher passes it on, in a
+header (Claude Code) or a `/launch/` segment of the base URL (Codex,
+opencode): never from the proxy's own environment, as the proxy may have been
+started by another launcher, and a wrapper the launcher stands in for may set
+them. Not yet seen: Claude Code's `--settings`, opencode's managed settings,
+what the harness's login shell sets after the launcher has run, the window a
+Codex custom provider gets, and an opencode provider's own gateway, which its
+launcher bypasses. With the setting on, a prompt
 within 20K tokens of that point, counted as `promptTokens` counts it, is sent
 as a cold cache would send it: every trim due and every record made, whatever
 the cache. Unless that leaves it within 40K, where the client would compact

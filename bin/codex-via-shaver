@@ -117,10 +117,33 @@ value() {
   printf %s "$v"
 }
 
+# What says where Codex compacts and that the proxy can't see itself, as a
+# /launch/ segment (src/via.ts, src/autocompact.ts): CODEX_HOME from this
+# environment, which a wrapper may have set, and the profile and the two
+# limits from the command line. The proxy never reads its own environment for
+# them, as another launcher may have started it.
+launch=
+add() { if [[ -n $2 ]]; then launch+=${launch:+&}$1=$(encode "$2"); fi; }
+add CODEX_HOME "${CODEX_HOME:-}"
+profile=
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case ${args[i]} in
+    --) break ;;
+    -p | --profile) ((++i < ${#args[@]})) && profile=${args[i]} ;;
+    --profile=*) profile=${args[i]#--profile=} ;;
+  esac
+done
+add profile "$profile"
+for k in model_context_window model_auto_compact_token_limit; do
+  j=$(last "$k")
+  if [[ -n $j ]]; then add "$k" "$(value "$j")"; fi
+done
+base=/harness/codex${launch:+/launch/$(encode "$launch")}
+
 j=$(last model_provider)
 if [[ -z $j ]]; then
   exec "${real[@]}" \
-    -c "openai_base_url=\"http://127.0.0.1:$port/harness/codex/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex\"" \
+    -c "openai_base_url=\"http://127.0.0.1:$port$base/via/https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Fcodex\"" \
     "$@"
 fi
 
@@ -131,7 +154,7 @@ j=$(last "$key")
 up=$(value "$j")
 up=${up%/}
 if [[ ! $up =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
-  v="$key=\"http://127.0.0.1:$port/harness/codex/via/$(encode "$up")\""
+  v="$key=\"http://127.0.0.1:$port$base/via/$(encode "$up")\""
   [[ ${args[j]} == --config=* ]] && v=--config=$v
   args[j]=$v
 fi

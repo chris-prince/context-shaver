@@ -34,3 +34,12 @@ test('a /harness/ path names its harness and is stripped, before any /via/', () 
   assert.deepEqual(route('/harness/codex/v1/responses', API), { upstream: API, url: '/v1/responses', harness: 'codex' })
   assert.deepEqual(route(`/harness/opencode${via('https://openrouter.ai/api/v1', '/chat/completions')}`, API), { upstream: 'https://openrouter.ai/api/v1', url: '/chat/completions', harness: 'opencode' })
 })
+
+test('a /launch/ segment after /harness/ gives the launch values and is stripped, before any /via/', () => {
+  const values = encodeURIComponent('CODEX_HOME=%2Fx%2Fcodex&profile=small')
+  assert.deepEqual(route(`/harness/codex/launch/${values}${via('https://chatgpt.com/backend-api/codex', '/responses')}`, API), { upstream: 'https://chatgpt.com/backend-api/codex', url: '/responses', harness: 'codex', launch: 'CODEX_HOME=%2Fx%2Fcodex&profile=small' })
+  assert.deepEqual(route(`/harness/codex/launch/${values}/v1/responses`, API), { upstream: API, url: '/v1/responses', harness: 'codex', launch: 'CODEX_HOME=%2Fx%2Fcodex&profile=small' })
+  // Only after /harness/; elsewhere it is part of the path.
+  assert.deepEqual(route('/launch/x/v1/responses', API), { upstream: API, url: '/launch/x/v1/responses' })
+  assert.ok('error' in route('/harness/codex/launch/%E0%A4%A/v1/responses', API))
+})

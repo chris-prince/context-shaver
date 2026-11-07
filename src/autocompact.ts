@@ -11,18 +11,32 @@
 // `window` is the context window the harness works from, for shaver info;
 // `guessed` where it is the model's as this file's own table has it, as no
 // setting or file of the harness's says.
+//
+// The harness's environment, and flags that move its settings, count only as
+// its launcher passes them on (launchOf): never the proxy's own environment,
+// as the proxy is a long-running process another launcher may have started,
+// and a wrapper the launcher stands in for may have set them for this
+// harness alone.
 import fs from 'node:fs'
 import type { IncomingHttpHeaders } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 
 export type Autocompact = { at: number | null; source: string; window?: number; guessed?: true }
-export type Asked = { model: string; system?: unknown; messages?: unknown; headers: IncomingHttpHeaders; upstream: string }
+export type Asked = { model: string; system?: unknown; messages?: unknown; headers: IncomingHttpHeaders; upstream: string; launch?: string }
 
-// The variables bin/claude-via-shaver passes on from Claude Code's
-// environment, URL-encoded, as Claude Code sends none of its own; dropped
-// before the request goes upstream (server.ts, forwarded).
+// What the launcher passes on, URL-encoded: the harness's environment
+// variables that bear on compaction, by name, and for Codex the -c and -p
+// values that do, by key (bin/codex-via-shaver). bin/claude-via-shaver sends
+// them in this header, which the proxy drops before the request goes upstream
+// (server.ts, forwarded); bin/codex-via-shaver and bin/opencode-via-shaver, in
+// the base URL's /launch/ segment (via.ts), as neither harness can be given a
+// header of the launcher's.
 export const ENV_HEADER = 'x-shaver-env'
+function launchOf(r: Asked): Obj {
+  const v = r.headers[ENV_HEADER]
+  return { ...Object.fromEntries(new URLSearchParams(r.launch ?? '')), ...(v && Object.fromEntries(new URLSearchParams(String(v)))) }
+}
 
 export function autocompactAt(harness: string | undefined, r: Asked): Autocompact | undefined {
   if (harness === 'claude') return claude(r)
@@ -154,13 +168,14 @@ function contextOf(model: string, beta: string, env: Obj): { context: number; so
 }
 
 function claude(r: Asked): Autocompact {
-  const dir = process.env.CLAUDE_CONFIG_DIR
+  const launch = launchOf(r)
+  const dir = typeof launch.CLAUDE_CONFIG_DIR === 'string' && launch.CLAUDE_CONFIG_DIR ? launch.CLAUDE_CONFIG_DIR : undefined
   const configDir = dir ?? path.join(home(), '.claude')
   const cwd = workdir(r, /Primary working directory: ([^\n]+)/)
   const managed = process.platform === 'darwin' ? '/Library/Application Support/ClaudeCode/managed-settings.json' : '/etc/claude-code/managed-settings.json'
   // Lowest precedence first.
   const settings = [path.join(configDir, 'settings.json'), cwd && path.join(cwd, '.claude', 'settings.json'), cwd && path.join(cwd, '.claude', 'settings.local.json'), managed].map((f) => json(f || undefined)).filter(isObj)
-  const env: Obj = { ...envOf(r.headers) }
+  const env: Obj = { ...launch }
   for (const s of settings) if (isObj(s.env)) Object.assign(env, s.env)
   const global = json(path.join(dir ?? home(), '.claude.json'))
   const off = truthy(env.DISABLE_AUTO_COMPACT) || truthy(env.DISABLE_COMPACT) ? 'env' : isObj(global) && global.autoCompactEnabled === false ? 'autoCompactEnabled' : undefined
@@ -216,26 +231,28 @@ function windowOf(v: unknown, fromEnv: boolean): number | 'auto' | undefined {
   return num(n) && Math.min(Math.max(Math.round(n), CLAUDE_LEAST), CLAUDE_1M)
 }
 
-function envOf(headers: IncomingHttpHeaders): Obj {
-  const v = headers[ENV_HEADER]
-  return v ? Object.fromEntries(new URLSearchParams(String(v))) : {}
-}
-
 // ---- Codex ----------------------------------------------------------------
 //
 // It compacts once the context reaches its auto-compact limit: the model's
-// auto_compact_token_limit, or model_auto_compact_token_limit in config.toml
-// (the active profile's first), capped at 90% of the window. The window is
-// the model's context_window (else max_context_window) from
-// models_cache.json, or model_context_window in config.toml, capped at the
-// max. With neither a window nor a limit, it never compacts. Values given as
-// -c flags on its command line can't be seen from here.
+// auto_compact_token_limit, or model_auto_compact_token_limit in config.toml,
+// capped at 90% of the window. The window is the model's context_window (else
+// max_context_window) from models_cache.json, or model_context_window in
+// config.toml, capped at the max. With neither a window nor a limit, it never
+// compacts. A profile (-p name) is $CODEX_HOME/<name>.config.toml layered over
+// config.toml; Codex 0.167 rejects the older [profiles.x] tables. The launcher
+// passes on CODEX_HOME, and the profile and those two keys where its command
+// line gives them (-p, -c), which win over both files.
 function codex(r: Asked): Autocompact | undefined {
-  const dir = process.env.CODEX_HOME ?? path.join(home(), '.codex')
+  const launch = launchOf(r)
+  const given = (k: string) => (typeof launch[k] === 'string' && launch[k] ? (launch[k] as string) : undefined)
+  const dir = given('CODEX_HOME') ?? path.join(home(), '.codex')
   const config = read(path.join(dir, 'config.toml'), toml)
   const cfg = isObj(config) ? config : {}
-  const profile = typeof cfg.profile === 'string' && isObj(cfg.profiles) && isObj(cfg.profiles[cfg.profile]) ? (cfg.profiles[cfg.profile] as Obj) : {}
-  const setting = (k: string) => num(profile[k]) ?? num(cfg[k])
+  const named = given('profile')
+  const layered = named && !/[\\/]/.test(named) ? read(path.join(dir, `${named}.config.toml`), toml) : undefined
+  const profile = isObj(layered) ? layered : {}
+  const flag = (k: string) => num(Number(given(k)?.replaceAll('_', '')))
+  const setting = (k: string) => flag(k) ?? num(profile[k]) ?? num(cfg[k])
   const cache = json(path.join(dir, 'models_cache.json'))
   const models = Array.isArray(cache) ? cache : isObj(cache) && Array.isArray(cache.models) ? cache.models : []
   const m = models.find((x): x is Obj => isObj(x) && x.slug === r.model)
@@ -258,18 +275,29 @@ function codex(r: Asked): Autocompact | undefined {
 // the buffer is compaction.buffer, in tokens or as "N%" of the window, else
 // 15% of the window and at least 16K once the window is 32K or more.
 // compaction.auto: false turns it off. Config documents count in turn, later
-// ones winning: the global ones, OPENCODE_CONFIG, then the project's from its
-// root down to the working directory. The model's provider is the one
-// whose API the request goes to.
+// ones winning: the global ones (in OPENCODE_CONFIG_DIR, else
+// $XDG_CONFIG_HOME/opencode), OPENCODE_CONFIG, the project's from its root
+// down to the working directory (unless OPENCODE_DISABLE_PROJECT_CONFIG),
+// then the user's own OPENCODE_CONFIG_CONTENT; the launcher passes on each of
+// those variables. Managed settings (macOS preferences, the system file) can't
+// be seen from here. The model's provider is the one whose API the request
+// goes to.
 const OPENCODE_SHARE = 0.15
 const OPENCODE_FLOOR = 16_000
 const PROVIDERS: Record<string, string> = { 'openrouter.ai': 'openrouter', 'api.openai.com': 'openai', 'api.anthropic.com': 'anthropic' }
 
 function opencode(r: Asked): Autocompact | undefined {
-  const config = path.join(process.env.XDG_CONFIG_HOME ?? path.join(home(), '.config'), 'opencode')
-  const cache = path.join(process.env.XDG_CACHE_HOME ?? path.join(home(), '.cache'), 'opencode', 'models.json')
+  const launch = launchOf(r)
+  const given = (k: string) => (typeof launch[k] === 'string' && launch[k] ? (launch[k] as string) : undefined)
+  const config = given('OPENCODE_CONFIG_DIR') ?? path.join(given('XDG_CONFIG_HOME') ?? path.join(home(), '.config'), 'opencode')
+  const cache = path.join(given('XDG_CACHE_HOME') ?? path.join(home(), '.cache'), 'opencode', 'models.json')
   const cwd = workdir(r, /Working directory: ([^\n]+)/)
-  const docs = [...['config.json', 'opencode.json', 'opencode.jsonc'].map((f) => path.join(config, f)), process.env.OPENCODE_CONFIG, ...projectFiles(cwd)].map((f) => jsonc(f)).filter(isObj)
+  const project = truthy(launch.OPENCODE_CONFIG_PROJECT_DISABLE ?? launch.OPENCODE_DISABLE_PROJECT_CONFIG) ? [] : projectFiles(cwd)
+  let content: unknown
+  try {
+    content = given('OPENCODE_CONFIG_CONTENT') && JSON.parse(withoutComments(given('OPENCODE_CONFIG_CONTENT')!))
+  } catch {}
+  const docs = [...[...['config.json', 'opencode.json', 'opencode.jsonc'].map((f) => path.join(config, f)), given('OPENCODE_CONFIG'), ...project].map((f) => jsonc(f)), content].filter(isObj)
   const listed = json(cache)
   const host = hostOf(r.upstream)
   const provider = (host && PROVIDERS[host]) ?? (isObj(listed) ? Object.keys(listed).find((p) => isObj(listed[p]) && hostOf(String((listed[p] as Obj).api ?? '')) === host) : undefined)

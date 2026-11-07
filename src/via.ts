@@ -5,7 +5,9 @@
 // request goes to the proxy's --upstream.
 //
 // A wrapper also names the harness it launches (harness.ts) with /harness/<name>
-// before any /via/, which is stripped too.
+// before any /via/, which is stripped too, and may follow it with
+// /launch/<values>: what the harness was launched with that says where it
+// compacts (autocompact.ts), URL-encoded, then percent-encoded as one segment.
 //
 // Anything that reaches 127.0.0.1 can name an upstream, so a request is only
 // served if its Host is this machine's (localHost): a web page that gets here by
@@ -14,11 +16,21 @@
 
 const VIA = /^\/via\/([^/?#]*)(.*)$/
 const HARNESS = /^\/harness\/([^/?#]*)(.*)$/
+const LAUNCH = /^\/launch\/([^/?#]*)(.*)$/
 
-export function route(full: string, fallback: string): { upstream: string; url: string; harness?: string } | { error: string } {
+export function route(full: string, fallback: string): { upstream: string; url: string; harness?: string; launch?: string } | { error: string } {
   const h = HARNESS.exec(full)
-  const url = h ? (h[2].startsWith('/') ? h[2] : '/' + h[2]) : full
-  const harness = h ? { harness: h[1] } : {}
+  let url = h ? (h[2].startsWith('/') ? h[2] : '/' + h[2]) : full
+  const harness: { harness?: string; launch?: string } = h ? { harness: h[1] } : {}
+  const l = h && LAUNCH.exec(url)
+  if (l) {
+    try {
+      harness.launch = decodeURIComponent(l[1])
+    } catch {
+      return { error: `not launch values: /launch/${l[1]}` }
+    }
+    url = l[2].startsWith('/') || !l[2] ? l[2] || '/' : '/' + l[2]
+  }
   const m = VIA.exec(url)
   if (!m) return { upstream: fallback, url, ...harness }
   let u: URL

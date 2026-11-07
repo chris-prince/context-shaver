@@ -213,7 +213,7 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 // requests have read up to 167.1K tokens, a little past where it compacts.
 const AUTOCOMPACT_MARGIN = 20_000
 
-function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean, req: { headers: IncomingHttpHeaders; upstream: string } = { headers: {}, upstream: '' }): Prepared | undefined {
+function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean, req: { headers: IncomingHttpHeaders; upstream: string; launch?: string } = { headers: {}, upstream: '' }): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const conv = h?.conventions ?? NO_CONVENTIONS
@@ -717,7 +717,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: commands left in:', err)
     }
     try {
-      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now(), side, h?.compaction?.(req.headers), { headers: req.headers, upstream })
+      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now(), side, h?.compaction?.(req.headers), { headers: req.headers, upstream, launch: r.launch })
       if (p?.logLine && logged) p.logLine.headers = logged
     } catch (err) {
       why = 'untrimmed'
