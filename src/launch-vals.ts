@@ -40,6 +40,8 @@ export function launchVals(harness: string, env: Record<string, string | undefin
     const x = env[v]
     if (x) vals[v] = RELATIVE.has(v) ? path.resolve(cwd, x) : x
   }
+  // Where the harness's project settings are, for those that read them.
+  if (harness === 'claude' || harness === 'opencode') vals.cwd = cwd
   if (harness === 'codex') Object.assign(vals, codexFlags(args))
   if (harness === 'opencode') {
     const kept = opencodeKept(env.OPENCODE_CONFIG_CONTENT)

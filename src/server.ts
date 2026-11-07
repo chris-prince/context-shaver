@@ -223,7 +223,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const model = { ...modelOf(body.model, body.provider), ...(marked && { ttl: marked }) }
   // Where the client compacts, as its harness works it out (autocompact.ts):
   // null where it won't; else models.ts's figure, where that can't be said.
-  const ac = autocompactAt(h?.name, { model: body.model, system: body.system, messages: msgs, ...req })
+  const ac = autocompactAt(h?.name, { model: body.model, ...req })
   const compactAt = ac ? ac.at : model.compaction?.at
   const entries = Object.fromEntries(Object.entries(s?.entries ?? {}).filter(([, t]) => now - t <= lifetimeMs(model.ttl, ttlMs)))
   const live = new Set(Object.keys(entries))

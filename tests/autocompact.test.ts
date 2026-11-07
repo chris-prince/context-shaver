@@ -53,9 +53,9 @@ test('Claude Code: settings lower the window, per model or for all', () => {
   assert.deepEqual(claude(byModel, { model: 'claude-fable-5-1' }), { at: 167_000, source: 'settings', ...w(200_000) })
   // Never above the model's own window, which is then still a guess.
   assert.deepEqual(claude({ '.claude/settings.json': { autoCompactWindow: 500_000 } }, { model: 'claude-haiku-4-5' }), { at: 167_000, source: 'settings', ...g(200_000) })
-  // The project's settings, in the working directory the prompt names, win.
+  // The project's settings, in the folder it was launched in, win.
   const h = home({ 'p/.claude/settings.json': { autoCompactWindow: 600_000 } })
-  assert.deepEqual(claude({ '.claude/settings.json': { autoCompactWindow: 200_000 } }, { system: `x\n - Primary working directory: ${h}/p\n` }), { at: 567_000, source: 'settings', ...w(600_000) })
+  assert.deepEqual(claude({ '.claude/settings.json': { autoCompactWindow: 200_000 } }, { launch: { cwd: `${h}/p` } }), { at: 567_000, source: 'settings', ...w(600_000) })
 })
 
 test('Claude Code: the environment, then the window the server set, then none', () => {
@@ -128,10 +128,11 @@ test("opencode: its config folder, project config turned off, and the user's own
   const up = 'https://openrouter.ai/api/v1'
   const listed = { openrouter: { api: up, models: { 'a/b': { limit: { context: 1_000_000 } } } } }
   const h = home({ '.cache/opencode/models.json': listed, 'mine/opencode.json': { compaction: { buffer: 100_000 } }, 'p/.git/HEAD': '', 'p/opencode.json': { compaction: { buffer: 200_000 } } })
-  const r = { model: 'a/b', upstream: up, system: `Working directory: ${h}/p\n` }
-  assert.deepEqual(at('opencode', h, r), { at: 800_000, source: 'models-cache+buffer', ...w(1_000_000) })
-  assert.deepEqual(at('opencode', h, { ...r, values: { OPENCODE_DISABLE_PROJECT_CONFIG: '1' } }), { at: 850_000, source: 'models-cache', ...w(1_000_000) })
-  assert.deepEqual(at('opencode', h, { ...r, values: { OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_CONFIG_DIR: `${h}/mine` } }), { at: 900_000, source: 'models-cache+buffer', ...w(1_000_000) })
+  const r = { model: 'a/b', upstream: up }
+  const cwd = `${h}/p`
+  assert.deepEqual(at('opencode', h, { ...r, values: { cwd } }), { at: 800_000, source: 'models-cache+buffer', ...w(1_000_000) })
+  assert.deepEqual(at('opencode', h, { ...r, values: { cwd, OPENCODE_DISABLE_PROJECT_CONFIG: '1' } }), { at: 850_000, source: 'models-cache', ...w(1_000_000) })
+  assert.deepEqual(at('opencode', h, { ...r, values: { cwd, OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_CONFIG_DIR: `${h}/mine` } }), { at: 900_000, source: 'models-cache+buffer', ...w(1_000_000) })
   // The inline config counts last, over the project's.
-  assert.deepEqual(at('opencode', h, { ...r, values: { OPENCODE_CONFIG_CONTENT: '{ // mine\n"compaction": {"buffer": 50000}}' } }), { at: 950_000, source: 'models-cache+buffer', ...w(1_000_000) })
+  assert.deepEqual(at('opencode', h, { ...r, values: { cwd, OPENCODE_CONFIG_CONTENT: '{ // mine\n"compaction": {"buffer": 50000}}' } }), { at: 950_000, source: 'models-cache+buffer', ...w(1_000_000) })
 })

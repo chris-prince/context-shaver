@@ -25,7 +25,7 @@ export type Autocompact = { at: number | null; source: string; window?: number; 
 // `launch` is what the launcher passed on (launch-vals.ts): the harness's
 // environment variables that bear on compaction, by name, and for Codex the
 // -p and -c values that do, by key.
-export type Asked = { model: string; system?: unknown; messages?: unknown; headers: IncomingHttpHeaders; upstream: string; launch?: LaunchVals }
+export type Asked = { model: string; headers: IncomingHttpHeaders; upstream: string; launch?: LaunchVals }
 const launchOf = (r: Asked): Obj => r.launch ?? {}
 
 export function autocompactAt(harness: string | undefined, r: Asked): Autocompact | undefined {
@@ -112,21 +112,10 @@ export function toml(t: string): Obj {
 }
 
 // Every string in a value, so a working directory can be found in any block.
-function strings(v: unknown, out: string[] = []): string[] {
-  if (typeof v === 'string') out.push(v)
-  else if (Array.isArray(v)) for (const x of v) strings(x, out)
-  else if (isObj(v)) for (const x of Object.values(v)) strings(x, out)
-  return out
-}
-// The session's working directory, as its prompt names it: the system
-// prompt, else the first messages, where Codex's environment context is.
-function workdir(r: Asked, re: RegExp): string | undefined {
-  const where = [r.system, Array.isArray(r.messages) ? r.messages.slice(0, 3) : undefined]
-  for (const text of where.flatMap((w) => strings(w))) {
-    const m = re.exec(text)
-    if (m) return m[1].trim()
-  }
-}
+// The folder the harness was launched in, as its launcher passes it on, where
+// its project settings are; not the working directory a request names, which
+// can move mid-session while the harness keeps the settings it started with.
+const launchDir = (launch: Obj): string | undefined => (typeof launch.cwd === 'string' && launch.cwd ? launch.cwd : undefined)
 
 // ---- Claude Code ----------------------------------------------------------
 //
@@ -161,7 +150,7 @@ function claude(r: Asked): Autocompact {
   const launch = launchOf(r)
   const dir = typeof launch.CLAUDE_CONFIG_DIR === 'string' && launch.CLAUDE_CONFIG_DIR ? launch.CLAUDE_CONFIG_DIR : undefined
   const configDir = dir ?? path.join(home(), '.claude')
-  const cwd = workdir(r, /Primary working directory: ([^\n]+)/)
+  const cwd = launchDir(launch)
   const managed = process.platform === 'darwin' ? '/Library/Application Support/ClaudeCode/managed-settings.json' : '/etc/claude-code/managed-settings.json'
   // Lowest precedence first.
   const settings = [path.join(configDir, 'settings.json'), cwd && path.join(cwd, '.claude', 'settings.json'), cwd && path.join(cwd, '.claude', 'settings.local.json'), managed].map((f) => json(f || undefined)).filter(isObj)
@@ -281,7 +270,7 @@ function opencode(r: Asked): Autocompact | undefined {
   const given = (k: string) => (typeof launch[k] === 'string' && launch[k] ? (launch[k] as string) : undefined)
   const config = given('OPENCODE_CONFIG_DIR') ?? path.join(given('XDG_CONFIG_HOME') ?? path.join(home(), '.config'), 'opencode')
   const cache = path.join(given('XDG_CACHE_HOME') ?? path.join(home(), '.cache'), 'opencode', 'models.json')
-  const cwd = workdir(r, /Working directory: ([^\n]+)/)
+  const cwd = launchDir(launch)
   const project = truthy(launch.OPENCODE_CONFIG_PROJECT_DISABLE ?? launch.OPENCODE_DISABLE_PROJECT_CONFIG) ? [] : projectFiles(cwd)
   let content: unknown
   try {
