@@ -145,6 +145,10 @@ test('force_trim_before_autocompact_margin is the margin: a wider one needs the 
   const { last, events } = await run(30_000)
   assert.equal(results(last).length, 2)
   assert.ok(!events.some((l) => l.event === 'autocompact-trim'))
+  // The trim held back is logged, with where the full trim would have left it.
+  const [skip] = events.filter((l) => l.event === 'autocompact-skip')
+  assert.equal(skip?.floorTokens, 107_000, JSON.stringify(skip))
+  assert.ok(skip.beforeTokens >= 137_000 && skip.afterTokens > 107_000, JSON.stringify(skip))
 })
 
 test('with force_trim_before_autocompact_margin, the compaction request itself is not trimmed for it', async () => {

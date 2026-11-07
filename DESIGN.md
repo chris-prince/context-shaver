@@ -455,8 +455,8 @@ to about that between requests (a 12.6K-token reply, logged). A 1M window
 wants more, as a margin of 20K there lets the proxy rewrite up to 927K
 tokens for 20K of room. A margin over half the point never fires. The step
 events log each such request as `autocompact-trim`, with its tokens before
-and after. Measured on
-the logged compactions, the client's own was the cheaper over the cycle by
+and after, and each one held back by that floor as `autocompact-skip`, with
+where the full trim would have left it. Measured on the logged compactions, the client's own was the cheaper over the cycle by
 7–45%, a compaction leaving a smaller prompt than a trim; what the setting
 buys is no wait for the summary and no detail lost to it.
 

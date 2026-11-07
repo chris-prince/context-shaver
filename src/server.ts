@@ -266,10 +266,12 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const at = margin && stats && !suggestion ? compactAt ?? undefined : undefined
   const near = at ? promptTokens(stats!, keep.msgs) : 0
   let forced: { before: number; after: number; next: typeof keep } | undefined
+  let skipped: { before: number; after: number } | undefined
   if (at && near >= at - margin!) {
     const full = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain, allMerged, turns)
     const after = promptTokens(stats!, full.msgs)
-    if (after <= at - 2 * margin!) {
+    if (after > at - 2 * margin!) skipped = { before: Math.round(near), after: Math.round(after) }
+    else {
       if (records < chain.length) covers = coveredBy(keep, msgs, chain, records, turns).map(keyOf)
       records = chain.length
       merged = allMerged
@@ -350,6 +352,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (forced) writeLine(p.logDir, { event: 'autocompact-trim', time, at, beforeTokens: forced.before, afterTokens: forced.after, requests: clock.requests, turns: clock.turns })
+    // A forced trim not sent: even in full it would leave too little room.
+    if (skipped) writeLine(p.logDir, { event: 'autocompact-skip', time, at, beforeTokens: skipped.before, afterTokens: skipped.after, floorTokens: at! - 2 * margin!, requests: clock.requests, turns: clock.turns })
     if (d?.savedChars) {
       const context: Record<string, number> = {}
       for (const m of keep.msgs) for (const [k, n] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + n
