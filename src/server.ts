@@ -37,7 +37,7 @@ import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction,
 import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
-import { autocompactMargin, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
+import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
@@ -255,22 +255,22 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     merged = allMerged
     keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain, merged, turns)
   }
-  // With force_trim_before_autocompact_margin, a prompt within that
-  // margin of the client's own compaction is sent as a cold cache would send
-  // it, every record and every trim due, whatever the cache: unless that
-  // still leaves it within twice the margin, so the rewrite buys less room
-  // than the margin before it would fire again. Not on a side request, the
-  // compaction among them: its messages are never sent again.
+  // With force_trim_before_autocompact, a prompt within its proximity of the
+  // client's own compaction is sent as a cold cache would send it, every
+  // record and every trim due, whatever the cache, if that saves at least
+  // its least saving: so once it has fired, it fires again only when that
+  // much more has come due. Not on a side request, the compaction among
+  // them: its messages are never sent again.
   const stats = latestOf(key)
-  const margin = autocompactMargin(policy)
-  const at = margin && stats && !suggestion ? compactAt ?? undefined : undefined
+  const ft = forcedTrimOf(policy)
+  const at = ft && stats && !suggestion ? compactAt ?? undefined : undefined
   const near = at ? promptTokens(stats!, keep.msgs) : 0
   let forced: { before: number; after: number; next: typeof keep } | undefined
   let skipped: { before: number; after: number } | undefined
-  if (at && near >= at - margin!) {
+  if (at && near >= at - ft!.proximity) {
     const full = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain, allMerged, turns)
     const after = promptTokens(stats!, full.msgs)
-    if (after > at - 2 * margin!) skipped = { before: Math.round(near), after: Math.round(after) }
+    if (near - after < ft!.saves) skipped = { before: Math.round(near), after: Math.round(after) }
     else {
       if (records < chain.length) covers = coveredBy(keep, msgs, chain, records, turns).map(keyOf)
       records = chain.length
@@ -352,8 +352,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (forced) writeLine(p.logDir, { event: 'autocompact-trim', time, at, beforeTokens: forced.before, afterTokens: forced.after, requests: clock.requests, turns: clock.turns })
-    // A forced trim not sent: even in full it would leave too little room.
-    if (skipped) writeLine(p.logDir, { event: 'autocompact-skip', time, at, beforeTokens: skipped.before, afterTokens: skipped.after, floorTokens: at! - 2 * margin!, requests: clock.requests, turns: clock.turns })
+    // A forced trim not sent: even in full it would save too little.
+    if (skipped) writeLine(p.logDir, { event: 'autocompact-skip', time, at, beforeTokens: skipped.before, afterTokens: skipped.after, minSavedTokens: ft!.saves, requests: clock.requests, turns: clock.turns })
     if (d?.savedChars) {
       const context: Record<string, number> = {}
       for (const m of keep.msgs) for (const [k, n] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + n

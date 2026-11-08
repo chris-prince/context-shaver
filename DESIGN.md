@@ -423,8 +423,9 @@ key no record is made or sent.
 more than that many tokens, the oldest are merged into it. It is 15000 in the
 default policy. Without the key no record is merged.
 
-`force_trim_before_autocompact_margin` (top level, as `"20000 tokens"`, off
-without it) trades cost for the client's compaction never happening while the
+`force_trim_before_autocompact` (top level, as `{ "on_proximity_to_autocompact":
+"20000 tokens", "if_trim_saves_at_least": "20000 tokens" }`, off without it)
+trades cost for the client's compaction never happening while the
 shaver can prevent it. A warm cache holds trims back until they pay, so a long session can reach the
 client's own compaction point with trims and records pending. That point is
 worked out per request as the harness works it out (`autocompact.ts`): from
@@ -446,17 +447,20 @@ the file. No keys or prompts go in it. Not yet seen: Claude Code's
 `--settings`, opencode's managed settings, what the harness's login shell
 sets after the launcher has run, the window a
 Codex custom provider gets, and an opencode provider's own gateway, which its
-launcher bypasses. A prompt within the margin of that point, counted as
-`promptTokens` counts it, is sent as a cold cache would send it: every trim
-due and every record made, whatever the cache. Unless that leaves it within
-twice the margin, so the rewrite would buy less room than the margin before
-the next. 20000 suits a 200K window: a reply and its tool results have run
-to about that between requests (a 12.6K-token reply, logged). A 1M window
-wants more, as a margin of 20K there lets the proxy rewrite up to 927K
-tokens for 20K of room. A margin over half the point never fires. The step
-events log each such request as `autocompact-trim`, with its tokens before
-and after, and each one held back by that floor as `autocompact-skip`, with
-where the full trim would have left it. Measured on the logged compactions, the client's own was the cheaper over the cycle by
+launcher bypasses. A prompt within `on_proximity_to_autocompact` of that
+point, counted as `promptTokens` counts it, is sent as a cold cache would
+send it: every trim due and every record made, whatever the cache, if that
+saves at least `if_trim_saves_at_least`, which is the proximity when left
+out. As a trim leaves nothing due, the next one fires only once that much
+more has come due, however long the prompt stays near the point. 20000 suits
+a 200K window: a reply and its tool results have run to about that between
+requests (a 12.6K-token reply, logged). A 1M window wants more. Within one
+turn little comes due, as the rules count turns: in a test at a 100K window
+a full trim saved 11–12K tokens all through a long turn while the prompt
+grew 9K, so a least saving of 12K held it back until the client compacted.
+The step events log each forced trim as `autocompact-trim`, with its tokens
+before and after, and each one held back as `autocompact-skip`, with where
+the full trim would have left it and the least saving asked. Measured on the logged compactions, the client's own was the cheaper over the cycle by
 7–45%, a compaction leaving a smaller prompt than a trim; what the setting
 buys is no wait for the summary and no detail lost to it.
 

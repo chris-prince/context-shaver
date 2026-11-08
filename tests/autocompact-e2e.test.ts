@@ -1,4 +1,4 @@
-// force_trim_before_autocompact_margin end to end: the real proxy, in front of a stand-in
+// force_trim_before_autocompact end to end: the real proxy, in front of a stand-in
 // upstream, on a warm cache. A prompt grown near Claude Code's compaction is
 // sent untrimmed without the setting, the cache check holding the trims back,
 // and trimmed as on a cold cache with it, which the log records.
@@ -59,9 +59,10 @@ async function until(done: () => boolean, what: string) {
   }
 }
 
-// One turn of two tool calls through the proxy, with the setting's margin or
-// without it: the messages upstream got last, and the step events.
-async function run(margin: number | undefined, compacting = false, launched = false): Promise<{ last: any[]; events: any[] }> {
+// One turn of two tool calls through the proxy, with the setting (its two
+// counts in tokens) or without it: the messages upstream got last, and the
+// step events.
+async function run(ft: { proximity: number; saves?: number } | undefined, compacting = false, launched = false): Promise<{ last: any[]; events: any[] }> {
   const dir = mkdtempSync(path.join(tmpdir(), 'autocompact-e2e-'))
   const up = await upstream()
   const policy = path.join(dir, 'policy.json')
@@ -69,7 +70,7 @@ async function run(margin: number | undefined, compacting = false, launched = fa
     conversation_shaver_rules: { tool: [{ action: 'drop', after: '0 requests' }] },
     tool_shaver_rules: { claude: [] },
     skill_shaver_rules: [],
-    ...(margin && { force_trim_before_autocompact_margin: `${margin} tokens` }),
+    ...(ft && { force_trim_before_autocompact: { on_proximity_to_autocompact: `${ft.proximity} tokens`, ...(ft.saves && { if_trim_saves_at_least: `${ft.saves} tokens` }) } }),
   }))
   // A home of its own, whose Claude Code settings put the compaction at 167K
   // (200K less 20K of output less 13K, autocompact.ts), whatever this machine's.
@@ -123,14 +124,14 @@ async function run(margin: number | undefined, compacting = false, launched = fa
 
 const results = (msgs: any[]) => msgs.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b: any) => b.type === 'tool_result' && String(b.content).length >= BIG)
 
-test('without force_trim_before_autocompact_margin, a warm cache holds the trims back near the limit', async () => {
+test('without force_trim_before_autocompact, a warm cache holds the trims back near the limit', async () => {
   const { last, events } = await run(undefined)
   assert.equal(results(last).length, 2)
   assert.ok(!events.some((l) => l.event === 'autocompact-trim'))
 })
 
-test('with force_trim_before_autocompact_margin, a prompt near the limit is sent as a cold cache would send it', async () => {
-  const { last, events } = await run(20_000)
+test('with force_trim_before_autocompact, a prompt near the limit is sent as a cold cache would send it', async () => {
+  const { last, events } = await run({ proximity: 20_000 })
   // The first result is due for dropping and gone; the second, just made, kept.
   assert.equal(results(last).length, 1)
   assert.equal(String(results(last)[0].content)[0], '1')
@@ -139,26 +140,38 @@ test('with force_trim_before_autocompact_margin, a prompt near the limit is sent
   assert.ok(line.beforeTokens >= 147_000 && line.afterTokens <= 125_000, JSON.stringify(line))
 })
 
-// The full trim leaves about 119K tokens: within 2 × 30K of the 167K point, so
-// too little room is won for the rewrite, where 2 × 20K is enough.
-test('force_trim_before_autocompact_margin is the margin: a wider one needs the trim to win twice as much room', async () => {
-  const { last, events } = await run(30_000)
-  assert.equal(results(last).length, 2)
-  assert.ok(!events.some((l) => l.event === 'autocompact-trim'))
+// The full trim saves about 58K tokens (177K to 119K): enough for a least
+// saving of 55K, too little for 60K.
+test('force_trim_before_autocompact fires only if the full trim saves at least if_trim_saves_at_least', async () => {
+  const fired = await run({ proximity: 20_000, saves: 55_000 })
+  assert.equal(results(fired.last).length, 1)
+  assert.ok(fired.events.some((l) => l.event === 'autocompact-trim'))
+  const held = await run({ proximity: 20_000, saves: 60_000 })
+  assert.equal(results(held.last).length, 2)
+  assert.ok(!held.events.some((l) => l.event === 'autocompact-trim'))
   // The trim held back is logged, with where the full trim would have left it.
-  const [skip] = events.filter((l) => l.event === 'autocompact-skip')
-  assert.equal(skip?.floorTokens, 107_000, JSON.stringify(skip))
-  assert.ok(skip.beforeTokens >= 137_000 && skip.afterTokens > 107_000, JSON.stringify(skip))
+  const [skip] = held.events.filter((l) => l.event === 'autocompact-skip')
+  assert.equal(skip?.minSavedTokens, 60_000, JSON.stringify(skip))
+  assert.ok(skip.beforeTokens - skip.afterTokens < 60_000 && skip.beforeTokens - skip.afterTokens > 55_000, JSON.stringify(skip))
 })
 
-test('with force_trim_before_autocompact_margin, the compaction request itself is not trimmed for it', async () => {
-  const { last, events } = await run(20_000, true)
+// With the proximity wider than the point itself, even the first, small
+// request is near enough to be weighed (and held back, as nothing is due),
+// where 20K is weighed only once the prompt reaches 147K.
+test('force_trim_before_autocompact weighs a trim once the prompt is within on_proximity_to_autocompact', async () => {
+  const near = (r: { events: any[] }) => r.events.filter((l) => String(l.event).startsWith('autocompact-')).map((l) => l.requests)
+  assert.deepEqual(near(await run({ proximity: 20_000, saves: 1 })), [1])
+  assert.deepEqual(near(await run({ proximity: 170_000, saves: 1 })), [0, 1])
+})
+
+test('with force_trim_before_autocompact, the compaction request itself is not trimmed for it', async () => {
+  const { last, events } = await run({ proximity: 20_000 }, true)
   assert.equal(results(last).length, 2)
   assert.ok(!events.some((l) => l.event === 'autocompact-trim'))
 })
 
-test("with force_trim_before_autocompact_margin, the point follows the launch values the base URL's ID names", async () => {
-  const { events } = await run(20_000, false, true)
+test("with force_trim_before_autocompact, the point follows the launch values the base URL's ID names", async () => {
+  const { events } = await run({ proximity: 20_000 }, false, true)
   const [line] = events.filter((l) => l.event === 'autocompact-trim')
   assert.equal(line?.at, 177_000, JSON.stringify(events.filter((l) => l.event === 'request').map((l) => l.compactAt)))
 })

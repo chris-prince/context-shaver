@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
-import { afterOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
+import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
 import { anchored, apply, decide, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
@@ -102,11 +102,19 @@ test('a policy file is checked', () => {
     assert.throws(() => parsePolicy(bad))
   assert.doesNotThrow(() => parsePolicy(skills([{ name: 'x', action: 'stub', text: 'a line', replaces: 'h' }])))
   assert.doesNotThrow(() => parsePolicy(tools({ claude: [{ name: 'x', action: 'defer' }], codex: [] })))
-  const margin = (v: unknown) => ({ force_trim_before_autocompact_margin: v })
-  for (const bad of [true, 20_000, '0 tokens', '20000', '20k tokens', '1.5 tokens', '-1 tokens', '10%'])
-    assert.throws(() => parsePolicy(margin(bad)), JSON.stringify(bad))
-  assert.throws(() => parsePolicy({ trim_before_autocompact: true }))
-  assert.doesNotThrow(() => parsePolicy(margin('20000 tokens')))
+  const forced = (v: unknown) => ({ force_trim_before_autocompact: v })
+  for (const bad of [true, 20_000, '0 tokens', '20000', '20k tokens', '1.5 tokens', '-1 tokens', '10%']) {
+    assert.throws(() => parsePolicy(forced({ on_proximity_to_autocompact: bad })), JSON.stringify(bad))
+    assert.throws(() => parsePolicy(forced({ on_proximity_to_autocompact: '20000 tokens', if_trim_saves_at_least: bad })), JSON.stringify(bad))
+  }
+  for (const bad of ['20000 tokens', true, {}, { if_trim_saves_at_least: '1 token' }, { on_proximity_to_autocompact: '20000 tokens', margin: '1 token' }])
+    assert.throws(() => parsePolicy(forced(bad)), JSON.stringify(bad))
+  assert.throws(() => parsePolicy({ force_trim_before_autocompact_margin: '20000 tokens' }))
+  assert.doesNotThrow(() => parsePolicy(forced({ on_proximity_to_autocompact: '20000 tokens' })))
+  assert.doesNotThrow(() => parsePolicy(forced({ on_proximity_to_autocompact: '20000 tokens', if_trim_saves_at_least: '1 token' })))
+  assert.deepEqual(forcedTrimOf(forced({ on_proximity_to_autocompact: '20000 tokens' })), { proximity: 20_000, saves: 20_000 })
+  assert.deepEqual(forcedTrimOf(forced({ on_proximity_to_autocompact: '20000 tokens', if_trim_saves_at_least: '1 token' })), { proximity: 20_000, saves: 1 })
+  assert.equal(forcedTrimOf({}), undefined)
 })
 
 test('a policy in an older form is put in the current one, and one in the current form is left', () => {
