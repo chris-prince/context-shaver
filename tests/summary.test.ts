@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { isMemoir, isSummary, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
-import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, memoirOf, mergedOf, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, keptNotes, memoirOf, mergedOf, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -209,6 +209,15 @@ test("records keep the covered notes a record can't stand in for, as a system me
   assert.equal(out.origin[3], out.origin[4])
   // Covered turns without such notes leave nothing.
   assert.equal(summarized(none(session()), session(), [recordOf([{ type: 'text', text: 'one\nEnds before: [2]' }], summaryForkAt(session())!, 'now')!]).msgs[3].role, 'assistant')
+})
+
+test('records keep only the newest definition of a tool added again', () => {
+  // As an MCP server updated: all its tools, then again the two that changed.
+  const add = (name: string, v: number) => ({ type: 'tool_addition', tool: { definition: { name, description: `v${v}` } } })
+  const first = { role: 'system', content: [add('list', 1), add('publish', 1), add('guide', 1)] } as ApiMsg
+  const again = { role: 'system', content: [add('list', 2), add('publish', 2)] } as ApiMsg
+  const removed = { role: 'system', content: [{ type: 'tool_removal', tool: { name: 'guide' } }] } as ApiMsg
+  assert.deepEqual(keptNotes([first, again, removed])!.content, [add('guide', 1), add('list', 2), add('publish', 2), removed.content[0]])
 })
 
 test('after a /compact, records keep the preamble Claude Code puts after the exchange it kept', () => {

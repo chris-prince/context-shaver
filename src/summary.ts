@@ -87,19 +87,24 @@ export function startsOf(msgs: readonly ApiMsg[], chain: readonly Summary[], tur
 // (notes.ts): every forever one, and of the latest ones the newest for each
 // key, as one system message, or none. Only the covered messages decide, so
 // every request after sends the same. A block whose notes all stay is the
-// block itself, which the wire formats send back as they got it.
+// block itself, which the wire formats send back as they got it. Of a tool
+// added more than once (an MCP server updated), only the newest definition
+// stays: the API refuses one message defining a tool twice, differently.
 export function keptNotes(covered: readonly ApiMsg[]): ApiMsg | undefined {
   const found = covered.flatMap((m) => blocks(m).filter((b) => isNote(b, m)).map((b) => ({ b, notes: notesOfBlock(b) })))
   const newest = new Map<string, Note>()
   for (const { notes } of found) for (const n of notes) if (n.category === 'latest') for (const k of n.keys) newest.set(k, n)
   const newestOf = new Set(newest.values())
-  const kept = found.flatMap(({ b, notes }): Block[] => {
+  let kept = found.flatMap(({ b, notes }): Block[] => {
     const keep = notes.filter((n) => n.category === 'forever' || newestOf.has(n))
     if (!keep.length) return []
     if (keep.length === notes.length) return [b]
     const text = keep.map((n) => n.text.replace(/\s*<\/system-reminder>\s*$/, '').trimEnd()).join('\n\n')
     return [{ type: 'text', text: /^<system-reminder>/.test(String(b.text)) ? `<system-reminder>\n${text}\n</system-reminder>` : text }]
   })
+  const added = (b: Block) => (b.type === 'tool_addition' ? (b.tool as { definition?: { name?: string } })?.definition?.name : undefined)
+  const last = new Map(kept.map((b, k) => [added(b), k]))
+  kept = kept.filter((b, k) => added(b) === undefined || last.get(added(b)) === k)
   return kept.length ? { role: 'system', content: kept } : undefined
 }
 
