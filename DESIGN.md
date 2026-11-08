@@ -455,14 +455,15 @@ out. As a trim leaves nothing due, the next one fires only once that much
 more has come due, however long the prompt stays near the point. 20000 suits
 a 200K window: a reply and its tool results have run to about that between
 requests (a 12.6K-token reply, logged). A 1M window wants more. Within one
-turn little comes due, as the rules count turns: in a test at a 100K window
-a full trim saved 11–12K tokens all through a long turn while the prompt
-grew 9K, so a least saving of 12K held it back until the client compacted.
-The step events log each forced trim as `autocompact-trim`, with its tokens
-before and after, and each one held back as `autocompact-skip`, with where
-the full trim would have left it and the least saving asked. Measured on the logged compactions, the client's own was the cheaper over the cycle by
-7–45%, a compaction leaving a smaller prompt than a trim; what the setting
-buys is no wait for the summary and no detail lost to it.
+turn little comes due, as the rules count turns, so a least saving well
+under the proximity lets the trim keep up in a long turn, at the cost of more
+cache rewrites. The step events log each forced trim as `autocompact-trim`,
+with its tokens before and after, and each one held back as
+`autocompact-skip`, with where the full trim would have left it and the
+least saving asked. Measured on the logged compactions, the client's own was
+the cheaper over the cycle by 7–45%, a compaction leaving a smaller prompt
+than a trim; what the setting buys is no wait for the summary and no detail
+lost to it.
 
 The proxy reads the file when it starts; restart it after editing.
 
