@@ -209,11 +209,46 @@ agent IDs, OpenCode's from `x-opencode-session-id`, Codex's from
 A Chat Completions or Responses request is rebuilt only where the core changed
 it: every message, item and block it left is sent as it came, since the cache
 matches bytes. Chat Completions streams are asked for their usage
-(`stream_options.include_usage`), which is otherwise left out. A Responses
-request's input is a list of items: its leading developer messages, its tools
-item and Codex's environment and AGENTS.md messages are the system; an answer's
-reasoning, messages and tool calls are one assistant message, and a run of tool
-outputs one user message of tool results. After a compaction Codex sends the
+(`stream_options.include_usage`), which is otherwise left out.
+
+The core's terms are the Messages protocol's: a request is a list of
+*messages*, each a role and a list of content *blocks*, and an error locates a
+block as `messages.<m>.content.<b>`. OpenAI's differ. A Chat Completions message
+holds content *parts*. A Responses request's `input` is a flat list of *items*,
+of which a `message` is one type: reasoning, a tool call and its output are
+items beside it, not blocks inside one. So a message's number in the logs is
+the core's, and on Responses one message can be several items.
+`src/responses.ts` maps them:
+
+| Responses items | Core message |
+|---|---|
+| leading developer and system messages, `additional_tools`, Codex's environment and AGENTS.md messages | the system (tools join `tools`) |
+| a user `message` | a user message, a block per part (`input_text` → `text`) |
+| a run of `reasoning`, assistant `message` and `*_call` items | one assistant message: `thinking`, `text`, `tool_use` |
+| a run of `*_call_output` items | one user message of `tool_result` blocks |
+| `tool_search_call`, `tool_search_output` | `tool_use`, `tool_result` of `tool_reference` blocks |
+| any other item | a message of its own, an `item` block holding it |
+
+```
+input items                          core messages
+0 message (user) "fix the bug"   →   0 user: text
+1 reasoning                      ┐
+2 function_call  read_file       ├→  1 assistant: thinking, tool_use, tool_use
+3 function_call  grep            ┘
+4 function_call_output           ┐
+5 function_call_output           ┘→  2 user: tool_result, tool_result
+```
+
+Each message keeps the items it was made from, each block its item and part,
+and each call and output its `call_id`. Rendered back, a message the core left
+is its items as they came; one whose text alone changed keeps its item's other
+parts and fields; one it changed otherwise is rebuilt block by block, each
+block back in its item, a stubbed call or output as its item with only
+`arguments` or `output` new, and text the core made (a record) a new `message`
+item. When the usage counts each item (`attribution`, by item ID), a message's
+tokens are its items' counts added up.
+
+After a compaction Codex sends the
 first prompt first, then the compaction and those messages, so they are system
 messages, kept in their place: the stats read them by Codex's headings and
 count them as base, and the compaction as conversation, and a message the core
