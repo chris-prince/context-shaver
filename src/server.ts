@@ -27,7 +27,7 @@ import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { actionOf, dropTools, forceDefer, offerable, searchOn, toolListMessage, withPicked, type ToolRule } from './defer.ts'
 import { keptWhole, LINE_WORDS, lineOf, linesOf, linesPrompt, listMessage, shaveSkills, skillsOf, withLines, type Skill, type SkillRule } from './skills.ts'
-import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, withoutPending } from './command.ts'
+import { answeredMidTurn, midTurnCommands, pendingCommand, stripCommands, WARNING, withoutPending } from './command.ts'
 import { afterAnswer, ANALYZING, ANALYZING_TOOLS, NOTHING, optimizing, skillsAsked, skillsText, toolsAsked, toolsText, type Proposal, type Skills } from './optimize.ts'
 import { totals } from './totals.ts'
 import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
@@ -80,10 +80,20 @@ const commit = (() => {
 // billed, by call id, where the API counted them (Codex; trim.ts, tokensOf);
 // how many of its records it sends (summary.ts), how many of those as the
 // memoir, and the turn the last summary fork was offered at; the skill rules
-// its list was last shortened by, and when it took them. Its stats, for
-// `shaver info`, are in its journal.
+// its list was last shortened by, and when it took them; and whether its
+// shaving is frozen (Frozen). Its stats, for `shaver info`, are in its journal.
 type SkillList = { rules: SkillRule[]; at: number }
-type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; calls?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList }
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; calls?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList; frozen?: Frozen }
+
+// A conversation's shaving is frozen when the API refuses a shaved request
+// that the last one's shape is accepted for: from then on it is sent as that
+// one was, no new records or trims, until a shave would save RETRY_STEP more
+// tokens than `gap`, its saving when last refused, and is tried again; a shave
+// accepted, or a proxy started since (`started`), ends it. `since` is the first
+// refusal, `error` the API's words on the last.
+type Frozen = { since: string; gap: number; started: string; error: string }
+const RETRY_STEP = 10_000
+const started = new Date().toISOString()
 
 // The token counts trim.ts sizes items by: thinking by signature hash, and
 // tool calls by `call:` and their id (trim.ts, Thinking).
@@ -196,7 +206,14 @@ const latestOf = (key: string) => currentOf(key).stats
 // Why an answered request sent no summary fork: summaryForkOf's reasons, with
 // the threshold the turns fell short of, or the proxy's own.
 type Skip = (ForkSkip & { threshold?: number }) | { skip: 'side-request' | 'no-breakpoint' | 'in-flight' | 'turn-continues' }
-type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[] }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[]; freeze: Freeze }
+
+// How a request stands to the freeze: `frozen`, sent as the last that worked;
+// `retry`, a shave tried while frozen; or neither. `gap` is the tokens the shave
+// saves over the last shape, `differs` whether it changes it at all (so a
+// refused one has that shape to fall back on), `unfrozen` why a freeze ended,
+// and `frozen` the freeze to save once it's answered.
+type Freeze = { mode?: 'frozen' | 'retry'; gap: number; differs: boolean; unfrozen?: 'restart' | 'retry-worked'; frozen?: Frozen }
 
 // Trims a request, given as the core's (protocol.ts). Only requests with tools
 // are trimmed: those are the main loop and subagents. Side requests (Claude
@@ -206,8 +223,9 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 // Where the cache writes an entry at each request's end by itself (automatic),
 // there is no breakpoint to add, so no anchor.
 // `side` and `compaction` are whether the harness's headers say it's a side
-// request, and its compaction, where they say (harness.ts).
-function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean, req: { headers: IncomingHttpHeaders; upstream: string; launch?: LaunchVals } = { headers: {}, upstream: '' }): Prepared | undefined {
+// request, and its compaction, where they say (harness.ts). `freeze` sends it
+// shaped as the last request that worked, as when frozen (Frozen).
+function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean, req: { headers: IncomingHttpHeaders; upstream: string; launch?: LaunchVals } = { headers: {}, upstream: '' }, freeze = false): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const conv = h?.conventions ?? NO_CONVENTIONS
@@ -246,6 +264,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   let records = before
   let merged = mergedBefore
   let keep = summarized(apply(msgs, conversationRules, held, conv, thinking), msgs, chain.slice(0, records), merged, turns)
+  // The shape the last request that worked was sent in: what a freeze sends.
+  const still = keep
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   const allMerged = Math.min(file?.merged ?? 0, chain.length)
   let covers: string[] | undefined
@@ -280,7 +300,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
-  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, conversationRules, conv, thinking), msgs, chain.slice(0, records), merged, turns).msgs, seed, thinking)
+  const endOf = (base: typeof keep) => (auto ? undefined : settledEnd(base.msgs, summarized(fullyTrimmed(msgs, conversationRules, conv, thinking), msgs, chain.slice(0, records), merged, turns).msgs, seed, thinking))
+  let end = endOf(keep)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
   const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
   const freed = spare > 0 ? undefined : freedSystem(body.system)
@@ -305,6 +326,19 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     next = summarized(apply(msgs, conversationRules, clock, conv, thinking), msgs, chain.slice(0, records), merged, turns)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
+  }
+  // Frozen, it's sent as the last that worked was, but tried shaved once the
+  // shave saves RETRY_STEP more than when last refused. A freeze from before
+  // the proxy started is over.
+  const restarted = !!s?.frozen && s.frozen.started !== started
+  const frozen = restarted ? undefined : s?.frozen
+  const gap = stats && sent !== still ? Math.round(promptTokens(stats, still.msgs) - promptTokens(stats, sent.msgs)) : 0
+  const mode = freeze || (frozen && gap < frozen.gap + RETRY_STEP) ? 'frozen' : frozen ? 'retry' : undefined
+  const freezing: Freeze = { ...(mode && { mode }), gap, differs: sent !== still, ...(restarted && { unfrozen: 'restart' as const }), ...(mode === 'frozen' && frozen && { frozen }) }
+  if (restarted && !freeze) console.error(`${new Date(now).toISOString()} shaver: shaving unfrozen for ${key}: the proxy restarted`)
+  if (mode === 'frozen' && sent !== still) {
+    ;[sent, applied, next, records, merged, forced, d, covers] = [still, held, still, before, mergedBefore, undefined, undefined, undefined]
+    end = endOf(still)
   }
   body.messages = anchor(sent.msgs)
   if (freed && marks(body.messages) > marks(sent.msgs)) body.system = freed
@@ -348,7 +382,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
         return 'skip' in f && f.tokens !== undefined ? { ...f, threshold: after } : f
       }
     : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, freeze: freezing, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (forced) writeLine(p.logDir, { event: 'autocompact-trim', time, at, beforeTokens: forced.before, afterTokens: forced.after, requests: clock.requests, turns: clock.turns })
@@ -658,6 +692,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // refused one for ~8s first. Codex over WebSockets sends only what's new.
   if (req.headers.upgrade) return void res.writeHead(426).end()
   let p: Prepared | undefined
+  // The request prepared again, shaped as the last that worked (Frozen).
+  let again: (() => Prepared | undefined) | undefined
   // The conversation whose waiting commands are answered if this request's
   // response ends the turn, and the request as forwarded.
   let turnEnd: { key: string; body: Canonical; render: Wire['render'] } | undefined
@@ -716,8 +752,24 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: commands left in:', err)
     }
     try {
-      if (c && body && key) p = prepare(proto, h, key, body, c, params, Date.now(), side, h?.compaction?.(req.headers), { headers: req.headers, upstream, launch: r.launch ? loadLaunch(a.dir, r.launch) : undefined })
-      if (p?.logLine && logged) p.logLine.headers = logged
+      if (c && body && key) {
+        const k = key
+        const prep = (w: NonNullable<typeof c>, freeze: boolean) => {
+          const q = prepare(proto, h, k, w.body, w, params, Date.now(), side, h?.compaction?.(req.headers), { headers: req.headers, upstream, launch: r.launch ? loadLaunch(a.dir, r.launch) : undefined }, freeze)
+          if (q?.logLine && logged) q.logLine.headers = logged
+          return q
+        }
+        // The body as read, for preparing again: prepare changes the one it's given.
+        const read = raw
+        again = () => {
+          try {
+            return prep(proto.canonical(JSON.parse(read.toString('utf8'))), true)
+          } catch (err) {
+            console.error('shaver: frozen request not prepared:', err)
+          }
+        }
+        p = prep(c, false)
+      }
     } catch (err) {
       why = 'untrimmed'
       console.error('shaver: request left untrimmed:', err)
@@ -732,7 +784,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   res.on('close', () => res.writableFinished || usage.done || abort.abort())
   const send = (body: Buffer | undefined) =>
     fetch(upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
+  if (p?.freeze.mode === 'retry') console.error(`${new Date().toISOString()} shaver: shave tried again for ${p.key}, frozen since ${load(p.key)?.frozen?.since}: it saves ${p.freeze.gap} tokens a request`)
   let up = await send(p?.body ?? raw)
+  // What was sent, in order, and how each went: the request shaved or frozen
+  // (Frozen), then the original.
+  const attempts: { sent: 'shaved' | 'frozen' | 'original'; status: number }[] = []
+  const shapeOf = (q: Prepared | undefined) => (q?.freeze.mode === 'frozen' ? 'frozen' : 'shaved')
   // A changed request the API refuses is sent again as it came, so the proxy
   // never costs the user a turn, and journaled as resent.
   let resent: Prepared | undefined
@@ -745,12 +802,37 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const failed = (status: number, text: string, more?: Record<string, unknown>) =>
     a['log-step-events'] && served && writeLine(path.join(logRoot, bareKey()), { event: 'failed', time: new Date(arrived).toISOString(), model: c?.body.model ?? 'unknown', provider: c?.body.provider, protocol: proto.name, params, status, error: text.slice(0, 2000), ...more })
   if ((p || raw !== original) && up.status === 400) {
-    const text = await up.text()
-    console.error(`shaver: changed request refused, sent as it came: ${errorShape(text)}`)
-    failed(up.status, text, { resent: true })
-    ;[resent, p] = [p, undefined]
-    up = await send(original)
+    let text = await up.text()
+    let shape = shapeOf(p)
+    attempts.push({ sent: shape, status: 400 })
+    // A shave refused is sent as the last that worked, if that differs, and
+    // the conversation's shaving frozen (Frozen).
+    const q = p?.freeze.differs && p.freeze.mode !== 'frozen' ? again?.() : undefined
+    if (p && q) {
+      console.error(`${new Date().toISOString()} shaver: shaved request refused for ${p.key}, sent as the last that worked, shaving frozen (${p.freeze.gap} tokens a request not saved): ${errorShape(text)}`)
+      failed(400, text, { sent: shape })
+      const was = load(p.key)?.frozen
+      q.freeze.frozen = { since: was?.started === started ? was.since : new Date(arrived).toISOString(), gap: q.freeze.gap, started, error: apiError(text) }
+      up = await send(q.body)
+      attempts.push({ sent: 'frozen', status: up.status })
+      if (up.status !== 400) p = q
+      else [text, shape] = [await up.text(), 'frozen']
+    }
+    if (up.status === 400) {
+      console.error(`shaver: changed request refused, sent as it came: ${errorShape(text)}`)
+      failed(up.status, text, { resent: true, sent: shape })
+      ;[resent, p] = [p, undefined]
+      up = await send(original)
+      attempts.push({ sent: 'original', status: up.status })
+    }
+  } else if (p) attempts.push({ sent: shapeOf(p), status: up.status })
+  // A shave tried while frozen and taken ends the freeze.
+  if (p?.freeze.mode === 'retry' && up.status === 200) {
+    p.freeze.unfrozen = 'retry-worked'
+    console.error(`${new Date().toISOString()} shaver: shaving unfrozen for ${p.key}: the shave was taken (${p.freeze.gap} tokens a request saved)`)
   }
+  const freezeLog = (q: Prepared | undefined) => q && (q.freeze.mode || q.freeze.unfrozen || attempts.length > 1) && { freeze: { ...(q.freeze.mode && { mode: q.freeze.mode }), gap: q.freeze.gap, ...(q.freeze.unfrozen && { unfrozen: q.freeze.unfrozen }), ...(q.freeze.frozen && { frozenSince: q.freeze.frozen.since }), attempts } }
+  if (p?.logLine) Object.assign(p.logLine, freezeLog(p))
   const out: Record<string, string> = {}
   up.headers.forEach((v, k) => {
     if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v
@@ -784,7 +866,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // is logged with its messages whole.
       const whole = (event: string): WholeLog | undefined => (a['log-step-events'] && body ? { dir: path.join(logRoot, bareKey()), event, side: body, protocol: proto.name, params, headers: logged } : undefined)
       if (p && !cut) answered(p, usage, upstream + url, headers)
-      else if (resent && !cut) answeredResent(resent, usage, whole('resent'))
+      else if (resent && !cut) {
+        const w = whole('resent')
+        answeredResent(resent, usage, w && { ...w, more: freezeLog(resent) || undefined })
+      }
       else {
         const q = p ?? resent
         const u = usage.end().usage
@@ -798,7 +883,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // A response ending the turn gets the answers to the commands sent during
   // it, after the request is journaled, so `shaver info` counts it.
   const write = (s: string | Uint8Array) => res.destroyed || res.write(s)
-  const held = turnEnd && proto.holdClose(write)
+  // A frozen conversation's turn ends with a warning that says so.
+  const warning = p?.freeze.frozen && c?.body.stream ? frozenWarning(p.freeze.frozen, p.freeze.gap) : undefined
+  const held = (turnEnd || warning) && proto.holdClose(write)
   try {
     if (up.body)
       for await (const chunk of up.body) {
@@ -811,10 +898,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     finish(true)
     throw err
   }
-  if (held && turnEnd) {
+  if (held) {
     finish(false)
-    const commands = waiting.get(turnEnd.key)
-    if (held.ended && commands && !res.destroyed) {
+    if (held.ended && warning && !res.destroyed) write(held.add(warning))
+    const commands = turnEnd && waiting.get(turnEnd.key)
+    if (turnEnd && held.ended && commands && !res.destroyed) {
       waiting.delete(turnEnd.key)
       for (const command of commands) {
         let said = ''
@@ -866,7 +954,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   // would, after a reply that ended the turn; so not while the turn goes on.
   const check = p.summaryFork && (summaryForking.has(p.key) ? { skip: 'in-flight' as const } : reply?.ended === false ? { skip: 'turn-continues' as const } : p.summaryFork(textTokens(p.sent, next.tokens)))
   const due = check && !('skip' in check) ? check : undefined
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList })
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList, frozen: p.freeze.frozen })
   // A reply with no text leaves the instructions where they'd go without one.
   if (due) void summarize(p, due, target, headers, reply?.text.some((t) => t.trim()) ? reply.text : undefined)
   if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }), ...(check && { summaryCheck: due ? 'sent' : check }) })
@@ -898,10 +986,27 @@ function answeredResent(p: Prepared, usage: UsageReader, log?: WholeLog): void {
 
 // A request logged with its messages whole, as an event of its own: a side
 // request, or one resent as it came.
-type WholeLog = { dir: string; event: string; side: Canonical; protocol: string; params: Record<string, unknown>; headers?: Record<string, string> }
+type WholeLog = { dir: string; event: string; side: Canonical; protocol: string; params: Record<string, unknown>; headers?: Record<string, string>; more?: Record<string, unknown> }
 
 const writeWhole = (log: WholeLog, b: BareLine, counts: Record<string, unknown> | undefined) =>
-  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, ...(log.headers && { headers: log.headers }), messages: writeMessages(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...counts })
+  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, ...(log.headers && { headers: log.headers }), messages: writeMessages(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...log.more, ...counts })
+
+// The warning a frozen conversation's turns end with, for the user; taken out
+// of later requests like a command's answer (command.ts).
+const frozenWarning = (f: Frozen, gap: number) =>
+  WARNING +
+  `Shaving is frozen for this conversation: the API refused a shaved request (${f.error}), so since ${new Date(f.since).toLocaleString()} its requests are sent as the last one that worked was. ` +
+  `About ${Math.round(gap / 1000)}K tokens a request are not saved. The proxy tries shaving again once that grows by another ${RETRY_STEP / 1000}K; restarting it ends the freeze.`
+
+// What the API said refusing a request, for the user: its error's message,
+// cut short.
+function apiError(text: string): string {
+  let m: unknown
+  try {
+    m = JSON.parse(text)?.error?.message
+  } catch {}
+  return (typeof m === 'string' ? m : errorShape(text)).slice(0, 300)
+}
 
 // Records a request journaled bare (journal.ts): its line and its cost, and
 // with logging its log line. A request the proxy prepared is logged as

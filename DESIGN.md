@@ -594,8 +594,25 @@ Each conversation has an applied clock, saved in
 last applied at. Every request is trimmed at it, so they all send the same
 prefix and the prompt cache keeps reading it. The clock only moves forward.
 
-If the API refuses a trimmed request (400), the proxy sends it again as it
-came and logs the refusal to stderr.
+If the API refuses a shaved request (400), the conversation is frozen
+(`src/server.ts`, `freeze` in its state). The request goes again shaped as
+the last one the API took: the applied clock, summaries and kept notes as
+saved after it, with the new messages after them as they came. Only if that
+is refused too does the request go as it came, as it did before 2026-11-08,
+when one refused shave (a tool defined twice in one message) sent 724K
+tokens to a cold cache, about $5.80. While frozen, every request is sent so,
+and the shave is worked out without being sent. It's tried again once it
+would save another `RETRY_STEP` (10K) tokens since the shape was frozen or
+last refused, and the freeze ends when one is taken, or when the proxy
+restarts, since a restart is how a fix arrives. Each turn's last reply, the
+one that ends it, starts with a `[shaver] warning` block, which later
+requests leave out, as they do mid-turn command answers (`src/command.ts`,
+`WARNING`). Each request line has a `freeze` record:
+`mode` (`frozen` or `retry`), `gap` (the tokens the shave would save),
+`frozenSince`, `unfrozen` (`retry-worked` or `restart`) on the one that ends
+it, and `attempts`, each sent shape (`shaved`, `frozen` or `original`) and
+the status it got, with each refusal also on a `failed` line.
+`proxy.log` has a line for each freeze, retry and unfreeze.
 
 ## When the applied clock moves
 
@@ -876,8 +893,8 @@ Scripts:
   but marked, and not counted as requests or turns: the user took none.
   Before 2026-10-23 they weren't journaled, so a trim made on one went
   uncounted; `scripts/backfill-suggestions.ts` adds them back from a
-  logged conversation's logs. A changed request the API refuses, answered as it came, adds a
-  line marked resent: one more request, its usage, the stats otherwise as
+  logged conversation's logs. A changed request the API refuses, answered as it came (both the
+  shave and the frozen shape refused), adds a line marked resent: one more request, its usage, the stats otherwise as
   they were, and the same cost with or without the shaver. Any other request
   the API answers is journaled bare, with its time, model, usage if it
   came, and why: a side request without tools (Codex's compaction, Claude

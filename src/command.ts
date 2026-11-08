@@ -23,7 +23,7 @@
 // every request, so the model never sees it, and the command is answered at
 // the turn's end (server.ts), as text added to the turn's last response,
 // opening with `answeredMidTurn`'s words (the protocol's `holdClose`). That
-// text is taken out of every later request too.
+// text is taken out of every later request too, as is a WARNING added there.
 
 import { holding, wholeReply, type Held, type Replying } from './protocol.ts'
 import { PICK, pickWords } from './optimize.ts'
@@ -91,7 +91,9 @@ function midTurnOf(b: Block): string | undefined {
 // How the answer to a command sent mid-turn opens. Added to text the model
 // wrote, as Chat Completions does, it follows a blank line.
 export const answeredMidTurn = (command: string) => `[shaver] \`${command.slice(1)}\`, sent mid-turn:\n\n`
-const ANSWERED = /(?:^|\n\n)\[shaver\] `shaver [^`\n]*`, sent mid-turn:\n/
+// How a warning the proxy adds to a turn's last response opens (server.ts).
+export const WARNING = '[shaver] warning:\n\n'
+const ANSWERED = /(?:^|\n\n)\[shaver\] (?:`shaver [^`\n]*`, sent mid-turn|warning):\n/
 
 const blocksOf = (m: Msg): Block[] => (typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content)
 
