@@ -18,6 +18,7 @@ import path from 'node:path'
 import { describe, isSideRequest, observe, type Sent, type Stats } from '../src/stats.ts'
 import { forkOf, history, record, recordBare, recordFork, recordResent } from '../src/journal.ts'
 import type { Usage } from '../src/cost.ts'
+import { messagesOf, objectsOf } from '../src/log.ts'
 
 export type Suggestion = { sent: Sent; inputTokens: number; outputTokens: number; usage: Usage }
 
@@ -75,11 +76,11 @@ const pick = (defs: Stats['defs']) => ({ ...(defs?.deferred !== undefined && { d
 export function fromLogs(dir: string): Suggestion[] {
   const events = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
   const advanced = new Set(events.filter((e) => e.event === 'compaction' && e.advanced).map((e) => e.time))
-  const part = (h: string) => JSON.parse(readFileSync(path.join(dir, 'parts', h + '.json'), 'utf8'))
+  const object = (h: string) => JSON.parse(readFileSync(path.join(objectsOf(dir), h + '.json'), 'utf8'))
   return events
     .filter((e) => e.event === 'request' && e.inputTokens && e.tools && !e.bare)
     .flatMap((r) => {
-      const messages = r.parts.map((p: { hash: string }) => part(p.hash))
+      const messages = messagesOf(r).map((p) => object(p.hash))
       if (!isSideRequest(messages)) return []
       const body = { model: r.model, messages, system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
       const sent = { ...describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time, advanced.has(r.time)), suggestion: true }

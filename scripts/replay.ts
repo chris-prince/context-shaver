@@ -9,7 +9,7 @@
 // Usage: [WAIT=<n>] [POLICY=<file>] bin/node-wrapper scripts/replay.ts proxy-data/logs/<conversation> [from ISO] [to ISO]
 import { readFileSync } from 'node:fs'
 import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
-import { hash } from '../src/log.ts'
+import { hash, messagesOf, objectsOf } from '../src/log.ts'
 import { anchored, apply, decide, fullyTrimmed, positionsOf, readThrough, settledEnd, TEXT_TOKENS, type Position } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 import { parsePolicy, type PartRules } from '../src/policy.ts'
@@ -19,7 +19,8 @@ const TTL = 3600e3
 const all = readFileSync(dir + '/step_events.jsonl', 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   .filter((e) => e.event === 'request' && e.inputTokens !== undefined && e.tools && !e.bare)
 const reqs = all.filter((e) => e.time >= from && e.time < to)
-const load = (h: string): ApiMsg => JSON.parse(readFileSync(`${dir}/parts/${h}.json`, 'utf8'))
+const objects = objectsOf(dir)
+const load = (h: string): ApiMsg => JSON.parse(readFileSync(`${objects}/${h}.json`, 'utf8'))
 // A message as sent without breakpoints, a lone text block as a string. Claude
 // Code sends one carrying a breakpoint as an array, and as a string once the
 // breakpoint moves on; the proxy's anchor can sit on either form.
@@ -35,7 +36,7 @@ const same = (x: ApiMsg, y: ApiMsg) => JSON.stringify(strip(x)) === JSON.stringi
 // extends, plus what follows that request's last message in what it sent.
 // Claude Code's prompt suggestions fork the conversation, so the request after
 // one extends the request before it.
-const sent: ApiMsg[][] = reqs.map((e) => e.parts.map((p: { hash: string }) => load(p.hash)))
+const sent: ApiMsg[][] = reqs.map((e) => messagesOf(e).map((p) => load(p.hash)))
 const orig: ApiMsg[][] = []
 let broken = 0
 sent.forEach((s, n) => {
@@ -95,21 +96,21 @@ function defsSize(e: { system: Def[]; tools: Def[] }, msgs: ApiMsg[]): number {
 // The base, the system blocks, the tools sent in full and the preamble (what
 // Claude Code injects before the first response, the kind src/log.ts calls
 // `system`), takes its tokens from the conversation's first request, as the
-// API reported them, less that request's other parts, shared by bytes.
+// API reported them, less that request's other messages, shared by bytes.
 // A window from partway through (one long turn, say) could take its base from
 // the window's first request instead, by filtering `all` to [from, to) as
-// `reqs` is. That request's messages then carry earlier assistant parts, so the
+// `reqs` is. That request's messages then carry earlier assistant ones, so the
 // base would be shared by bytes with them rather than with the preamble alone,
 // a close estimate rather than an exact count, as the checks below warn of a
 // conversation logged from partway through.
 const sig = (e: { system: (Def & { hash: string })[]; tools: (Def & { hash: string })[] }) =>
   JSON.stringify([e.system.map((d) => d.hash), e.tools.filter((t) => !t.deferred).map((t) => t.hash)])
-if (all[0].parts.some((p: { part: string }) => p.part === 'assistant')) console.log(`warning: ${dir} was logged from partway through, so its base has no exact count`)
+if (messagesOf(all[0]).some((p) => p.role === 'assistant')) console.log(`warning: ${dir} was logged from partway through, so its base has no exact count`)
 if (all.some((e) => sig(e) !== sig(all[0]))) console.log(`warning: ${dir} sent other system blocks or tools than its first request, so its base has no exact count`)
-const kindsOf = (p: { hash: string; part: string; bytes: number }): Record<string, number> => {
-  try { return JSON.parse(readFileSync(`${dir}/parts/${p.hash}.kinds.json`, 'utf8')).kinds ?? { [p.part]: p.bytes } } catch { return { [p.part]: p.bytes } }
+const kindsOf = (p: { hash: string; role: string; bytes: number }): Record<string, number> => {
+  try { return JSON.parse(readFileSync(`${objects}/${p.hash}.kinds.json`, 'utf8')).kinds ?? { [p.role]: p.bytes } } catch { return { [p.role]: p.bytes } }
 }
-const firstKinds = all[0].parts.flatMap((p: { hash: string; part: string; bytes: number }) => Object.entries(kindsOf(p)))
+const firstKinds = messagesOf(all[0]).flatMap((p) => Object.entries(kindsOf(p)))
 const pre = firstKinds.filter(([k]: [string, number]) => k === 'system').reduce((x: number, [, n]: [string, number]) => x + n, 0)
 const sum = (ds: Def[]) => ds.reduce((x, d) => x + d.bytes, 0)
 const fixed = sum(all[0].system) + sum(all[0].tools.filter((t: Def) => !t.deferred))

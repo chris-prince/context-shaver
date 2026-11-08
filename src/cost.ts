@@ -227,4 +227,4 @@ export function addBare(c: Cost | undefined, b: { model: string; provider?: stri
 // What add reads of the stats before a request, copied, since a journal's
 // history changes its stats in place: the plain fields and the base's and the
 // parts' tokens, which it reads only when the stats have a base.
-export const before = (s: Stats): Stats => (s.defs ? { ...s, tokens: Object.fromEntries([s.defs.key, ...s.parts.map((p) => p.key)].filter((k) => k in s.tokens).map((k) => [k, s.tokens[k]])) } : { ...s })
+export const before = (s: Stats): Stats => (s.defs ? { ...s, tokens: Object.fromEntries([s.defs.key, ...s.messages.map((p) => p.key)].filter((k) => k in s.tokens).map((k) => [k, s.tokens[k]])) } : { ...s })

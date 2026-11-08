@@ -13,6 +13,7 @@ import { parseArgs } from 'node:util'
 import { describe, isSideRequest, observe, render, type Stats } from '../src/stats.ts'
 import { harnessOf, type Harness } from '../src/harness.ts'
 import { record, replay } from '../src/journal.ts'
+import { messagesOf, objectsOf } from '../src/log.ts'
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: { request: { type: 'string' }, 'check-journal': { type: 'boolean' } } })
 const dir = positionals[0]
@@ -20,7 +21,8 @@ if (!dir) {
   console.error('usage: bin/node-wrapper scripts/stats-from-logs.ts <session dir> [--request N] [--check-journal]')
   process.exit(1)
 }
-const part = (h: string) => JSON.parse(readFileSync(path.join(dir, 'parts', h + '.json'), 'utf8'))
+const objects = objectsOf(dir)
+const object = (h: string) => JSON.parse(readFileSync(path.join(objects, h + '.json'), 'utf8'))
 const events = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8')
   .split('\n')
   .flatMap((l) => {
@@ -45,7 +47,7 @@ if (!(Number.isInteger(last) && 0 <= last && last < reqs.length)) {
   process.exit(1)
 }
 const count = (s: Stats | undefined, r: any) => {
-  const body = { model: r.model, messages: r.parts.map((p: { hash: string }) => part(p.hash)), system: r.system.map((x: { hash: string }) => part(x.hash)), tools: r.tools.map((t: { hash: string }) => part(t.hash)) }
+  const body = { model: r.model, messages: messagesOf(r).map((p) => object(p.hash)), system: r.system.map((x: { hash: string }) => object(x.hash)), tools: r.tools.map((t: { hash: string }) => object(t.hash)) }
   const sent = describe(body, r.trimmedEnd ?? r.frontierEnd ?? { tools: 0, reasoning: 0 }, r.time, advanced.has(r.time))
   // The headers logged say what the proxy was told, where they say it.
   const h = r.headers && (harnessOf(undefined, r.headers) as Harness | undefined)
@@ -53,12 +55,12 @@ const count = (s: Stats | undefined, r: any) => {
   return observe(s, sent, r.inputTokens, r.outputTokens ?? 0, apiCounts(r))
 }
 // What the API counted, as the proxy reads it (src/responses.ts, counted): the
-// head's and each part's tokens, where the usage per item counted all of it.
+// head's and each message's tokens, where the usage per item counted all of it.
 const apiCounts = (r: any) => {
   const items = r.attribution?.items
   if (!items) return
   const sum = (ids: string[] | undefined) => (ids?.length && ids.every((id) => items[id]?.input_tokens !== undefined) ? ids.reduce((n, id) => n + items[id].input_tokens, 0) : undefined)
-  return { defs: sum(r.headIds), parts: r.parts.map((p: { ids?: string[] }) => sum(p.ids)) }
+  return { defs: sum(r.headIds), messages: messagesOf(r).map((p) => sum(p.ids)) }
 }
 const journal = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'journal.jsonl')
 let s: Stats | undefined

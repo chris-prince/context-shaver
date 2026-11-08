@@ -19,7 +19,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
-import { errorShape, hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDefs, writeLine, writeParts } from './log.ts'
+import { errorShape, hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDefs, writeLine, writeMessages } from './log.ts'
 import { blocks, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
@@ -61,7 +61,7 @@ if (a.policy === repoPolicy) seedPolicy(repoPolicy, path.resolve(import.meta.dir
 const loaded = loadPolicy(a.policy)
 if (!loaded) console.error(`shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
 const policy = loaded ?? {}
-const parts = policy.conversation_shaver_rules ?? {}
+const conversationRules = policy.conversation_shaver_rules ?? {}
 const { summary_threshold_tokens: summaryAt, memoir_threshold_tokens: memoirAt } = textRules(policy)
 const ttlMs = Number(a['cache-ttl-seconds']) * 1000
 const stateDir = path.join(a.dir, 'state')
@@ -245,7 +245,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const mergedBefore = Math.min(s?.merged ?? 0, before)
   let records = before
   let merged = mergedBefore
-  let keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain.slice(0, records), merged, turns)
+  let keep = summarized(apply(msgs, conversationRules, held, conv, thinking), msgs, chain.slice(0, records), merged, turns)
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   const allMerged = Math.min(file?.merged ?? 0, chain.length)
   let covers: string[] | undefined
@@ -253,7 +253,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     if (records < chain.length) covers = coveredBy(keep, msgs, chain, records, turns).map(keyOf)
     records = chain.length
     merged = allMerged
-    keep = summarized(apply(msgs, parts, held, conv, thinking), msgs, chain, merged, turns)
+    keep = summarized(apply(msgs, conversationRules, held, conv, thinking), msgs, chain, merged, turns)
   }
   // With force_trim_before_autocompact, a prompt within its proximity of the
   // client's own compaction is sent as a cold cache would send it, every
@@ -268,7 +268,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   let forced: { before: number; after: number; next: typeof keep } | undefined
   let skipped: { before: number; after: number } | undefined
   if (at && near >= at - ft!.proximity) {
-    const full = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain, allMerged, turns)
+    const full = summarized(apply(msgs, conversationRules, clock, conv, thinking), msgs, chain, allMerged, turns)
     const after = promptTokens(stats!, full.msgs)
     if (near - after < ft!.saves) skipped = { before: Math.round(near), after: Math.round(after) }
     else {
@@ -280,7 +280,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache.
-  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, parts, conv, thinking), msgs, chain.slice(0, records), merged, turns).msgs, seed, thinking)
+  const end = auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(msgs, conversationRules, conv, thinking), msgs, chain.slice(0, records), merged, turns).msgs, seed, thinking)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
   const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
   const freed = spare > 0 ? undefined : freedSystem(body.system)
@@ -302,7 +302,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const horizon = isCompaction(msgs, compaction) ? 0 : model.horizon(latestOf(key)?.requests ?? 0)
   if (forced) [sent, applied, next] = [forced.next, clock, forced.next]
   else if (clock.requests > held.requests || clock.turns > held.turns) {
-    next = summarized(apply(msgs, parts, clock, conv, thinking), msgs, chain.slice(0, records), merged, turns)
+    next = summarized(apply(msgs, conversationRules, clock, conv, thinking), msgs, chain.slice(0, records), merged, turns)
     d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
   }
@@ -314,7 +314,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const r = readThrough(pos, live, model.lookback)
   const touched = pos.filter((q, i) => q.breakpoint || (auto && !q.joined) || i === r).map((q) => q.prefix)
   // Where trimming ends in the messages as sent, which drops shorten.
-  const ends = trimmedEnd(msgs, parts, applied, conv, thinking)
+  const ends = trimmedEnd(msgs, conversationRules, applied, conv, thinking)
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
   const trimmed = { tools: sentEnd(ends.tools), reasoning: sentEnd(ends.reasoning) }
   const time = new Date(now).toISOString()
@@ -330,12 +330,12 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   if (ac?.guessed) described.windowGuessed = true
   if (covers) described.covers = covers
   const last = latestOf(key)
-  const lastPart = (last?.suggestion ? last.parts.at(-2) : last?.parts.at(-1))?.key
-  if (h?.resends && lastPart && !described.parts.some((q) => q.key === lastPart)) described.compacted = true
+  const lastMessage = (last?.suggestion ? last.messages.at(-2) : last?.messages.at(-1))?.key
+  if (h?.resends && lastMessage && !described.messages.some((q) => q.key === lastMessage)) described.compacted = true
   // Each record is dated by the first message it covers, the memoir by its first record's.
   const starts = startsOf(msgs, chain.slice(0, records), turns)
-  described.parts.filter((q) => q.kinds.memoir).forEach((q) => (q.born = bornFrom(latestOf(key), msgs, starts[0])))
-  described.parts.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornFrom(latestOf(key), msgs, starts[merged + k])))
+  described.messages.filter((q) => q.kinds.memoir).forEach((q) => (q.born = bornFrom(latestOf(key), msgs, starts[0])))
+  described.messages.filter((q) => q.kinds.summary).forEach((q, k) => (q.born = bornFrom(latestOf(key), msgs, starts[merged + k])))
   if (suggestion) described.suggestion = true
   const after = summaryAt && (model.summaryThreshold ?? summaryAt)
   // Whether to send a summary fork is known once the response's counts are in;
@@ -379,7 +379,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     // The messages as the client sent them, when they went up changed, so
     // what was taken (a newest answer's thinking, say) can be rebuilt.
     const changed = msgs.length !== body.messages.length || msgs.some((m, i) => JSON.stringify(m) !== JSON.stringify(body.messages[i]))
-    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), parts: writeParts(p.logDir, body.messages, ids?.of), ...(changed && { received: writeParts(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), messages: writeMessages(p.logDir, body.messages, ids?.of), ...(changed && { received: writeMessages(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -858,7 +858,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   // journaled bare, and like one cut off leaves the state as it was.
   if (!u || !inputTokens) return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), why: 'no usage' }, p.logLine && { dir: p.logDir!, line: p.logLine })
   const c = attribution !== undefined ? p.counted?.(attribution) : undefined
-  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, parts: c.messages, kinds: c.kinds })
+  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds })
   const was = currentOf(p.key)
   record(journalOf(p.key), was.stats, next, u)
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
@@ -901,7 +901,7 @@ function answeredResent(p: Prepared, usage: UsageReader, log?: WholeLog): void {
 type WholeLog = { dir: string; event: string; side: Canonical; protocol: string; params: Record<string, unknown>; headers?: Record<string, string> }
 
 const writeWhole = (log: WholeLog, b: BareLine, counts: Record<string, unknown> | undefined) =>
-  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, ...(log.headers && { headers: log.headers }), parts: writeParts(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...counts })
+  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, ...(log.headers && { headers: log.headers }), messages: writeMessages(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...counts })
 
 // Records a request journaled bare (journal.ts): its line and its cost, and
 // with logging its log line. A request the proxy prepared is logged as

@@ -7,8 +7,9 @@
 // A line records results, not inputs, so a replay never reruns the counting.
 // Its fields: the plain fields that changed, null for one gone (before
 // 2026-10-24 one gone was left out, so replay kept it); for each record, the entries set
-// and the keys deleted; and, when it changed, the part list, each run of parts
-// kept from the previous list as [from, to) and each other part whole. A line
+// and the keys deleted; and, when it changed, the message list, each run of
+// messages kept from the previous list as [from, to) and each other message
+// whole (`messages`; `parts` before 2026-11-07). A line
 // also holds the request's usage as the API reported it (cache reads, cache
 // writes by TTL, output), which the stats leave out and replay ignores.
 //
@@ -38,14 +39,17 @@ import type { Stats } from './stats.ts'
 // Every other field is plain, set whole when it changes: listing them let a
 // new one go unjournaled (Stats.compacted, until 2026-10-24).
 const RECORDS = ['tokens', 'bound', 'answers', 'seen'] as const
-type Plain = Exclude<keyof Stats, (typeof RECORDS)[number] | 'parts'>
-const plainOf = (s: Stats | undefined) => Object.keys(s ?? {}).filter((f) => f !== 'parts' && !(RECORDS as readonly string[]).includes(f)) as Plain[]
+type Plain = Exclude<keyof Stats, (typeof RECORDS)[number] | 'messages'>
+const plainOf = (s: Stats | undefined) => Object.keys(s ?? {}).filter((f) => f !== 'messages' && !(RECORDS as readonly string[]).includes(f)) as Plain[]
 
-type Part = Stats['parts'][number]
+type Message = Stats['messages'][number]
+type Ops = Array<[number, number] | Message>
 export type Delta = {
   set?: Partial<Pick<Stats, Plain>>
   records?: Partial<Record<(typeof RECORDS)[number], { set?: Record<string, unknown>; del?: string[] }>>
-  parts?: Array<[number, number] | Part>
+  messages?: Ops
+  // BACKCOMPAT: journals before 2026-11-07 call `messages` `parts`.
+  parts?: Ops
   usage?: Usage
   resent?: true
 }
@@ -76,21 +80,21 @@ export function diff(prev: Stats | undefined, next: Stats): Delta {
     const del = Object.keys(a).filter((k) => !(k in b))
     if (Object.keys(set).length || del.length) (d.records ??= {})[f] = { ...(Object.keys(set).length && { set }), ...(del.length && { del }) }
   }
-  if (!prev || !same(prev.parts, next.parts)) {
-    // Where each part sits in the previous list, by its JSON.
+  if (!prev || !same(prev.messages, next.messages)) {
+    // Where each message sits in the previous list, by its JSON.
     const at = new Map<string, number[]>()
-    prev?.parts.forEach((p, i) => at.set(JSON.stringify(p), [...(at.get(JSON.stringify(p)) ?? []), i]))
-    const ops: Delta['parts'] = []
-    for (const p of next.parts) {
+    prev?.messages.forEach((p, i) => at.set(JSON.stringify(p), [...(at.get(JSON.stringify(p)) ?? []), i]))
+    const ops: Ops = []
+    for (const p of next.messages) {
       const found = at.get(JSON.stringify(p)) ?? []
       const last = ops[ops.length - 1]
-      // Extend the run when this part follows it, else start one where the
-      // part first sits.
+      // Extend the run when this message follows it, else start one where the
+      // message first sits.
       if (Array.isArray(last) && found.includes(last[1])) last[1]++
       else if (found.length) ops.push([found[0], found[0] + 1])
       else ops.push(p)
     }
-    d.parts = ops
+    d.messages = ops
   }
   return d
 }
@@ -98,7 +102,8 @@ export function diff(prev: Stats | undefined, next: Stats): Delta {
 // Applies a line to the stats before it, in place: copying the records, which
 // every line changes, would cost a line as much as all the lines before it.
 function apply(s: Stats | undefined, d: Delta): Stats {
-  const parts = d.parts?.flatMap((op) => (Array.isArray(op) ? s!.parts.slice(op[0], op[1]) : [op]))
+  // BACKCOMPAT: journals before 2026-11-07 call `messages` `parts`.
+  const messages = (d.messages ?? d.parts)?.flatMap((op) => (Array.isArray(op) ? s!.messages.slice(op[0], op[1]) : [op]))
   s = Object.assign(s ?? ({} as Stats), d.set)
   for (const [k, v] of Object.entries(d.set ?? {})) if (v === null) delete s[k as keyof Stats]
   for (const f of RECORDS) {
@@ -107,7 +112,7 @@ function apply(s: Stats | undefined, d: Delta): Stats {
     Object.assign(out, r?.set)
     for (const k of r?.del ?? []) delete out[k]
   }
-  if (parts) s.parts = parts
+  if (messages) s.messages = messages
   return s
 }
 

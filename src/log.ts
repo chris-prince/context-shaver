@@ -1,14 +1,18 @@
 // The one log: proxy-data/logs/<conversation>/step_events.jsonl, a line
-// per model request and per trim decision, and parts/, each distinct message
-// saved once (parts/<hash>.json) with its bytes split by kind
-// (parts/<hash>.kinds.json). A request line lists its messages by hash, so the
-// full and the trimmed version of a message are both on disk, joined by their
-// lineage. The line also lists the top-level `system` blocks and the tool
-// definitions, as sent, each saved once in parts/ beside the messages: a
-// deferred tool is marked, since its definition costs nothing until a tool
-// search loads it.
+// per model request and per trim decision, and objects/, each distinct message
+// saved once under the hash of its JSON (objects/<hash>.json) with its bytes
+// split by kind (objects/<hash>.kinds.json). A request line lists its
+// `messages` by hash, each with its role, so the full and the trimmed version
+// of a message are both on disk, joined by their lineage. The line also lists
+// the top-level `system` blocks and the tool definitions, as sent, each saved
+// once in objects/ beside the messages: a deferred tool is marked, since its
+// definition costs nothing until a tool search loads it. A message is the
+// core's (items.ts), which for Codex can be several of its items (DESIGN.md).
+//
+// Before 2026-11-07 the folder was parts/, a request line's list `parts` and
+// each entry's role `part` (messagesOf, objectsOf read both).
 
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { isMemoir, isPrompt, isSkillBody, isSummary, type ApiMsg, type Block } from './items.ts'
 import { notesOfBlock } from './notes.ts'
@@ -16,7 +20,7 @@ import { isStubbed, STUB } from './trim.ts'
 
 export const LOG_DIR = 'logs'
 
-// cyrb53, twice with different seeds: a 106-bit content hash, kept so part
+// cyrb53, twice with different seeds: a 106-bit content hash, kept so object
 // names match the plugin's earlier logs.
 export function hash(s: string): string {
   const one = (seed: number) => {
@@ -51,7 +55,7 @@ export function hash(s: string): string {
 // text is cut at Claude Code's headings into `system:skills`,
 // `system:agents-md` and the like, and the tools it adds there are
 // `system:deferred-tools-list`; text under no heading stays `system`. A system
-// message's own bytes join its first part.
+// message's own bytes join its first section.
 // Later ones (environment updates, reminders) are `harness:<category>`, by
 // how notes.ts sorts each note in them (before 2026-11-03, `harness`).
 export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Record<string, number>; lineage?: string } {
@@ -195,9 +199,9 @@ const lastReceived = new Map<string, string[]>()
 
 // A request line with received (the client's message hashes, server.ts) as
 // { keep, add }: the first keep of the client's messages in the request line
-// before (its received, else its parts), then add. keep is 0 after a restart.
+// before (its received, else its messages), then add. keep is 0 after a restart.
 export function withReceivedDelta(dir: string, line: Record<string, unknown>): Record<string, unknown> {
-  const full = (line.received as string[] | undefined) ?? (line.parts as Array<{ hash: string }>).map((q) => q.hash)
+  const full = (line.received as string[] | undefined) ?? (line.messages as Array<{ hash: string }>).map((q) => q.hash)
   const before = lastReceived.get(dir) ?? []
   lastReceived.set(dir, full)
   if (!line.received) return line
@@ -210,37 +214,60 @@ export function withReceivedDelta(dir: string, line: Record<string, unknown>): R
 // from withReceivedDelta's form.
 export function receivedOf(lines: ReadonlyArray<Record<string, any>>): string[][] {
   let before: string[] = []
-  return lines.filter((e) => e.event === 'request').map((e) => (before = e.received ? [...before.slice(0, e.received.keep), ...e.received.add] : e.parts.map((q: { hash: string }) => q.hash)))
+  return lines.filter((e) => e.event === 'request').map((e) => (before = e.received ? [...before.slice(0, e.received.keep), ...e.received.add] : messagesOf(e).map((q) => q.hash)))
+}
+
+// A request line's messages, each with its role.
+// BACKCOMPAT: lines before 2026-11-07 call them `parts`, and the role `part`.
+export const messagesOf = (line: Record<string, any>): Array<{ role: string; hash: string; bytes: number; ids?: string[] }> =>
+  line.messages ?? line.parts?.map(({ part, ...q }: { part: string; hash: string; bytes: number }) => ({ role: part, ...q }))
+
+// A log folder's objects/, where its messages, system blocks and tools are.
+// BACKCOMPAT: folders before 2026-11-07 have parts/ instead.
+export const objectsOf = (dir: string): string => (existsSync(path.join(dir, 'parts')) && !existsSync(path.join(dir, 'objects')) ? path.join(dir, 'parts') : path.join(dir, 'objects'))
+
+// The folder objects are written to, made if need be.
+// BACKCOMPAT: a conversation's parts/ from before 2026-11-07 is renamed to
+// objects/ the first time it is written, so a folder never has both.
+function objectsFor(dir: string): string {
+  const objects = path.join(dir, 'objects')
+  if (!existsSync(objects) && existsSync(path.join(dir, 'parts'))) {
+    try {
+      renameSync(path.join(dir, 'parts'), objects)
+    } catch {
+      // Another request renamed it first.
+    }
+  }
+  mkdirSync(objects, { recursive: true })
+  return objects
 }
 
 // Saves each message not saved before, with its kinds; returns the request's
-// part list, each with the wire's names for its items when idsOf gives them.
-export function writeParts(dir: string, msgs: readonly ApiMsg[], idsOf?: (m: ApiMsg) => string[]): Array<{ part: string; hash: string; bytes: number; ids?: string[] }> {
-  const parts = path.join(dir, 'parts')
-  mkdirSync(parts, { recursive: true })
+// message list, each with the wire's names for its items when idsOf gives them.
+export function writeMessages(dir: string, msgs: readonly ApiMsg[], idsOf?: (m: ApiMsg) => string[]): Array<{ role: string; hash: string; bytes: number; ids?: string[] }> {
+  const objects = objectsFor(dir)
   const responded = preambleEnd(msgs)
   return msgs.map((m, i) => {
     const json = JSON.stringify(m)
     const h = hash(json)
-    const file = path.join(parts, `${h}.json`)
+    const file = path.join(objects, `${h}.json`)
     if (!existsSync(file)) {
       writeFileSync(file, json)
-      writeFileSync(path.join(parts, `${h}.kinds.json`), JSON.stringify(kinds(json, m, responded < 0 || i < responded)))
+      writeFileSync(path.join(objects, `${h}.kinds.json`), JSON.stringify(kinds(json, m, responded < 0 || i < responded)))
     }
     const ids = idsOf?.(m)
-    return { part: m.role, hash: h, bytes: json.length, ...(ids?.length && { ids }) }
+    return { role: m.role, hash: h, bytes: json.length, ...(ids?.length && { ids }) }
   })
 }
 
 // Saves each system block and tool definition not saved before; returns the
 // request's lists of them.
 export function writeDefs(dir: string, body: { system?: unknown; tools?: Array<{ name?: string; defer_loading?: boolean }> }) {
-  const parts = path.join(dir, 'parts')
-  mkdirSync(parts, { recursive: true })
+  const objects = objectsFor(dir)
   const save = (x: unknown) => {
     const json = JSON.stringify(x)
     const h = hash(json)
-    const file = path.join(parts, `${h}.json`)
+    const file = path.join(objects, `${h}.json`)
     if (!existsSync(file)) writeFileSync(file, json)
     return { hash: h, bytes: json.length }
   }
@@ -253,7 +280,7 @@ export function writeDefs(dir: string, body: { system?: unknown; tools?: Array<{
 
 // What a request asked for besides its content, as the client sent it:
 // thinking, effort, reasoning, output limits and the like. Left out are the
-// content (saved as parts), the model (logged apart), and who is asking.
+// content (saved in objects/), the model (logged apart), and who is asking.
 const NOT_PARAMS = new Set(['messages', 'input', 'system', 'instructions', 'tools', 'model', 'metadata', 'client_metadata', 'prompt_cache_key', 'user'])
 
 export const paramsOf = (wire: Record<string, unknown>): Record<string, unknown> =>

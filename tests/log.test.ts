@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { errorShape, kinds, paramsOf, receivedOf, withReceivedDelta, writeDefs } from '../src/log.ts'
+import { errorShape, kinds, messagesOf, objectsOf, paramsOf, receivedOf, withReceivedDelta, writeDefs } from '../src/log.ts'
 import type { ApiMsg } from '../src/items.ts'
 
 test("after a Codex compaction, its preamble messages are base by section and the compaction is not", () => {
@@ -80,7 +80,20 @@ test('system blocks and tool definitions are listed with their bytes, deferred t
     { name: 'Read', bytes: JSON.stringify(tool).length, deferred: undefined },
     { name: 'Artifact', bytes: JSON.stringify(later).length, deferred: true },
   ])
-  assert.equal(readFileSync(path.join(dir, 'parts', `${d.tools[1].hash}.json`), 'utf8'), JSON.stringify(later))
+  assert.equal(readFileSync(path.join(dir, 'objects', `${d.tools[1].hash}.json`), 'utf8'), JSON.stringify(later))
+})
+
+// BACKCOMPAT: logs before 2026-11-07 have parts/, `parts` and each role as `part`.
+test('a log from before the rename is read as one after it, and its folder renamed when next written', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'log-'))
+  mkdirSync(path.join(dir, 'parts'))
+  writeFileSync(path.join(dir, 'parts', 'old.json'), '{}')
+  assert.equal(objectsOf(dir), path.join(dir, 'parts'))
+  assert.deepEqual(messagesOf({ parts: [{ part: 'user', hash: 'old', bytes: 2 }] }), [{ role: 'user', hash: 'old', bytes: 2 }])
+  writeDefs(dir, { system: 'You are Claude Code.', tools: [] })
+  assert.equal(objectsOf(dir), path.join(dir, 'objects'))
+  assert.ok(existsSync(path.join(dir, 'objects', 'old.json')))
+  assert.ok(!existsSync(path.join(dir, 'parts')))
 })
 
 test('params are what a request asked for, without its content, model or who asked', () => {
@@ -94,12 +107,12 @@ test('params are what a request asked for, without its content, model or who ask
 
 test('received is logged as a change from the line before and read back whole', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'log-'))
-  const parts = (...hs: string[]) => hs.map((hash) => ({ part: 'user', hash, bytes: 1 }))
+  const messages = (...hs: string[]) => hs.map((hash) => ({ role: 'user', hash, bytes: 1 }))
   const lines = [
-    withReceivedDelta(dir, { event: 'request', parts: parts('a', 'b') }),
+    withReceivedDelta(dir, { event: 'request', messages: messages('a', 'b') }),
     { event: 'compaction' },
-    withReceivedDelta(dir, { event: 'request', parts: parts('a', 'x'), received: ['a', 'b', 'c'] }),
-    withReceivedDelta(dir, { event: 'request', parts: parts('a', 'y'), received: ['a', 'b', 'd', 'e'] }),
+    withReceivedDelta(dir, { event: 'request', messages: messages('a', 'x'), received: ['a', 'b', 'c'] }),
+    withReceivedDelta(dir, { event: 'request', messages: messages('a', 'y'), received: ['a', 'b', 'd', 'e'] }),
   ]
   assert.deepEqual(lines[2].received, { keep: 2, add: ['c'] })
   assert.deepEqual(lines[3].received, { keep: 2, add: ['d', 'e'] })

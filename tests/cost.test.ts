@@ -6,7 +6,7 @@ import { render, type Stats } from '../src/stats.ts'
 
 const HOUR = 3600e3
 const at = (minute: number, inputTokens: number, removedTokens: number, model = 'claude-opus-5-5') =>
-  ({ time: new Date(Date.UTC(2026, 9, 14, 10, minute)).toISOString(), inputTokens, removedTokens, model, parts: [] }) as unknown as Stats
+  ({ time: new Date(Date.UTC(2026, 9, 14, 10, minute)).toISOString(), inputTokens, removedTokens, model, messages: [] }) as unknown as Stats
 const usage = (uncached: number, reads: number, writes: number, output = 0): Usage => ({ input_tokens: uncached, cache_read_input_tokens: reads, cache_creation_input_tokens: writes, cache_creation: { ephemeral_1h_input_tokens: writes }, output_tokens: output })
 
 test('cold, both read only the shared prefix and write the rest', () => {
@@ -78,7 +78,7 @@ test('adding a request at a time gives the same cost as the whole journal', () =
 test("past the compaction's limit the client compacts, keeping the base and some of the rest", () => {
   // A 10k base, 6k of it tools of which the proxy deferred a third more.
   const big = (minute: number, inputTokens: number, removedTokens: number) =>
-    ({ ...at(minute, inputTokens, removedTokens), tokens: { d: 10_000 }, parts: [], defs: { key: 'd', systemPrompt: 400, tools: 600, deferred: 200 } }) as unknown as Stats
+    ({ ...at(minute, inputTokens, removedTokens), tokens: { d: 10_000 }, messages: [], defs: { key: 'd', systemPrompt: 400, tools: 600, deferred: 200 } }) as unknown as Stats
   const lines = [
     { stats: big(0, 100_000, 0), usage: usage(0, 0, 100_000) },
     // 172k w/o the proxy: a 12k base and a 160k rest. It compacts after.
@@ -101,7 +101,7 @@ test("past the compaction's limit the client compacts, keeping the base and some
 
 // A 10K base and a 2K prompt, the rest a tool result.
 const luna = (minute: number, inputTokens: number, removedTokens: number, compacted?: true) =>
-  ({ ...at(minute, inputTokens, removedTokens, 'gpt-6-luna'), ...(compacted && { compacted }), tokens: { d: 10_000, p: 2000, r: inputTokens - 12_000 }, parts: [{ key: 'p', kinds: { user: 1 } }, { key: 'r', kinds: { toolResults: 1 } }], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
+  ({ ...at(minute, inputTokens, removedTokens, 'gpt-6-luna'), ...(compacted && { compacted }), tokens: { d: 10_000, p: 2000, r: inputTokens - 12_000 }, messages: [{ key: 'p', kinds: { user: 1 } }, { key: 'r', kinds: { toolResults: 1 } }], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
 
 test("Codex's compaction keeps the base, the user's messages and its summary", () => {
   const lines = [
@@ -139,21 +139,21 @@ test("where the client compacts with the proxy, the prompt without it compacts t
 })
 
 test('render shows the cost in the summary and the tokens in the details', () => {
-  const s = { ...at(2, 13_000, 9000), first: at(0, 0, 0).time, requests: 3, turns: 2, tokens: {}, bound: {}, answers: {}, seen: {}, parts: [], defs: { key: 'd', systemPrompt: 1, tools: 1 }, ends: { tools: 0, reasoning: 0 } } as Stats
+  const s = { ...at(2, 13_000, 9000), first: at(0, 0, 0).time, requests: 3, turns: 2, tokens: {}, bound: {}, answers: {}, seen: {}, messages: [], defs: { key: 'd', systemPrompt: 1, tools: 1 }, ends: { tools: 0, reasoning: 0 } } as Stats
   const c = cost([{ stats: at(0, 12_000, 9000), usage: usage(0, 0, 12_000) }, { stats: at(2, 13_000, 9000), usage: usage(0, 12_000, 1000) }], HOUR)
   const out = render(s, 'session', false, c)
   assert.match(out, /\n\nShaver Summary\n  Costs \(session\)\n    \$0\.18 if no shaver \(estimated, if auto-compacted\)\n    \$0\.11 actual\n    \$0\.07 saved \(41%\)\n\n  Savings Breakdown\n    \$0\.07 \(41%\) conv:other\n\n  Speedup\n    0 minutes saved \(by avoiding 0 \/autocompact\)\n\nContext Details\n\n  13,000 tokens, actual\n  22,000 tokens, if no shaver\n\n  0 summary creation requests\n\n  Base/)
 })
 
 test('render splits the saving by type of trim', () => {
-  const s = { ...at(2, 13_000, 9000), first: at(0, 0, 0).time, requests: 3, turns: 2, tokens: {}, bound: {}, answers: {}, seen: {}, parts: [], defs: { key: 'd', systemPrompt: 1, tools: 1 }, ends: { tools: 0, reasoning: 0 } } as Stats
+  const s = { ...at(2, 13_000, 9000), first: at(0, 0, 0).time, requests: 3, turns: 2, tokens: {}, bound: {}, answers: {}, seen: {}, messages: [], defs: { key: 'd', systemPrompt: 1, tools: 1 }, ends: { tools: 0, reasoning: 0 } } as Stats
   const out = render(s, 'session', false, { without: 1, actual: 0.4, saved: { 'tools-shaved': 0.1, 'skills-shaved': 0.05, tools: 0.3, reasoning: 0.15, messages: 0.001 }, compactions: 0, waitMs: 0 })
   assert.match(out, /\$0\.60 saved \(60%\)\n\n  Savings Breakdown\n    \$0\.10 \(10%\) base:tools-shaved <best case>\n    \$0\.05 \( 5%\) base:skills-shaved <best case>\n    \$0\.30 \(30%\) conv:tools\n    \$0\.15 \(15%\) conv:reasoning\n    \$0\.00 \( 0%\) conv:messages\n\n  Speedup\n/)
 })
 
 test('a trim is charged its rewrite, and later savings are shared by what each type took out', () => {
   const part = (key: string, kinds: Record<string, number>, counted?: Record<string, number>) => ({ key, kinds, ...(counted && { counted }) })
-  const stats = (minute: number, inputTokens: number, removedTokens: number, parts: Stats['parts'], tokens: Record<string, number>) => ({ ...at(minute, inputTokens, removedTokens), parts, tokens }) as Stats
+  const stats = (minute: number, inputTokens: number, removedTokens: number, messages: Stats['messages'], tokens: Record<string, number>) => ({ ...at(minute, inputTokens, removedTokens), messages, tokens }) as Stats
   // A prompt, a tool result of 6k, a reply of 4k, 3k of it reasoning by the
   // API's count though its bytes are mostly the call, and the next prompt.
   const [prompt, next] = [part('p', { user: 1 }), part('n', { user: 1 })]
@@ -199,7 +199,7 @@ test('a base shave is saved at the price the estimate paid for it', () => {
 
 test("a summary's saving is the turns it replaced net of carrying it", () => {
   const part = (key: string, kinds: Record<string, number>) => ({ key, kinds })
-  const stats = (minute: number, inputTokens: number, removedTokens: number, parts: Stats['parts'], tokens: Record<string, number>, covers?: string[]) => ({ ...at(minute, inputTokens, removedTokens), parts, tokens, ...(covers && { covers }) }) as Stats
+  const stats = (minute: number, inputTokens: number, removedTokens: number, messages: Stats['messages'], tokens: Record<string, number>, covers?: string[]) => ({ ...at(minute, inputTokens, removedTokens), messages, tokens, ...(covers && { covers }) }) as Stats
   const [p, n, u] = [part('p', { user: 1 }), part('n', { user: 1 }), part('u', { user: 1 })]
   const [r, a, r2] = [part('r', { toolResults: 1 }), part('a', { assistant: 1 }), part('r2', { toolResultsStubbed: 1 })]
   const summary = part('s', { summary: 1 })
@@ -230,7 +230,7 @@ test("a summary's saving is the turns it replaced net of carrying it", () => {
 
 test('what was taken out before a compaction weighs what it keeps against what is taken out after', () => {
   const part = (key: string, kinds: Record<string, number>) => ({ key, kinds })
-  const stats = (minute: number, inputTokens: number, removedTokens: number, parts: Stats['parts'], tokens: Record<string, number>) => ({ ...at(minute, inputTokens, removedTokens), parts, tokens }) as Stats
+  const stats = (minute: number, inputTokens: number, removedTokens: number, messages: Stats['messages'], tokens: Record<string, number>) => ({ ...at(minute, inputTokens, removedTokens), messages, tokens }) as Stats
   const [p, n, u, w, x] = [part('p', { user: 1 }), part('n', { user: 1 }), part('u', { user: 1 }), part('w', { user: 1 }), part('x', { user: 1 })]
   const r = part('r', { toolResults: 1 })
   const r2 = part('r2', { toolResultsStubbed: 1 })
@@ -256,7 +256,7 @@ test('what was taken out before a compaction weighs what it keeps against what i
 
 test("the client compacts where the request's harness said, or not at all", () => {
   const big = (minute: number, inputTokens: number, removedTokens: number, compactAt?: number | null) =>
-    ({ ...at(minute, inputTokens, removedTokens), compactAt, tokens: { d: 10_000 }, parts: [], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
+    ({ ...at(minute, inputTokens, removedTokens), compactAt, tokens: { d: 10_000 }, messages: [], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
   // 170k without the proxy: past models.ts's 165K, short of a 967K window's point.
   const run = (compactAt?: number | null) =>
     cost([{ stats: big(0, 100_000, 0, compactAt), usage: usage(0, 0, 100_000) }, { stats: big(1, 70_000, 100_000, compactAt), usage: usage(0, 10_000, 60_000) }], HOUR)!.compactions

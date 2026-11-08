@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendFileSync, existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -121,12 +121,22 @@ test('replaying the journal keeps the pinned provider', () => {
   assert.equal(latest(file)?.provider, 'deepinfra')
 })
 
-test('a line keeps runs of unchanged parts as ranges', () => {
+test('a line keeps runs of unchanged messages as ranges', () => {
   const s1 = observe(undefined, describe(body([user('a'), reply('b'), user('c')]), ends, '2026-10-11T10:00:00Z'), 900, 0)
   const s2 = observe(s1, describe(body([user('a'), reply('b'), user('c'), reply('d'), user('e')]), ends, '2026-10-11T10:01:00Z'), 1000, 0)
   const d = diff(s1, s2)
-  assert.deepEqual(d.parts?.[0], [0, 3])
-  assert.equal(d.parts?.length, 3)
+  assert.deepEqual(d.messages?.[0], [0, 3])
+  assert.equal(d.messages?.length, 3)
+})
+
+// BACKCOMPAT: journals before 2026-11-07 call `messages` `parts`.
+test('a journal from before the rename is read as one after it', () => {
+  const s1 = observe(undefined, describe(body([user('a'), reply('b'), user('c')]), ends, '2026-10-11T10:00:00Z'), 900, 0)
+  const s2 = observe(s1, describe(body([user('a'), reply('b'), user('c'), reply('d'), user('e')]), ends, '2026-10-11T10:01:00Z'), 1000, 0)
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'journal-')), 'journal.jsonl')
+  const old = (d: Record<string, unknown>) => JSON.stringify(Object.fromEntries(Object.entries(d).map(([k, v]) => [k === 'messages' ? 'parts' : k, v])))
+  writeFileSync(file, old(diff(undefined, s1)) + '\n' + old(diff(s1, s2)) + '\n')
+  assert.deepEqual([...replay(file)].at(-1)!.messages, s2.messages)
 })
 
 test('there is no history without a journal', () => {

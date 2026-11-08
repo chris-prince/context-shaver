@@ -31,10 +31,10 @@ import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { modelOf } from '../src/models.ts'
+import { messagesOf } from '../src/log.ts'
 
 type Counts = { input_tokens: number; cached_tokens: number; cache_write_tokens: number; output_tokens: number }
-type Part = { part: string; hash: string; ids?: string[] }
-type Line = { event: string; time: string; model?: string; inputTokens?: number; cachedTokens?: number; predictedCachedChars?: number; headIds?: string[]; parts?: (Part & { bytes: number })[]; system?: { hash: string }[]; tools?: { hash: string }[]; attribution?: { items: Record<string, Counts> } }
+type Line = { event: string; time: string; model?: string; inputTokens?: number; cachedTokens?: number; predictedCachedChars?: number; headIds?: string[]; system?: { hash: string }[]; tools?: { hash: string }[]; attribution?: { items: Record<string, Counts> } }
 
 // What a model reads and writes at, as a fraction of its input price, and its TTL in ms.
 const cache = (name = '') => {
@@ -76,10 +76,10 @@ for (const dir of dirs) {
     if (l.event === 'compaction') trimmed = true
     if (!named.includes(l)) continue
     const items = l.attribution!.items
-    const parts = l.parts ?? []
+    const messages = messagesOf(l) ?? []
     // The input in order, each item keyed by its ID and, for a message's, the
     // message's hash, so a trimmed message no longer matches.
-    const order = [...l.headIds!.map((id) => ({ id, key: id, label: id.startsWith('at_') ? 'tools' : 'head' })), ...parts.flatMap((p, i) => (p.ids ?? []).map((id) => ({ id, key: `${id}:${p.hash}`, label: `part ${i + 1} ${p.part}` })))]
+    const order = [...l.headIds!.map((id) => ({ id, key: id, label: id.startsWith('at_') ? 'tools' : 'head' })), ...messages.flatMap((p, i) => (p.ids ?? []).map((id) => ({ id, key: `${id}:${p.hash}`, label: `message ${i + 1} ${p.role}` })))]
     const tokens = (k: number) => items[order[k].id]?.input_tokens ?? 0
     const head = [...l.headIds!, ...(l.system ?? []).map((s) => s.hash), ...(l.tools ?? []).map((t) => t.hash)].join()
     const time = Date.parse(l.time)
@@ -126,10 +126,10 @@ for (const dir of dirs) {
       trimSaved += saved * later(l) * READ
     }
     const at = stop < 0 ? 'the end' : `${order[stop].label} (${items[order[stop].id].cached_tokens}/${items[order[stop].id].input_tokens})`
-    // The proxy predicts message characters only, never the base's: the part
-    // its prediction ends in.
+    // The proxy predicts message characters only, never the base's: the
+    // message its prediction ends in.
     let left = l.predictedCachedChars ?? 0
-    const predicted = left ? `part ${parts.findIndex((p) => (left -= p.bytes) < 0) + 1 || parts.length}` : 'base'
+    const predicted = left ? `message ${messages.findIndex((p) => (left -= p.bytes) < 0) + 1 || messages.length}` : 'base'
     const gap = prev ? `${Math.round((time - prev.time) / 1000)}s` : ''
     const keep = () => {
       prev = { time, head, keys: order.map((o) => o.key), ids: Object.fromEntries(order.map((o) => [o.id, tokens(order.indexOf(o))])) }

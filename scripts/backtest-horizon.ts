@@ -19,7 +19,7 @@ import { harnessOf, NO_CONVENTIONS, type Harness } from '../src/harness.ts'
 import { modelOf, type Model } from '../src/models.ts'
 import { loadPolicy } from '../src/policy.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
-import { kinds, receivedOf } from '../src/log.ts'
+import { kinds, messagesOf, objectsOf, receivedOf } from '../src/log.ts'
 import { anchored, apply, transitions, decide, fullyTrimmed, K, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
 
 const args = process.argv.slice(2)
@@ -82,10 +82,11 @@ function rebuild(dir: string): Conv {
   const lines = readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   const requests = lines.filter((e) => e.event === 'request')
   const got = receivedOf(lines)
-  const kept = requests.flatMap((e, n) => (e.parts?.length && e.tools !== undefined ? [n] : []))
+  const kept = requests.flatMap((e, n) => (messagesOf(e)?.length && e.tools !== undefined ? [n] : []))
   const all = kept.map((n) => requests[n])
-  const load = (h: string): ApiMsg => JSON.parse(readFileSync(path.join(dir, 'parts', h + '.json'), 'utf8'))
-  const sent = all.map((e) => e.parts.map((p: { hash: string }) => load(p.hash)) as ApiMsg[])
+  const objects = objectsOf(dir)
+  const load = (h: string): ApiMsg => JSON.parse(readFileSync(path.join(objects, h + '.json'), 'utf8'))
+  const sent = all.map((e) => messagesOf(e).map((p) => load(p.hash)) as ApiMsg[])
   const recv = kept.map((n, i) => (requests[n].received ? got[n].map(load) : sent[i]))
   const orig: ApiMsg[][] = []
   let broken = 0

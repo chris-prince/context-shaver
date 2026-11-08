@@ -757,7 +757,7 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     the start with the previous request line's, and the ones after those.
     The first line after a restart has no previous one and lists them all.
     `id` is the request's internal ID, and `turns` the ID of each prompt in
-    the messages as the client sent them (`received`, or `parts` when nothing
+    the messages as the client sent them (`received`, or `messages` when nothing
     changed), oldest first: the last is the request's turn, a summary line's
     `current` (not the clock's `turns`, the completed ones). Fork lines have
     their `id` too. `headers` is the harness's
@@ -800,8 +800,13 @@ With `--log-step-events` (which `bin/run-proxy --log` passes), logs go to
     and the turn it ends before, how many records go from it on, and that
     turn's prompt hash as stored and as `found` now (null when the
     conversation has fewer turns).
-- `parts/`, where each distinct message is saved once, together with its bytes
-  split by kind. A trimmed message shares a lineage with the original.
+- `objects/`, where each distinct message, system block and tool definition
+  is saved once, named by the hash of its JSON, with each message's bytes
+  split by kind beside it. A trimmed message shares a lineage with the
+  original. Before 2026-11-07 the folder was `parts/`, and a request line's
+  `messages` were `parts`, each with its role as `part`; the scripts read
+  both, and the proxy renames a conversation's `parts/` the next time it logs
+  one of its requests.
 - `forks/`, the bodies of the summary forks that gave no record.
 
 Whether logging is on or not, `proxy-data/proxy.log` gets a line for each
@@ -988,7 +993,7 @@ Scripts:
   it, and prices the result with the cache model. WAIT, the drop wait the run
   used, also checks that the rebuild reproduces what the proxy sent.
 
-Each request line logs the size of every part sent: its messages (`parts`),
+Each request line logs the size of everything sent: its messages (`messages`),
 system blocks (`system`) and tool definitions (`tools`, deferred ones marked).
 The scripts turn bytes into tokens at the conversation's rate, its requests'
 tokens over all the bytes they sent, and read only conversations logged with

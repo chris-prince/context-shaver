@@ -15,6 +15,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { blocks, isPrompt, isSkillBody, READ, type ApiMsg } from '../src/items.ts'
+import { messagesOf, objectsOf } from '../src/log.ts'
 
 const { values } = parseArgs({ options: { since: { type: 'string' }, all: { type: 'boolean' } } })
 const since = values.since ? Date.parse(values.since) : 0
@@ -37,14 +38,14 @@ function load(): Conversation[] {
       if (!line) continue
       const e = JSON.parse(line)
       if (e.event !== 'request' || Date.parse(e.time) < since) continue
-      const parts: Array<{ hash: string }> = e.parts ?? []
-      const lastFile = parts.length ? path.join(dir, 'parts', parts[parts.length - 1].hash + '.json') : ''
+      const sent = messagesOf(e) ?? []
+      const lastFile = sent.length ? path.join(objectsOf(dir), sent[sent.length - 1].hash + '.json') : ''
       // Lines from before the proxy logged protocols are all Messages.
-      requests.push({ time: e.time, protocol: e.protocol ?? 'messages', breakpoints: e.breakpoints, count: parts.length, last: lastFile && existsSync(lastFile) ? JSON.parse(readFileSync(lastFile, 'utf8')) : undefined })
-      for (const { hash } of e.parts ?? []) {
+      requests.push({ time: e.time, protocol: e.protocol ?? 'messages', breakpoints: e.breakpoints, count: sent.length, last: lastFile && existsSync(lastFile) ? JSON.parse(readFileSync(lastFile, 'utf8')) : undefined })
+      for (const { hash } of sent) {
         if (seen.has(hash)) continue
         seen.add(hash)
-        const file = path.join(dir, 'parts', hash + '.json')
+        const file = path.join(objectsOf(dir), hash + '.json')
         if (existsSync(file)) messages.push({ msg: JSON.parse(readFileSync(file, 'utf8')), time: e.time })
       }
     }

@@ -9,7 +9,7 @@ import { describe, observe, splitShaved, tokensOf, type Sent, type Stats } from 
 
 // One conversation sent twice, with the tool and skill policies changed as it
 // goes and never shaved, against an API whose tokens are a third of the bytes
-// and whose cache reads the parts a request shares, from the start, with the
+// and whose cache reads the messages a request shares, from the start, with the
 // one before. Each request is sent as server.ts sends it: shaved, with what
 // the shaves took out and the rules they took it out by.
 
@@ -48,9 +48,9 @@ const sentOf = (b: ReturnType<typeof bodyAt>, time: string): Sent => {
   d.defs.shaves = { tools: hash(JSON.stringify(b.p.tools)), skills: hash(JSON.stringify(b.p.skills)) }
   return d
 }
-const sizes = (d: Sent) => [[d.defs.key, d.defs.systemPrompt + d.defs.tools], ...d.parts.map((p) => [p.key, p.bytes])] as Array<[string, number]>
+const sizes = (d: Sent) => [[d.defs.key, d.defs.systemPrompt + d.defs.tools], ...d.messages.map((p) => [p.key, p.bytes])] as Array<[string, number]>
 const truth = (d: Sent) => sizes(d).reduce((n, [, b]) => n + tokens(b), 0)
-// What the cache reads: the parts shared from the start with the request before.
+// What the cache reads: the messages shared from the start with the request before.
 function usageOf(prev: Sent | undefined, d: Sent): Usage {
   const was = prev ? sizes(prev) : []
   const now = sizes(d)

@@ -1,15 +1,16 @@
 // `shaver info` from the conversation's journal alone, with no logs. After each
-// answered request the proxy counts its parts' tokens (observe) as
+// answered request the proxy counts its messages' tokens (observe) as
 // scripts/defs.py's part_tokens does from the logs, and keeps only what the
-// next request and the stats need: the latest request's parts, and their
+// next request and the stats need: the latest request's messages, and their
 // counts. render prints them in three sections: the base, the conversation
 // before the frontier, and the frontier.
 //
-// Taken in order, a request's reported count less what its parts already
-// counted is what its new parts cost together. A new reply costs the output
-// count of the request that answered with it; the other new parts share what
-// is left by bytes. A part is a message (as JSON without breakpoints), or the
-// system blocks and tools sent in full together. A tool a tool search loads
+// Taken in order, a request's reported count less what its messages and defs
+// already counted is what its new ones cost together. A new reply costs the
+// output count of the request that answered with it; the other new ones share
+// what is left by bytes. Each is counted under its key: a message's (as JSON
+// without breakpoints, keyOf), or the defs', the system blocks and tools sent
+// in full together. A tool a tool search loads
 // counts with the message that loads it, since the API expands each reference
 // into the tool's definition whether or not the tool is deferred. A trim that changes an earlier message unbinds the
 // thinking of the replies after it, so those are counted again, at their bytes
@@ -31,7 +32,7 @@ export type Sent = {
   provider?: string
   // The prompts among its messages (items.ts, isPrompt).
   turns: number
-  parts: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number; born?: string }>
+  messages: Array<{ key: string; bytes: number; kinds: Record<string, number>; lineage?: string; role: string; thinking: number; born?: string }>
   // `sections` is the system prompt's bytes by section, when the protocol's
   // conventions cut it (Conventions.promptHeadings); `deferred` is the bytes of
   // the tool definitions the proxy deferred (defer.ts) and `skills` those it
@@ -62,7 +63,7 @@ export type Sent = {
   // (harness.ts, resends). What it keeps, the base, the user's messages and a
   // summary, is nothing the policy trims, so all the trims took out is gone.
   compacted?: boolean
-  // The keys of the parts the request before sent that the records it adds
+  // The keys of the messages the request before sent that the records it adds
   // replace (summary.ts, coveredBy); none before 2026-10-27.
   covers?: string[]
   // The first lines of the notes after the preamble under no heading
@@ -95,25 +96,26 @@ export type Stats = {
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
-  // Each part's latest count, by key.
+  // Each message's latest count, and the defs', by key.
   tokens: Record<string, number>
   // Counted replies' thinking, in bytes, which a trim before them unbinds.
   bound: Record<string, number>
   // The output count of each answered request, by its last message's key,
   // until the reply it answered with shows up.
   answers: Record<string, number>
-  // When each part, and each lineage, first appeared.
+  // When each message, and each lineage, first appeared.
   seen: Record<string, string>
-  // Each part's bytes by kind, and its tokens by kind where the API counted
-  // them (protocol.ts, Counted).
-  parts: Array<{ key: string; kinds: Record<string, number>; counted?: Record<string, number>; lineage?: string }>
+  // Each message's bytes by kind, and its tokens by kind where the API counted
+  // them (protocol.ts, Counted). Journals before 2026-11-07 call it `parts`
+  // (journal.ts).
+  messages: Array<{ key: string; kinds: Record<string, number>; counted?: Record<string, number>; lineage?: string }>
   defs: Sent['defs']
   ends: Sent['ends']
 }
 
 // A message as JSON without breakpoints. Claude Code sends a lone text block
 // carrying one as an array, and as a string once the breakpoint moves on, so
-// that becomes the string. A part's key.
+// that becomes the string. A message's key.
 export function keyOf(m: ApiMsg): string {
   let c: unknown = m.content
   if (Array.isArray(c)) {
@@ -153,7 +155,7 @@ export function describe(body: { model: string; provider?: string; messages: Api
   const responded = preambleEnd(msgs)
   const tools = body.tools ?? []
   const size = new Map(tools.map((t) => [t.name, JSON.stringify(t).length]))
-  const parts = msgs.map((m, i) => {
+  const messages = msgs.map((m, i) => {
     const json = JSON.stringify(m)
     const k = kindsOf(json, m, responded < 0 || i < responded)
     const thinking = m.role === 'assistant' ? blocks(m).filter((b) => b.type === 'thinking') : []
@@ -178,7 +180,7 @@ export function describe(body: { model: string; provider?: string; messages: Api
     model: body.model,
     ...(body.provider && { provider: body.provider }),
     turns: msgs.filter(isPrompt).length,
-    parts,
+    messages,
     defs: { key: 'defs:' + hash([...sys, '', ...full].map(hash).join()), systemPrompt: sys.reduce((n, s) => n + s.length, 0), tools: full.reduce((n, s) => n + s.length, 0), ...(always && { toolsAlways: inFull.reduce((n, t, i) => n + (alwaysLoaded(t, always) ? full[i].length : 0), 0) }), ...(Object.keys(sections).length && { sections }) },
     ends,
     advanced,
@@ -187,15 +189,15 @@ export function describe(body: { model: string; provider?: string; messages: Api
 }
 
 // The tokens `variant` holds, a base like `base` with its tools or skill list
-// changed (server.ts, optimize), from the journal's counts: a part as `s`
-// counted it takes that count, and one changed from `base`'s the count of the
-// part it replaces, at its bytes' share. Undefined if `s` lacks a count of
-// one of `base`'s parts.
+// changed (server.ts, optimize), from the journal's counts: a message or defs
+// as `s` counted them take that count, and one changed from `base`'s the count
+// of the one it replaces, at its bytes' share. Undefined if `s` lacks a count
+// of `base`'s defs or one of its messages.
 export function tokensOf(s: Stats, base: Sent, variant: Sent): number | undefined {
-  if ([base.defs.key, ...base.parts.map((p) => p.key)].some((k) => s.tokens[k] === undefined)) return undefined
+  if ([base.defs.key, ...base.messages.map((p) => p.key)].some((k) => s.tokens[k] === undefined)) return undefined
   const counted = (key: string, bytes: number, was: string, wasBytes: number) => s.tokens[key] ?? (s.tokens[was] * bytes) / wasBytes
   const size = (d: Sent['defs']) => d.systemPrompt + d.tools
-  return counted(variant.defs.key, size(variant.defs), base.defs.key, size(base.defs)) + variant.parts.reduce((n, p, i) => n + counted(p.key, p.bytes, base.parts[i].key, base.parts[i].bytes), 0)
+  return counted(variant.defs.key, size(variant.defs), base.defs.key, size(base.defs)) + variant.messages.reduce((n, p, i) => n + counted(p.key, p.bytes, base.messages[i].key, base.messages[i].bytes), 0)
 }
 
 // How Claude Code's side requests that copy the conversation open the ask they
@@ -245,7 +247,7 @@ export function withoutSideRequest(msgs: ApiMsg[], side?: boolean): ApiMsg[] {
 }
 
 // Moves the bytes of the skills the proxy shortened (skills.ts) from the
-// skill list's section to `skills-shaved`: in the preamble part holding it,
+// skill list's section to `skills-shaved`: in the preamble message holding it,
 // as Claude Code's always is and Codex's after a compaction, else in the
 // system's sections, as Codex's is before one. Claude Code's system has a
 // `skills` section of its own, its instructions for them, not the list.
@@ -255,12 +257,12 @@ export function splitShaved(r: Sent, bytes: number): void {
     from[k] -= n
     from[to] = (from[to] ?? 0) + n
   }
-  const p = r.parts.find((p) => p.kinds['system:skills'])
+  const p = r.messages.find((p) => p.kinds['system:skills'])
   if (p) move(p.kinds, 'system:skills', 'system:skills-shaved')
   else if (r.defs.sections?.skills) move(r.defs.sections, 'skills', 'skills-shaved')
 }
 
-// A part's counted tokens split as its bytes are: the API's counts by kind
+// A message's counted tokens split as its bytes are: the API's counts by kind
 // come from the message again (responses.ts), so know nothing of
 // splitShaved's.
 function splitCounted(kinds: Record<string, number>, counted: Record<string, number>): Record<string, number> {
@@ -271,23 +273,23 @@ function splitCounted(kinds: Record<string, number>, counted: Record<string, num
 }
 
 // The stats once a request is answered with these counts. Where the API
-// counted parts itself (protocol.ts, Counted), they take its counts, and only
+// counted messages itself (protocol.ts, Counted), they take its counts, and only
 // the rest are estimated, from what is left.
-export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number, apiCounts?: { defs?: number; parts: Array<number | undefined>; kinds?: Array<Record<string, number> | undefined> }): Stats {
+export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number, apiCounts?: { defs?: number; messages: Array<number | undefined>; kinds?: Array<Record<string, number> | undefined> }): Stats {
   const known = { ...prev?.tokens }
   const bound = { ...prev?.bound }
   const answers = { ...prev?.answers }
-  const keys = r.parts.map((p) => p.key)
+  const keys = r.messages.map((p) => p.key)
   const sizes: Record<string, number> = {}
   const count: Record<string, number> = {}
-  for (const p of r.parts) {
+  for (const p of r.messages) {
     sizes[p.key] = p.bytes
     count[p.key] = (count[p.key] ?? 0) + 1
   }
   sizes[r.defs.key] = r.defs.systemPrompt + r.defs.tools
   const exact = new Map<string, number>()
   if (apiCounts?.defs !== undefined) exact.set(r.defs.key, apiCounts.defs)
-  apiCounts?.parts.forEach((n, i) => n !== undefined && exact.set(keys[i], n))
+  apiCounts?.messages.forEach((n, i) => n !== undefined && exact.set(keys[i], n))
   for (const [k, n] of exact) {
     known[k] = n
     delete bound[k]
@@ -303,7 +305,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
       }
   const replies: string[] = []
   let left = inputTokens - Object.keys(sizes).filter((k) => !isNew.has(k)).reduce((n, k) => n + known[k] * (count[k] ?? 1), 0)
-  r.parts.forEach((p, i) => {
+  r.messages.forEach((p, i) => {
     if (exact.has(p.key) && p.role === 'assistant' && i) delete answers[keys[i - 1]]
     // A reply first sent with its thinking trimmed off costs less than its
     // output, which counted the thinking.
@@ -318,7 +320,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     replies.push(p.key)
   })
   // An output count can be a few tens of tokens over the reply's input cost;
-  // the replies give back what would leave the other new parts below zero.
+  // the replies give back what would leave the other new ones below zero.
   const counted = replies.reduce((n, k) => n + known[k] * count[k], 0)
   if (left < 0 && counted) {
     for (const k of replies) known[k] *= Math.max(0, counted + left) / counted
@@ -328,17 +330,17 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   for (const k of isNew) known[k] = (left * sizes[k]) / rest
   if (outputTokens) answers[keys[keys.length - 1]] = outputTokens
 
-  // An advance takes out what the previous request's parts cost less what
-  // they cost now: the parts through the last one it also sent, counting
+  // An advance takes out what the previous request's messages cost less what
+  // they cost now: the messages through the last one it also sent, counting
   // repeats, since Claude Code sends the same reminder again. What follows
-  // that is the turn's new parts. A suggestion's last message, which nothing
-  // sends again, is no part of it. A compaction leaves nothing taken out.
+  // that is the turn's new messages. A suggestion's last message, which
+  // nothing sends again, is left out. A compaction leaves nothing taken out.
   let removedTokens = r.compacted ? 0 : prev?.removedTokens ?? 0
-  const was = prev?.suggestion ? prev.parts.slice(0, -1) : prev?.parts ?? []
-  if (prev && r.advanced && !r.compacted) removedTokens += was.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - r.parts.slice(0, keptOf(was, r.parts)).reduce((n, p) => n + known[p.key], 0)
+  const was = prev?.suggestion ? prev.messages.slice(0, -1) : prev?.messages ?? []
+  if (prev && r.advanced && !r.compacted) removedTokens += was.reduce((n, p) => n + (prev.tokens[p.key] ?? 0), 0) - r.messages.slice(0, keptOf(was, r.messages)).reduce((n, p) => n + known[p.key], 0)
 
   const seen = { ...prev?.seen }
-  for (const p of r.parts) {
+  for (const p of r.messages) {
     seen[p.key] ??= p.born ?? r.time
     if (p.lineage) seen['lineage:' + p.lineage] ??= r.time
   }
@@ -364,7 +366,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     bound,
     answers,
     seen,
-    parts: r.parts.map((p, i) => ({ key: p.key, kinds: p.kinds, ...(apiCounts?.kinds?.[i] && { counted: rounded(splitCounted(p.kinds, apiCounts.kinds[i])) }), ...(p.lineage ? { lineage: p.lineage } : {}) })),
+    messages: r.messages.map((p, i) => ({ key: p.key, kinds: p.kinds, ...(apiCounts?.kinds?.[i] && { counted: rounded(splitCounted(p.kinds, apiCounts.kinds[i])) }), ...(p.lineage ? { lineage: p.lineage } : {}) })),
     defs: r.defs,
     ends: r.ends,
   }
@@ -372,22 +374,22 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
 
 const rounded = (r: Record<string, number>) => Object.fromEntries(Object.entries(r).map(([k, n]) => [k, Math.round(n)]))
 
-// How many of a request's parts it kept from the request before: those
-// through the last part it also sent, counting repeats, since Claude Code
+// How many of a request's messages it kept from the request before: those
+// through the last one it also sent, counting repeats, since Claude Code
 // sends the same reminder again.
-function keptOf(prev: ReadonlyArray<{ key: string }>, parts: ReadonlyArray<{ key: string }>): number {
+function keptOf(prev: ReadonlyArray<{ key: string }>, messages: ReadonlyArray<{ key: string }>): number {
   const left: Record<string, number> = {}
   for (const p of prev) left[p.key] = (left[p.key] ?? 0) + 1
   let end = 0
-  parts.forEach((p, i) => {
+  messages.forEach((p, i) => {
     if (left[p.key]) [left[p.key], end] = [left[p.key] - 1, i + 1]
   })
   return end
 }
 
-// A part's tokens by kind: by the API's count of each kind where it counted
+// A message's tokens by kind: by the API's count of each kind where it counted
 // them, else its count split by bytes.
-function sharesOf(p: Stats['parts'][number], tokens: Record<string, number>): Array<[string, number]> {
+function sharesOf(p: Stats['messages'][number], tokens: Record<string, number>): Array<[string, number]> {
   const by = p.counted ?? p.kinds
   const total = Object.values(by).reduce((a, b) => a + b, 0)
   return Object.entries(by).map(([k, n]) => [k, total ? ((tokens[p.key] ?? 0) * n) / total : 0])
@@ -396,7 +398,7 @@ function sharesOf(p: Stats['parts'][number], tokens: Record<string, number>): Ar
 // The types of trim a saving is told by: the base's shaves (cost.ts), its
 // tools deferred or dropped and its skills trimmed, and in
 // the conversation each kind's (log.ts, kinds), with `other` for the rest.
-// The summaries' type holds the records and memoir, and the parts records
+// The summaries' type holds the records and memoir, and the messages records
 // replace (Sent.covers), so its saving is net of what carrying them costs.
 export const BASE = ['tools-shaved', 'skills-shaved']
 export const SUMMARIES = 'summary+memoir'
@@ -411,32 +413,32 @@ export function removedByType(prev: Stats, s: Stats): Record<string, number> {
   // Counted with repeats, as keptOf counts them.
   const covered: Record<string, number> = {}
   for (const k of s.covers ?? []) covered[k] = (covered[k] ?? 0) + 1
-  for (const p of prev.parts) {
+  for (const p of prev.messages) {
     const replaced = covered[p.key] > 0 && covered[p.key]--
     for (const [k, n] of sharesOf(p, prev.tokens)) add(replaced ? 'summary' : k, n)
   }
-  for (const p of s.parts.slice(0, keptOf(prev.parts, s.parts))) for (const [k, n] of sharesOf(p, s.tokens)) add(k, -n)
+  for (const p of s.messages.slice(0, keptOf(prev.messages, s.messages))) for (const [k, n] of sharesOf(p, s.tokens)) add(k, -n)
   return out
 }
 
 // The base's tokens: the system blocks and tools, and the system messages.
 export function baseOf(s: Stats): number {
   let n = s.tokens[s.defs.key] ?? 0
-  for (const p of s.parts) for (const [kind, share] of sharesOf(p, s.tokens)) if (kind === 'system' || kind.startsWith('system:')) n += share
+  for (const p of s.messages) for (const [kind, share] of sharesOf(p, s.tokens)) if (kind === 'system' || kind.startsWith('system:')) n += share
   return n
 }
 
 // The user's messages' tokens.
-export const promptsOf = (s: Stats): number => s.parts.reduce((n, p) => n + sharesOf(p, s.tokens).reduce((m, [kind, share]) => m + (kind === 'user' ? share : 0), 0), 0)
+export const promptsOf = (s: Stats): number => s.messages.reduce((n, p) => n + sharesOf(p, s.tokens).reduce((m, [kind, share]) => m + (kind === 'user' ? share : 0), 0), 0)
 
 // The kinds the frontier holds back, each with the frontier that trims it.
 const FRONTIER: Record<string, 'tools' | 'reasoning'> = { reasoning: 'reasoning', toolCalls: 'tools', toolResults: 'tools' }
 const inFrontier = (kind: string, i: number, ends: Sent['ends']) => kind in FRONTIER && i >= ends[FRONTIER[kind]]
 
-// Each part's tokens of the user's and the assistant's text: its count's share
+// Each message's tokens of the user's and the assistant's text: its count's share
 // of those two kinds, which the frontier never holds.
 export function textTokens(s: Sent, tokens: Record<string, number>): number[] {
-  return s.parts.map((p) => {
+  return s.messages.map((p) => {
     const bytes = Object.values(p.kinds).reduce((a, b) => a + b, 0)
     return bytes && ((tokens[p.key] ?? 0) * ((p.kinds.user ?? 0) + (p.kinds.assistant ?? 0))) / bytes
   })
@@ -501,7 +503,7 @@ export function promptTokens(s: Stats, msgs: readonly ApiMsg[]): number {
 // The stats before any request is answered: the request alone, its count
 // estimated from its bytes.
 export function estimate(r: Sent): Stats {
-  const bytes = r.defs.systemPrompt + r.defs.tools + r.parts.reduce((n, p) => n + p.bytes, 0)
+  const bytes = r.defs.systemPrompt + r.defs.tools + r.messages.reduce((n, p) => n + p.bytes, 0)
   return { ...observe(undefined, r, Math.round(bytes * BYTE_TOKENS), 0), requests: 0, turns: 0 }
 }
 
@@ -567,7 +569,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const ref = day(s.time)
   const byDay: Record<number, number> = {}
   let frontier = 0
-  s.parts.forEach((p, i) => {
+  s.messages.forEach((p, i) => {
     const born = (p.lineage && s.seen['lineage:' + p.lineage]) || s.seen[p.key]
     const ago = ref - day(born)
     for (const [kind, share] of sharesOf(p, s.tokens)) {

@@ -112,7 +112,7 @@ test('the replay rebuilds a logged conversation and reprices it consistently', a
     const sent = lines.filter((l) => l.event === 'request')
     assert.deepEqual(sent.map((l) => l.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
     assert.deepEqual(sent.map((l) => l.turns), [...Array(7).fill([1]), ...Array(4).fill([1, 8])])
-    const read = (h: string) => JSON.parse(readFileSync(path.join(dir, 'logs', key, 'parts', h + '.json'), 'utf8'))
+    const read = (h: string) => JSON.parse(readFileSync(path.join(dir, 'logs', key, 'objects', h + '.json'), 'utf8'))
     receivedOf(lines).forEach((hashes, n) => assert.equal(sent[n].turns.length, promptsOf(hashes.map(read)).length))
   } finally {
     child.kill()
