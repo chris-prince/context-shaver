@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { autocompactAt, toml, withoutComments, type Asked } from '../src/autocompact.ts'
 
@@ -80,16 +81,77 @@ test('Codex: 90% of the window, or a lower configured limit', () => {
   assert.equal(at('codex', cache, { model: 'other' }), undefined)
 })
 
+// opencode's model list as it saves it in its database (2.x): table kv, the
+// list's JSON in body, and its digest in the :meta row too.
+function saveCatalog(file: string, list: object, digest = 'd1', meta = true) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const db = new DatabaseSync(file)
+  db.exec('CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+  const put = db.prepare('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)')
+  put.run('models-dev:v2:catalog', JSON.stringify({ updatedAt: 1, digest, body: JSON.stringify(list) }))
+  if (meta) put.run('models-dev:v2:catalog:meta', JSON.stringify({ updatedAt: 2, digest, etag: 'e' }))
+  db.close()
+}
+const withCatalog = (list: object, files: Record<string, unknown> = {}) => {
+  const h = home(files)
+  saveCatalog(`${h}/.local/share/opencode/opencode.db`, list)
+  return h
+}
+
 test('opencode: the window less a buffer, 15% and at least 16K by default', () => {
   const up = 'https://openrouter.ai/api/v1'
-  const listed = { '.cache/opencode/models.json': { openrouter: { api: up, models: { 'a/b': { limit: { context: 1_050_000, input: 922_000 } }, 'a/small': { limit: { context: 64_000 } } } } } }
+  const list = { openrouter: { models: { 'a/b': { limit: { context: 1_050_000, input: 922_000 } }, 'a/small': { limit: { context: 64_000 } } } } }
+  const listed = withCatalog(list)
   assert.deepEqual(at('opencode', listed, { model: 'a/b', upstream: up }), { at: 783_700, source: 'models-cache', ...w(922_000) })
   assert.deepEqual(at('opencode', listed, { model: 'a/small', upstream: up }), { at: 48_000, source: 'models-cache', ...w(64_000) })
-  const config = (c: object) => ({ ...listed, '.config/opencode/opencode.jsonc': `// mine\n${JSON.stringify(c)}` })
+  const config = (c: object) => withCatalog(list, { '.config/opencode/opencode.jsonc': `// mine\n${JSON.stringify(c)}` })
   assert.deepEqual(at('opencode', config({ provider: { openrouter: { models: { 'a/b': { limit: { context: 100_000 } } } } } }), { model: 'a/b', upstream: up }), { at: 84_000, source: 'config', ...w(100_000) })
   assert.deepEqual(at('opencode', config({ compaction: { buffer: '10%' } }), { model: 'a/b', upstream: up }), { at: 829_800, source: 'models-cache+buffer', ...w(922_000) })
   assert.deepEqual(at('opencode', config({ compaction: { auto: false } }), { model: 'a/b', upstream: up }), { at: null, source: 'compaction.auto', ...w(922_000) })
   assert.equal(at('opencode', listed, { model: 'a/b', upstream: 'https://elsewhere.example' }), undefined)
+})
+
+test("opencode: its model list from its database, where it's kept since 2.x, not models.json", () => {
+  const up = 'https://openrouter.ai/api/v1'
+  const r = { model: 'a/b', upstream: up }
+  const list = (context: number) => ({ openrouter: { models: { 'a/b': { limit: { context } } } } })
+  // An old models.json alone isn't read.
+  assert.equal(at('opencode', { '.cache/opencode/models.json': list(1_000_000) }, r), undefined)
+  // The data folder moves with XDG_DATA_HOME; OPENCODE_DB names the file,
+  // relative to that folder; ":memory:" keeps none.
+  const h = home()
+  saveCatalog(`${h}/data/opencode/oc.db`, list(200_000))
+  assert.equal(at('opencode', h, { ...r, values: { XDG_DATA_HOME: `${h}/data` } }), undefined)
+  assert.deepEqual(at('opencode', h, { ...r, values: { XDG_DATA_HOME: `${h}/data`, OPENCODE_DB: 'oc.db' } }), { at: 170_000, source: 'models-cache', ...w(200_000) })
+  assert.deepEqual(at('opencode', h, { ...r, values: { OPENCODE_DB: `${h}/data/opencode/oc.db` } }), { at: 170_000, source: 'models-cache', ...w(200_000) })
+  assert.equal(at('opencode', h, { ...r, values: { XDG_DATA_HOME: `${h}/data`, OPENCODE_DB: ':memory:' } }), undefined)
+  // OPENCODE_MODELS_PATH's file is the list instead.
+  fs.writeFileSync(`${h}/models.json`, JSON.stringify(list(100_000)))
+  assert.deepEqual(at('opencode', h, { ...r, values: { XDG_DATA_HOME: `${h}/data`, OPENCODE_DB: 'oc.db', OPENCODE_MODELS_PATH: `${h}/models.json` } }), { at: 84_000, source: 'models-cache', ...w(100_000) })
+})
+
+test('opencode: its model list is read again once its digest moves', () => {
+  const r = { model: 'a/b', upstream: 'https://openrouter.ai/api/v1' }
+  const list = (context: number) => ({ openrouter: { models: { 'a/b': { limit: { context } } } } })
+  const h = home()
+  const db = `${h}/.local/share/opencode/opencode.db`
+  saveCatalog(db, list(200_000), 'd1')
+  assert.equal(at('opencode', h, r)?.window, 200_000)
+  // The same digest, as on a refresh that found nothing new: kept as read.
+  saveCatalog(db, list(300_000), 'd1')
+  assert.equal(at('opencode', h, r)?.window, 200_000)
+  saveCatalog(db, list(300_000), 'd2')
+  assert.equal(at('opencode', h, r)?.window, 300_000)
+})
+
+test("opencode: a provider not known here, by the host its listed models are served from", () => {
+  const up = 'https://api.example.com/v1'
+  const list = {
+    other: { models: { m: { api: { 'chat-completions': { base_url: 'https://other.example/v1' } }, limit: { context: 100_000 } } } },
+    mine: { models: { m: { api: { 'chat-completions': { base_url: up }, messages: { base_url: 'https://api.example.com/anthropic/v1' } }, limit: { context: 200_000 } } } },
+  }
+  assert.deepEqual(at('opencode', withCatalog(list), { model: 'm', upstream: up }), { at: 170_000, source: 'models-cache', ...w(200_000) })
+  assert.equal(at('opencode', withCatalog(list), { model: 'm', upstream: 'https://nowhere.example' }), undefined)
 })
 
 test('config formats: JSON with comments, and simple TOML', () => {
@@ -126,8 +188,8 @@ test("Codex: a profile's file layers over config.toml, and -c values win over bo
 
 test("opencode: its config folder, project config turned off, and the user's own inline config, as passed on", () => {
   const up = 'https://openrouter.ai/api/v1'
-  const listed = { openrouter: { api: up, models: { 'a/b': { limit: { context: 1_000_000 } } } } }
-  const h = home({ '.cache/opencode/models.json': listed, 'mine/opencode.json': { compaction: { buffer: 100_000 } }, 'p/.git/HEAD': '', 'p/opencode.json': { compaction: { buffer: 200_000 } } })
+  const listed = { openrouter: { models: { 'a/b': { limit: { context: 1_000_000 } } } } }
+  const h = withCatalog(listed, { 'mine/opencode.json': { compaction: { buffer: 100_000 } }, 'p/.git/HEAD': '', 'p/opencode.json': { compaction: { buffer: 200_000 } } })
   const r = { model: 'a/b', upstream: up }
   const cwd = `${h}/p`
   assert.deepEqual(at('opencode', h, { ...r, values: { cwd } }), { at: 800_000, source: 'models-cache+buffer', ...w(1_000_000) })

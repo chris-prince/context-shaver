@@ -25,10 +25,11 @@ export const LAUNCH_ID = /^[0-9a-f]{16}$/
 const VARS: Record<string, string[]> = {
   claude: ['CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'DISABLE_AUTO_COMPACT', 'DISABLE_COMPACT', 'CLAUDE_CODE_DISABLE_1M_CONTEXT', 'CLAUDE_CONFIG_DIR'],
   codex: ['CODEX_HOME'],
-  opencode: ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_CONFIG_PROJECT_DISABLE'],
+  opencode: ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'OPENCODE_DB', 'OPENCODE_MODELS_PATH', 'OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_CONFIG_PROJECT_DISABLE'],
 }
-// Paths the harness reads relative to where it was started.
-const RELATIVE = new Set(['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR'])
+// Paths the harness reads relative to where it was started. (OPENCODE_DB is
+// relative to opencode's data folder instead.)
+const RELATIVE = new Set(['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_MODELS_PATH'])
 const CODEX_KEYS = ['model_context_window', 'model_auto_compact_token_limit']
 
 type Obj = Record<string, unknown>

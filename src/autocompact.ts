@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import type { IncomingHttpHeaders } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import type { LaunchVals } from './launch-vals.ts'
 
 export type Autocompact = { at: number | null; source: string; window?: number; guessed?: true }
@@ -250,7 +251,7 @@ function codex(r: Asked): Autocompact | undefined {
 //
 // It compacts once the prompt reaches the window less a buffer: the window is
 // the smaller of the model's limit.input and limit.context (whichever is
-// set), from opencode's config, else its cached model list (models.json);
+// set), from opencode's config, else its model list (opencodeCatalog);
 // the buffer is compaction.buffer, in tokens or as "N%" of the window, else
 // 15% of the window and at least 16K once the window is 32K or more.
 // compaction.auto: false turns it off. Config documents count in turn, later
@@ -260,7 +261,8 @@ function codex(r: Asked): Autocompact | undefined {
 // then the user's own OPENCODE_CONFIG_CONTENT; the launcher passes on each of
 // those variables. Managed settings (macOS preferences, the system file) can't
 // be seen from here. The model's provider is the one whose API the request
-// goes to.
+// goes to: one of PROVIDERS, else the first in the list with a model served
+// from that host.
 const OPENCODE_SHARE = 0.15
 const OPENCODE_FLOOR = 16_000
 const PROVIDERS: Record<string, string> = { 'openrouter.ai': 'openrouter', 'api.openai.com': 'openai', 'api.anthropic.com': 'anthropic' }
@@ -269,7 +271,6 @@ function opencode(r: Asked): Autocompact | undefined {
   const launch = launchOf(r)
   const given = (k: string) => (typeof launch[k] === 'string' && launch[k] ? (launch[k] as string) : undefined)
   const config = given('OPENCODE_CONFIG_DIR') ?? path.join(given('XDG_CONFIG_HOME') ?? path.join(home(), '.config'), 'opencode')
-  const cache = path.join(given('XDG_CACHE_HOME') ?? path.join(home(), '.cache'), 'opencode', 'models.json')
   const cwd = launchDir(launch)
   const project = truthy(launch.OPENCODE_CONFIG_PROJECT_DISABLE ?? launch.OPENCODE_DISABLE_PROJECT_CONFIG) ? [] : projectFiles(cwd)
   let content: unknown
@@ -277,9 +278,10 @@ function opencode(r: Asked): Autocompact | undefined {
     content = given('OPENCODE_CONFIG_CONTENT') && JSON.parse(withoutComments(given('OPENCODE_CONFIG_CONTENT')!))
   } catch {}
   const docs = [...[...['config.json', 'opencode.json', 'opencode.jsonc'].map((f) => path.join(config, f)), given('OPENCODE_CONFIG'), ...project].map((f) => jsonc(f)), content].filter(isObj)
-  const listed = json(cache)
+  const data = path.join(given('XDG_DATA_HOME') ?? path.join(home(), '.local', 'share'), 'opencode')
+  const listed = given('OPENCODE_MODELS_PATH') ? json(given('OPENCODE_MODELS_PATH')) : opencodeCatalog(data, given('OPENCODE_DB'))
   const host = hostOf(r.upstream)
-  const provider = (host && PROVIDERS[host]) ?? (isObj(listed) ? Object.keys(listed).find((p) => isObj(listed[p]) && hostOf(String((listed[p] as Obj).api ?? '')) === host) : undefined)
+  const provider = (host && PROVIDERS[host]) ?? (host && isObj(listed) ? Object.keys(listed).find((p) => servedFrom(listed[p]).has(host)) : undefined)
   if (!provider) return
   let limit: Obj | undefined
   for (const d of docs) {
@@ -318,6 +320,57 @@ const hostOf = (url: string) => {
   } catch {
     return undefined
   }
+}
+
+// opencode's model list, which since 2.x it keeps in its database, not in
+// models.json: table kv, key models-dev:v2:catalog, saved as {updatedAt,
+// digest, body} with the list as JSON in body. (A list fetched from
+// OPENCODE_MODELS_URL is kept under a key named for the URL, not read here.)
+// The database is opencode.db in its data folder, or OPENCODE_DB, relative to
+// that folder; ":memory:" keeps none. That's a release build's name: other
+// channels' builds name it for the channel. opencode refreshes the list in the
+// background and saves its digest in the key's :meta row too, so the 11 MB
+// list is parsed again only when that digest moves from the one last read.
+const CATALOG = 'models-dev:v2:catalog'
+const catalogs = new Map<string, { digest: unknown; value: unknown }>()
+function opencodeCatalog(data: string, db: string | undefined): unknown {
+  if (db === ':memory:') return
+  const file = path.resolve(data, db ?? 'opencode.db')
+  if (!fs.existsSync(file)) return
+  try {
+    const d = new DatabaseSync(file, { readOnly: true })
+    try {
+      const row = (key: string) => d.prepare('SELECT value FROM kv WHERE key = ?').get(key)?.value
+      const meta = row(`${CATALOG}:meta`)
+      const digest = typeof meta === 'string' ? (JSON.parse(meta) as Obj).digest : undefined
+      const was = catalogs.get(file)
+      if (was && was.digest === (digest ?? was.digest)) return was.value
+      const saved = JSON.parse(String(row(CATALOG))) as Obj
+      const value = JSON.parse(String(saved.body))
+      catalogs.set(file, { digest: saved.digest, value })
+      return value
+    } finally {
+      d.close()
+    }
+  } catch {}
+}
+
+// The hosts a listed provider's models are served from: each model's api,
+// by kind of API, gives a base_url.
+const hosts = new WeakMap<Obj, Set<string>>()
+function servedFrom(p: unknown): Set<string> {
+  if (!isObj(p)) return new Set()
+  let s = hosts.get(p)
+  if (!s) {
+    s = new Set()
+    for (const m of Object.values(isObj(p.models) ? p.models : {}))
+      for (const a of Object.values(isObj(m) && isObj(m.api) ? m.api : {})) {
+        const h = isObj(a) && typeof a.base_url === 'string' ? hostOf(a.base_url) : undefined
+        if (h) s.add(h)
+      }
+    hosts.set(p, s)
+  }
+  return s
 }
 
 // The project's config files from its root (the nearest directory up with

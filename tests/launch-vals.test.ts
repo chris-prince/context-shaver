@@ -15,7 +15,7 @@ test('only the variables that bear on compaction are kept, and only those set', 
   assert.deepEqual(launchVals('codex', env, [], '/w'), { CODEX_HOME: '/x' })
   assert.deepEqual(launchVals('other', env, [], '/w'), {})
   // OpenCode reads these two relative to where it was started.
-  assert.deepEqual(launchVals('opencode', { OPENCODE_CONFIG: 'oc.jsonc', OPENCODE_CONFIG_DIR: '/d', XDG_CACHE_HOME: 'c' }, [], '/w'), { OPENCODE_CONFIG: '/w/oc.jsonc', OPENCODE_CONFIG_DIR: '/d', XDG_CACHE_HOME: 'c', cwd: '/w' })
+  assert.deepEqual(launchVals('opencode', { OPENCODE_CONFIG: 'oc.jsonc', OPENCODE_CONFIG_DIR: '/d', XDG_DATA_HOME: 'x', OPENCODE_DB: 'oc.db', OPENCODE_MODELS_PATH: 'm.json', XDG_CACHE_HOME: 'c' }, [], '/w'), { OPENCODE_CONFIG: '/w/oc.jsonc', OPENCODE_CONFIG_DIR: '/d', XDG_DATA_HOME: 'x', OPENCODE_DB: 'oc.db', OPENCODE_MODELS_PATH: '/w/m.json', cwd: '/w' })
 })
 
 test("Codex: the profile and the two limits from the command line, the last winning, none after --", () => {
