@@ -126,8 +126,9 @@ const launchDir = (launch: Obj): string | undefined => (typeof launch.cwd === 's
 // output if lower. The window is the model's context, lowered by the first of: CLAUDE_CODE_AUTO_COMPACT_WINDOW; the
 // autoCompactWindow setting, per model under modelSettings or for all ("auto"
 // is none); the window Anthropic's server sets the account, cached in
-// ~/.claude.json. An experiment's window, which it gets from Anthropic's flag
-// service, can't be seen from here. DISABLE_AUTO_COMPACT, DISABLE_COMPACT or
+// ~/.claude.json. An experiment's window, saved under an obscurely named flag
+// in ~/.claude.json's clientDataCacheSlots (2.1.319: kelp_forest_sonnet), is
+// deliberately not read: such names can change in any release. DISABLE_AUTO_COMPACT, DISABLE_COMPACT or
 // autoCompactEnabled: false turns it off. Environment variables count from the
 // launcher (launch-vals.ts) and from the settings files' `env`.
 const CLAUDE_OUTPUT = 20_000 // min(max output, 20K): every Claude model's max output is above it
