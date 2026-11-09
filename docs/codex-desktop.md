@@ -71,13 +71,10 @@ the app itself routes through the proxy.
 
 ## Confirmed desktop-chat test
 
-On 2026-11-09, the user-level setting above was applied on macOS and the desktop
-app was restarted. An existing desktop chat was resumed. Its own
-`proxy-data/state/codex-<chat-id>-<hash>.journal.jsonl` advanced repeatedly during
-successive tool/model round trips, with successful upstream usage records.
-For example, one round trip recorded 4,803 input tokens, 60,288 cached input
-tokens, and 230 output tokens. The chat ID matched the active desktop chat;
-these records came from that chat, separately from the ephemeral probe.
+A manual test on macOS confirmed routing in an actual desktop chat after applying
+the user-level setting and restarting the app. The chat's matching proxy journal
+advanced during successive tool/model round trips with successful upstream usage
+records. This test was separate from the ephemeral app-server probe.
 
 This confirms actual desktop-chat routing and working authentication for the
 tested installation. It does not establish long-conversation trimming behavior
@@ -100,11 +97,9 @@ concluding the proxy is down.
 
 ## Authentication troubleshooting
 
-The desktop test observed one upstream `401 Unauthorized` response. Subsequent
-requests from the same desktop chat succeeded, as did the isolated probe; the
-cause of the earlier failure was not established. No credential changes were
-needed. A single historical 401 does not prove a continuing authentication
-failure.
+An upstream `401 Unauthorized` indicates a rejected authentication attempt.
+Check for new failures before treating a historical log entry as an ongoing
+problem.
 
 If failures persist, inspect `proxy-data/proxy.log` for new upstream errors and
 run the isolated probe with the same sign-in. A successful probe establishes
