@@ -605,9 +605,12 @@ and the shave is worked out without being sent. It's tried again once it
 would save another `RETRY_STEP` (10K) tokens since the shape was frozen or
 last refused, and the freeze ends when one is taken, or when the proxy
 restarts, since a restart is how a fix arrives. Each turn's last reply, the
-one that ends it, starts with a `[shaver] warning` block, which later
+one that ends it, ends with a `[shaver] Warning` block, which later
 requests leave out, as they do mid-turn command answers (`src/command.ts`,
-`WARNING`). Each request line has a `freeze` record:
+`WARNING`). It gives the tokens not saved and the API's error, and asks the
+user to report it at `SHAVER_BUG_REPORT_URL`, if set when the proxy starts
+(by default this repo's GitHub issues), and to run `bin/run-proxy --update`
+once a fix is out. Each request line has a `freeze` record:
 `mode` (`frozen` or `retry`), `gap` (the tokens the shave would save),
 `frozenSince`, `unfrozen` (`retry-worked` or `restart`) on the one that ends
 it, and `attempts`, each sent shape (`shaved`, `frozen` or `original`) and

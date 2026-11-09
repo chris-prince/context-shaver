@@ -68,7 +68,7 @@ async function proxy(up: string, dir = mkdtempSync(path.join(tmpdir(), 'freeze-e
   const home = path.join(dir, 'home')
   mkdirSync(path.join(home, '.claude'), { recursive: true })
   writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 200_000 }))
-  const env = { ...process.env, HOME: home }
+  const env = { ...process.env, HOME: home, SHAVER_BUG_REPORT_URL: 'https://example.test/bugs' }
   delete env.CLAUDE_CONFIG_DIR
   const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'], env })
   const url = await new Promise<string>((ok, fail) => {
@@ -106,7 +106,7 @@ async function send(p: Proxy, msgs: any[]) {
       const e = JSON.parse(l.slice(6))
       if (e.delta?.type === 'text_delta') blocks[e.index] = (blocks[e.index] ?? '') + e.delta.text
     }
-  return { status: r.status, said: blocks.join('\n'), reply: { role: 'assistant', content: blocks.map((t) => ({ type: 'text', text: t })) } }
+  return { status: r.status, said: blocks.join('\n'), last: blocks.at(-1) ?? '', reply: { role: 'assistant', content: blocks.map((t) => ({ type: 'text', text: t })) } }
 }
 
 // The last request line's freeze: what was sent, in order, and how each went.
@@ -136,7 +136,9 @@ test('a refused shave freezes, sends the last shape, warns, and retries once wor
     assert.ok(!shaved.includes(A), 'the shave was tried first')
     assert.ok(frozen.includes(A) && frozen.includes('third'), 'then the last shape')
     assert.deepEqual(attempts(lastFreeze(p.dir)), ['shaved 400', 'frozen 200'])
-    assert.match(third.said, /\[shaver\] warning:\n\nShaving is frozen for this conversation: the API refused a shaved request \(refused for the test\)/)
+    assert.match(third.last, /^\[shaver\] Warning: shaving is paused for this session, and your context is [\d,]+ tokens larger than it otherwise would be\.\n\nAt .+, the API refused a request that the shaver had modified, with this error: refused for the test\n\n/, 'the warning ends the reply')
+    assert.match(third.last, /report this problem at https:\/\/example\.test\/bugs and include/, 'SHAVER_BUG_REPORT_URL overrides the address')
+    assert.match(third.last, /run \S+\/bin\/run-proxy --update to install it\.$/)
     // 4: the turn's reply, warning and all, then a new prompt: the shave would
     // save only b's and c's 8K more, so it stays frozen, untried, and the
     // warning is taken out of the request.
@@ -146,7 +148,7 @@ test('a refused shave freezes, sends the last shape, warns, and retries once wor
     assert.equal(up.bodies.length, count + 1, 'no shave tried')
     assert.deepEqual(attempts(lastFreeze(p.dir)), ['frozen 200'])
     assert.ok(!up.bodies.at(-1)!.includes('[shaver] warning'))
-    assert.match(fourth.said, /Shaving is frozen/)
+    assert.match(fourth.said, /shaving is paused/)
     // 5: with d's 5K, 13K more: the shave is tried again, taken, and the freeze ends.
     up.refuse.on = false
     msgs.push(fourth.reply, text('user', 'more'), ...tool('e', 'small'))
@@ -154,7 +156,7 @@ test('a refused shave freezes, sends the last shape, warns, and retries once wor
     const f = lastFreeze(p.dir)
     assert.deepEqual(attempts(f), ['shaved 200'])
     assert.equal(f.unfrozen, 'retry-worked')
-    assert.doesNotMatch(fifth.said, /Shaving is frozen/)
+    assert.doesNotMatch(fifth.said, /shaving is paused/)
     assert.ok(!up.bodies.at(-1)!.includes(A), 'shaved')
   } finally {
     p.child.kill()
@@ -180,7 +182,7 @@ test('a proxy restarted ends a freeze', async () => {
     const f = lastFreeze(p.dir)
     assert.equal(f.unfrozen, 'restart')
     assert.deepEqual(attempts(f), ['shaved 200'])
-    assert.doesNotMatch(r.said, /Shaving is frozen/)
+    assert.doesNotMatch(r.said, /shaving is paused/)
   } finally {
     p.child.kill()
     up.close()

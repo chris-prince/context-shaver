@@ -92,8 +92,8 @@ function midTurnOf(b: Block): string | undefined {
 // wrote, as Chat Completions does, it follows a blank line.
 export const answeredMidTurn = (command: string) => `[shaver] \`${command.slice(1)}\`, sent mid-turn:\n\n`
 // How a warning the proxy adds to a turn's last response opens (server.ts).
-export const WARNING = '[shaver] warning:\n\n'
-const ANSWERED = /(?:^|\n\n)\[shaver\] (?:`shaver [^`\n]*`, sent mid-turn|warning):\n/
+export const WARNING = '[shaver] Warning: '
+const ANSWERED = /(?:^|\n\n)\[shaver\] (?:`shaver [^`\n]*`, sent mid-turn:\n|Warning: )/
 
 const blocksOf = (m: Msg): Block[] => (typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content)
 

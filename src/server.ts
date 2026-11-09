@@ -993,10 +993,19 @@ const writeWhole = (log: WholeLog, b: BareLine, counts: Record<string, unknown> 
 
 // The warning a frozen conversation's turns end with, for the user; taken out
 // of later requests like a command's answer (command.ts).
-const frozenWarning = (f: Frozen, gap: number) =>
-  WARNING +
-  `Shaving is frozen for this conversation: the API refused a shaved request (${f.error}), so since ${new Date(f.since).toLocaleString()} its requests are sent as the last one that worked was. ` +
-  `About ${Math.round(gap / 1000)}K tokens a request are not saved. The proxy tries shaving again once that grows by another ${RETRY_STEP / 1000}K; restarting it ends the freeze.`
+// SHAVER_BUG_REPORT_URL, when set, is where it asks for reports.
+const bugReportUrl = process.env.SHAVER_BUG_REPORT_URL || 'https://github.com/chris-prince/context-shaver/issues'
+const updateCommand = `${path.resolve(import.meta.dirname, '..', 'bin', 'run-proxy')} --update`
+const frozenWarning = (f: Frozen, gap: number) => {
+  const since = new Date(f.since)
+  return (
+    WARNING +
+    `shaving is paused for this session, and your context is ${gap.toLocaleString('en-US')} tokens larger than it otherwise would be.\n\n` +
+    `At ${since.toLocaleTimeString()} ${since.toLocaleDateString()}, the API refused a request that the shaver had modified, with this error: ${f.error}\n\n` +
+    'To let you keep working, new shaves are paused. Anything shaved before the error will remain shaved, but nothing new will be removed. Shaver will periodically show this error if the problem continues.\n\n' +
+    `Please report this problem at ${bugReportUrl} and include the full contents of this warning message. When you're told a fix is available, run ${updateCommand} to install it.`
+  )
+}
 
 // What the API said refusing a request, for the user: its error's message,
 // cut short.
