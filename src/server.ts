@@ -1001,10 +1001,18 @@ const frozenWarning = (f: Frozen, gap: number) => {
   return (
     WARNING +
     `shaving is paused for this session, and your context is ${gap.toLocaleString('en-US')} tokens larger than it otherwise would be.\n\n` +
-    `At ${since.toLocaleTimeString()} ${since.toLocaleDateString()}, the API refused a request that the shaver had modified, with this error: ${f.error}\n\n` +
+    `At ${localTime(since)}, the API refused a request that the shaver had modified, with this error: ${f.error}\n\n` +
     'To let you keep working, new shaves are paused. Anything shaved before the error will remain shaved, but nothing new will be removed. Shaver will periodically show this error if the problem continues.\n\n' +
     `Please report this problem at ${bugReportUrl} and include the full contents of this warning message. When you're told a fix is available, run ${updateCommand} to install it.`
   )
+}
+
+// A time as "3:18 AM on Sun. 2026-11-08", in the proxy's local time.
+function localTime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  const day = d.toLocaleDateString('en-US', { weekday: 'short' })
+  return `${time} on ${day}. ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 // What the API said refusing a request, for the user: its error's message,
@@ -1014,7 +1022,7 @@ function apiError(text: string): string {
   try {
     m = JSON.parse(text)?.error?.message
   } catch {}
-  return (typeof m === 'string' ? m : errorShape(text)).slice(0, 300)
+  return (typeof m === 'string' ? m : errorShape(text)).slice(0, 500)
 }
 
 // Records a request journaled bare (journal.ts): its line and its cost, and

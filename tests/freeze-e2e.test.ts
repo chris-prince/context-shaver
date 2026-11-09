@@ -136,7 +136,7 @@ test('a refused shave freezes, sends the last shape, warns, and retries once wor
     assert.ok(!shaved.includes(A), 'the shave was tried first')
     assert.ok(frozen.includes(A) && frozen.includes('third'), 'then the last shape')
     assert.deepEqual(attempts(lastFreeze(p.dir)), ['shaved 400', 'frozen 200'])
-    assert.match(third.last, /^\[shaver\] Warning: shaving is paused for this session, and your context is [\d,]+ tokens larger than it otherwise would be\.\n\nAt .+, the API refused a request that the shaver had modified, with this error: refused for the test\n\n/, 'the warning ends the reply')
+    assert.match(third.last, /^\[shaver\] Warning: shaving is paused for this session, and your context is [\d,]+ tokens larger than it otherwise would be\.\n\nAt \d{1,2}:\d\d [AP]M on [A-Z][a-z]{2}\. \d{4}-\d\d-\d\d, the API refused a request that the shaver had modified, with this error: refused for the test\n\n/, 'the warning ends the reply')
     assert.match(third.last, /report this problem at https:\/\/example\.test\/bugs and include/, 'SHAVER_BUG_REPORT_URL overrides the address')
     assert.match(third.last, /run \S+\/bin\/run-proxy --update to install it\.$/)
     // 4: the turn's reply, warning and all, then a new prompt: the shave would
