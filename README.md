@@ -8,6 +8,8 @@ You use your coding agent exactly as you would normally. `context-shaver` runs
 in the background as a local proxy, intelligently stubbing or dropping parts of
 your context that are no longer needed.
 
+For a local Codex desktop app, see [desktop setup and a connection test](docs/codex-desktop.md).
+
 ## Features
 
 - **Lower cost.** You stop paying, request after request, for content that no
