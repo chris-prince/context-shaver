@@ -44,7 +44,14 @@ export type Usage = {
   cache_creation_input_tokens?: number
   cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number }
   output_tokens?: number
+  // Web searches the API ran for the answer, billed by the search.
+  server_tool_use?: { web_search_requests?: number }
 }
+
+// Dollars a web search (Anthropic's price, as Claude Code's own costUSD
+// counts it; scripts/check-cc-costs.ts).
+const SEARCH = 0.01
+const searches = (u: Usage) => (u.server_tool_use?.web_search_requests ?? 0) * SEARCH
 
 
 export type Tokens = { uncached: number; reads: number; writes: number; output: number }
@@ -117,7 +124,7 @@ function dollars(p: Price, t: Tokens, short: number): number {
 export function spent(model: string, provider: string | undefined, u: Usage): number {
   const p = modelOf(model, provider).price
   const t: Tokens = { uncached: u.input_tokens, reads: u.cache_read_input_tokens ?? 0, writes: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 }
-  return p ? dollars(p, t, u.cache_creation?.ephemeral_5m_input_tokens ?? 0) : 0
+  return p ? dollars(p, t, u.cache_creation?.ephemeral_5m_input_tokens ?? 0) + searches(u) : 0
 }
 
 // The cost so far with a request's added, given the stats it leaves, the stats
@@ -182,9 +189,10 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   // so it weighs that much against what's taken out after. Keeping the user's
   // messages keeps none of it.
   if (wo.compacted) for (const t in removed) removed[t] *= m.compaction!.kept === 'prompts' ? 0 : m.compaction!.kept
+  // Searches cost the same with the shaver or without, so they save nothing.
   return {
-    without: c.without + withoutAll,
-    actual: c.actual + actualRequest,
+    without: c.without + withoutAll + searches(u),
+    actual: c.actual + actualRequest + searches(u),
     saved,
     compactions: c.compactions + (wo.compacted ? 1 : 0),
     waitMs: c.waitMs + (wo.compacted ? m.compaction!.ms : 0),

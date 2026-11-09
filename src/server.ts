@@ -968,6 +968,7 @@ const usageFields = (u: Usage | undefined) =>
     writtenTokens60m: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
     writtenTokens5m: (u.cache_creation_input_tokens ?? 0) - (u.cache_creation?.ephemeral_1h_input_tokens ?? 0),
     outputTokens: u.output_tokens ?? 0,
+    ...(u.server_tool_use?.web_search_requests && { webSearches: u.server_tool_use.web_search_requests }),
   }
 
 // Records a request answered as it came after its changed form was refused:

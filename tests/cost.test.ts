@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { add, cost, without, type Usage } from '../src/cost.ts'
+import { add, cost, spent, without, type Usage } from '../src/cost.ts'
 import { lifetimeMs, modelOf } from '../src/models.ts'
 import { render, type Stats } from '../src/stats.ts'
 
@@ -41,6 +41,15 @@ test('cost totals both sides in dollars', () => {
   // writes 22k; actual reads 17k and writes 28k.
   assert.ok(Math.abs(c!.without - (41_000 * 0.2 + 22_000 * 8 + 100 * 20) / 1e6) < 1e-12)
   assert.ok(Math.abs(c!.actual - (17_000 * 0.2 + 28_000 * 8 + 100 * 20) / 1e6) < 1e-12)
+})
+
+test('web searches cost $0.01 each on both sides, saving nothing', () => {
+  const plain = cost([{ stats: at(0, 1000, 0), usage: usage(0, 0, 1000) }], HOUR)!
+  const searched = cost([{ stats: at(0, 1000, 0), usage: { ...usage(0, 0, 1000), server_tool_use: { web_search_requests: 3 } } }], HOUR)!
+  assert.ok(Math.abs(searched.actual - plain.actual - 0.03) < 1e-12)
+  assert.ok(Math.abs(searched.without - plain.without - 0.03) < 1e-12)
+  assert.deepEqual(searched.saved, plain.saved)
+  assert.ok(Math.abs(spent('claude-opus-5-5', undefined, { input_tokens: 0, server_tool_use: { web_search_requests: 2 } }) - 0.02) < 1e-12)
 })
 
 test('5-minute writes, long prompts and unknown models', () => {

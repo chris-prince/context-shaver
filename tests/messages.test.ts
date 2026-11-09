@@ -13,6 +13,16 @@ test('a streamed answer is done at message_stop', () => {
   assert.deepEqual(r.end().usage, { input_tokens: 10, output_tokens: 7 })
 })
 
+test("a streamed answer's web searches are the last delta's count", () => {
+  const r = MESSAGES.usageReader()
+  const ev = (o: unknown) => new TextEncoder().encode(`event: x\ndata: ${JSON.stringify(o)}\n\n`)
+  r.push(ev({ type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 1 } } }))
+  r.push(ev({ type: 'message_delta', usage: { output_tokens: 7, server_tool_use: { web_search_requests: 1 } } }))
+  r.push(ev({ type: 'message_delta', usage: { output_tokens: 9, server_tool_use: { web_search_requests: 2 } } }))
+  r.push(ev({ type: 'message_stop' }))
+  assert.deepEqual(r.end().usage, { input_tokens: 10, output_tokens: 9, server_tool_use: { web_search_requests: 2 } })
+})
+
 test("a streamed answer gives the reply's text, and whether it ends the turn", () => {
   const ev = (o: unknown) => new TextEncoder().encode(`event: x\ndata: ${JSON.stringify(o)}\n\n`)
   const stream = (stop: string, ...events: unknown[]) => {

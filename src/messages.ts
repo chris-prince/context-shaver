@@ -21,6 +21,9 @@ function usageReader() {
     event(e) {
       if (e.type === 'message_start') usage = { ...e.message?.usage }
       if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
+      // Searches are counted as they run, so the final delta's count is the
+      // answer's.
+      if (e.type === 'message_delta' && usage && e.usage?.server_tool_use) usage.server_tool_use = e.usage.server_tool_use
       if (e.type === 'message_delta' && e.delta?.stop_reason) stop = e.delta.stop_reason
       if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use') called = true
       if (e.type === 'content_block_start' && e.content_block?.type === 'thinking') content.signatures.push('')

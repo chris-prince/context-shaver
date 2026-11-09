@@ -23,8 +23,6 @@ const { values, positionals } = parseArgs({ allowPositionals: true, options: { d
 const root = positionals[0] ?? path.join(homedir(), '.claude', 'projects')
 const since = Date.now() - Number(values.days) * 86_400_000
 
-// webSearchRequests are billed per search (Claude Code adds $0.01 each); our
-// table prices tokens only, so a transcript with searches shows that gap.
 type ModelUsage = { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; cacheCreationEphemeral5mInputTokens?: number; webSearchRequests?: number; costUSD: number }
 
 const ours = (model: string, u: ModelUsage) =>
@@ -34,6 +32,7 @@ const ours = (model: string, u: ModelUsage) =>
     cache_creation_input_tokens: u.cacheCreationInputTokens,
     cache_creation: { ephemeral_5m_input_tokens: u.cacheCreationEphemeral5mInputTokens ?? 0 },
     output_tokens: u.outputTokens,
+    server_tool_use: { web_search_requests: u.webSearchRequests ?? 0 },
   })
 
 const pct = (a: number, b: number) => (b ? `${(((a - b) / b) * 100).toFixed(1)}%` : 'n/a')
