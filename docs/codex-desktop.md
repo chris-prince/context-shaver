@@ -34,16 +34,16 @@ existing chat, or restart the desktop app. The proxy remains available afterward
 The app-server transport was tested on macOS with the ChatGPT-bundled
 `codex-cli 0.167.0-alpha.3.2`: the upstream exact-response test and the subsequent
 proxy status both passed. This verifies app-server routing, authentication and
-streaming, not GUI activation or long-conversation trimming. A managed app can
-supply different connection settings, so also verify the actual desktop chat.
+streaming. The actual desktop-chat test below separately confirmed GUI routing.
+A managed app can supply different connection settings, so verify your own chat.
 
 ## Enable in a local desktop app
 
 1. Keep the proxy running independently of the app, on the same host as its
-   app-server. For a first test, run `bin/node-wrapper src/server.ts` in a separate
-   terminal and keep it open. The default port is 18787. If a proxy is already
-   running, reuse it instead of starting a second one. Arrange login startup
-   before relying on it across machine restarts.
+   app-server. From the checkout, run `bin/run-proxy`; it starts a detached proxy
+   or reuses the existing one. The default port is 18787. Its diagnostic log is
+   `proxy-data/proxy.log`. Arrange login startup before relying on it across
+   machine restarts; starting a detached process does not install a login service.
 2. Back up `~/.codex/config.toml` (or the active `CODEX_HOME` configuration), then
    add this **top-level** key before any TOML table. Replace an existing value
    rather than adding a duplicate:
@@ -68,6 +68,51 @@ and [desktop configuration and restart](https://learn.chatgpt.com/docs/enterpris
 The proxy must stay available while the app uses it; model calls fail when it is
 down. No separate working CLI installation is required for normal GUI use once
 the app itself routes through the proxy.
+
+## Confirmed desktop-chat test
+
+On 2026-11-09, the user-level setting above was applied on macOS and the desktop
+app was restarted. An existing desktop chat was resumed. Its own
+`proxy-data/state/codex-<chat-id>-<hash>.journal.jsonl` advanced repeatedly during
+successive tool/model round trips, with successful upstream usage records.
+For example, one round trip recorded 4,803 input tokens, 60,288 cached input
+tokens, and 230 output tokens. The chat ID matched the active desktop chat;
+these records came from that chat, separately from the ephemeral probe.
+
+This confirms actual desktop-chat routing and working authentication for the
+tested installation. It does not establish long-conversation trimming behavior
+or that every desktop build or managed environment honors the setting. The
+setting affects future requests; it does not rewrite saved chat history.
+
+If `shaver info` does not return a proxy-generated status, check for a journal
+matching your chat ID and confirm that it advances after a new prompt. Avoid
+publishing raw journals or request headers: they can contain private content.
+To check that the expected proxy is listening without making a model request:
+
+```bash
+curl --fail --max-time 5 -H 'x-shaver: procinfo' \
+  http://127.0.0.1:18787/shaver/procinfo
+```
+
+A listener check alone does not establish chat routing. If a sandboxed shell
+cannot reach localhost, repeat the check in a normal local terminal before
+concluding the proxy is down.
+
+## Authentication troubleshooting
+
+The desktop test observed one upstream `401 Unauthorized` response. Subsequent
+requests from the same desktop chat succeeded, as did the isolated probe; the
+cause of the earlier failure was not established. No credential changes were
+needed. A single historical 401 does not prove a continuing authentication
+failure.
+
+If failures persist, inspect `proxy-data/proxy.log` for new upstream errors and
+run the isolated probe with the same sign-in. A successful probe establishes
+only its own connection; confirm the actual chat separately. If the actual
+chat continues to receive 401 responses, restore the previous base URL and
+restart the app to test the normal connection. Use the app's sign-in flow if
+the direct connection also fails; do not copy tokens into the proxy settings
+or logs.
 
 ## Roll back
 
