@@ -1002,7 +1002,7 @@ const frozenWarning = (f: Frozen, gap: number) => {
     WARNING +
     `shaving is paused for this session, and your context is ${gap.toLocaleString('en-US')} tokens larger than it otherwise would be.\n\n` +
     `At ${localTime(since)}, the API refused a request that the shaver had modified, with this error: ${f.error}\n\n` +
-    'To let you keep working, new shaves are paused. Anything shaved before the error will remain shaved, but nothing new will be removed. Shaver will periodically show this error if the problem continues.\n\n' +
+    'To let you keep working, new shaves are paused. Anything shaved before the error will remain shaved, but nothing new will be removed. Shaver will periodically show this warning if the problem continues.\n\n' +
     `Please report this problem at ${bugReportUrl} and include the full contents of this warning message. When you're told a fix is available, run ${updateCommand} to install it.`
   )
 }
