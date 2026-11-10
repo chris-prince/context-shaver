@@ -22,9 +22,16 @@ depth=${SHAVER_DEPTH:-0}
 export SHAVER_LAUNCHER_PID=$$ SHAVER_DEPTH=$((depth + 1))
 real=("${SHELL:-bash}" -lic 'opencode "$@"' opencode)
 # As in claude-via-shaver: a proxy that can't start leaves OpenCode to run
-# without it, its config as it is.
+# without it, its config as it is, but for an OPENCODE_CONFIG_CONTENT pointing
+# at the proxy (one a shell inherited from a session run through it, say),
+# which would fail, or reach another program on the port; it is dropped whole,
+# the user's settings merged into it with it.
 if ! "$bin/run-proxy"; then
   echo "opencode-via-shaver: the proxy did not start; running OpenCode without it" >&2
+  if [[ ${OPENCODE_CONFIG_CONTENT:-} == *"://127.0.0.1:${SHAVER_PORT:-18787}/harness/opencode"* ]]; then
+    echo "opencode-via-shaver: OPENCODE_CONFIG_CONTENT points at the proxy, so it is left out" >&2
+    unset OPENCODE_CONFIG_CONTENT
+  fi
   [[ -t 2 ]] && sleep 3
   exec "${real[@]}" "$@"
 fi
