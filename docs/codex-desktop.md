@@ -153,6 +153,37 @@ afterward. Distinguish tool/reasoning pruning from text summarization, and
 report which actually ran. Until those checks pass, GUI trimming remains
 unverified even if the isolated connection probe passes.
 
+## Isolated text summarization and warm-cache tests
+
+Two further synthetic tests passed using the real Codex app-server and upstream
+model. Each owned its proxy process and temporary state directory. The live
+proxy on 18787 and desktop app settings were left untouched; only the test-owned
+processes were terminated afterward.
+
+**Text summarization (port 18789):** a synthetic user-text log and an explicit
+fact crossed a test-only summary threshold of 1,000 tokens. The proxy recorded a
+completed summary fork with a valid summary record, then applied that record to
+later model requests. Exact fact recall and a subsequent native tool round trip
+passed, with no untrimmed fallback. This used a zero proxy cache lifetime to test
+summary application deterministically and a high memoir threshold to avoid
+combining records. It does not test memoir merging or the default 15,000-token
+summary threshold.
+
+**Normal warm-cache decisions (port 18788):** the tool-history workload above
+ran with the normal 3,600-second proxy cache cap, with no forced trim or cache
+expiry. Upstream usage reported actual cache reads. The decision log recorded
+five warm-cache decisions: four deferred pruning and one advanced it. Positive
+removed-token counts, earlier-fact recall, and native tools with successful exit
+codes were observed; no untrimmed fallback occurred. This validates both holding
+back and advancing pruning on a warm cache for this workload, not a guarantee
+that every warm request should be trimmed.
+
+These results extend the isolated app-server validation; actual GUI trimming,
+memoir merging, exhaustive long-session reliability, and performance or cost
+claims remain outside what these tests establish. Earlier statements that text
+summarization and warm-cache behavior were unverified describe the initial test,
+not these follow-ups.
+
 ## Roll back
 
 Restore your previous `openai_base_url` value, or remove just the added key if it
