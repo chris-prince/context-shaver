@@ -57,7 +57,7 @@ export type Delta = {
 // A summary fork, or the request `shaver optimize` makes for skill lines.
 export type ForkKind = 'summary' | 'optimize'
 export type ForkLine = { time: string; kind: ForkKind; model: string; provider?: string; usage?: Usage; why?: Why }
-export type Why = 'side' | 'unread' | 'untrimmed' | 'cut off' | 'no usage' | 'resent'
+export type Why = 'side' | 'unread' | 'untrimmed' | 'cut off' | 'no usage' | 'resent' | 'compaction'
 export type BareLine = { time: string; model: string; provider?: string; usage?: Usage; why: Why }
 
 // The request lines written since the proxy started (server.ts checks one is

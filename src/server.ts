@@ -653,11 +653,16 @@ async function probeCodexToolSearch(context: { target: string; headers: Record<s
   }
 }
 
+// Codex's remote compaction, which is sent on as it came and journaled bare
+// (not shaved: its answer replaces the history, so the history it's given is
+// Codex's own).
+const compacts = (url: string) => /^(\/v1)?\/responses\/compact$/.test(url.split('?')[0])
+
 // The protocol a path is, after any /via/; Messages for any other path, which
 // is passed through. ChatGPT's backend for Codex runs no tool search itself,
 // so nothing is deferred there.
 const protocolOf = (url: string, upstream = '') => {
-  const p = [MESSAGES, CHAT, RESPONSES].find((p) => p.serves(url.split('?')[0])) ?? MESSAGES
+  const p = compacts(url) ? RESPONSES : ([MESSAGES, CHAT, RESPONSES].find((p) => p.serves(url.split('?')[0])) ?? MESSAGES)
   return p === RESPONSES && /^https:\/\/chatgpt\.com(\/|$)/.test(upstream) ? { ...p, defers: false } : p
 }
 
@@ -698,7 +703,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // response ends the turn, and the request as forwarded.
   let turnEnd: { key: string; body: Canonical; render: Wire['render'] } | undefined
   // Why a request the API answers would be journaled bare, if it's sent as it came.
-  let why: Why = 'side'
+  const compaction = compacts(url)
+  let why: Why = compaction ? 'compaction' : 'side'
   let c: ReturnType<Protocol['canonical']> | undefined
   let params: Record<string, unknown> = {}
   // The conversation's key, from the messages as the client sent them, before any are stripped (harness.ts).
@@ -706,7 +712,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // The harness's own headers, logged, and whether they say it's a side request.
   const logged = h && loggedHeaders(h, req.headers)
   const side = h?.side?.(req.headers)
-  const served = req.method === 'POST' && proto.serves(url.split('?')[0]) && raw.length > 0
+  const served = req.method === 'POST' && (compaction || proto.serves(url.split('?')[0])) && raw.length > 0
   if (served) {
     // `shaver` commands are answered here; answered ones are stripped (command.ts).
     try {
@@ -720,7 +726,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const body = c?.body
     key = body && Array.isArray(body.messages) && body.messages.length ? conversationId(h, proto.name, body, req.headers) : undefined
     try {
-      if (c && body && key) {
+      if (c && body && key && !compaction) {
         const msgs = stripCommands(body.messages)
         // Read before stripping: an answer to `shaver optimize` is one only after its reply.
         const command = body.tools?.length && pendingCommand(body.messages)
@@ -752,7 +758,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       console.error('shaver: commands left in:', err)
     }
     try {
-      if (c && body && key) {
+      if (c && body && key && !compaction) {
         const k = key
         const prep = (w: NonNullable<typeof c>, freeze: boolean) => {
           const q = prepare(proto, h, k, w.body, w, params, Date.now(), side, h?.compaction?.(req.headers), { headers: req.headers, upstream, launch: r.launch ? loadLaunch(a.dir, r.launch) : undefined }, freeze)
@@ -938,7 +944,7 @@ async function answerOf(command: string, proto: Protocol, h: Harness | undefined
 // Records an answered request: its stats, cost and cache entries, the
 // conversation's state, any summary fork due and its log line.
 function answered(p: Prepared, usage: UsageReader, target: string, headers: Record<string, string>): void {
-  const { usage: u, content, attribution, reply } = usage.end()
+  const { usage: u, content, attribution, reply, served } = usage.end()
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
@@ -957,7 +963,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList, frozen: p.freeze.frozen })
   // A reply with no text leaves the instructions where they'd go without one.
   if (due) void summarize(p, due, target, headers, reply?.text.some((t) => t.trim()) ? reply.text : undefined)
-  if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }), ...(check && { summaryCheck: due ? 'sent' : check }) })
+  if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }), ...(served && { served }), ...(check && { summaryCheck: due ? 'sent' : check }) })
 }
 
 // A log line's counts from a request's usage.
