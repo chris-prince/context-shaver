@@ -109,13 +109,29 @@ restart the app to test the normal connection. Use the app's sign-in flow if
 the direct connection also fails; do not copy tokens into the proxy settings
 or logs.
 
-## Long-conversation trimming: not yet validated in the GUI
+## Isolated long tool-history trimming test
 
-The live desktop routing test above does not establish that trimming works.
-The follow-up test did not record a successful trim. Its attempt to restart the
-live proxy for a cold-cache experiment interrupted the agent's own connection;
-the user restored the proxy. This was a test-procedure failure, not evidence
-that trimming itself is broken.
+The isolated follow-up passed using the real Codex app-server and upstream model
+through a dedicated listener on port 18788 with its own temporary state directory.
+The live proxy on 18787 and the desktop app configuration were left untouched.
+
+The test used synthetic content only: an earlier user-provided fact, a native
+shell tool reading a 1,800-line fixture, five short checkpoint turns, then a
+second shell tool and an exact recall question. A test-only policy dropped tool
+history after four requests and reasoning after zero turns; text summarization
+was disabled. A zero proxy cache lifetime made pruning deterministic instead of
+waiting for normal cache economics to permit it.
+
+The isolated journal showed positive removed-token counts, including on the
+final request, and no untrimmed fallback. Codex recalled the earlier fact exactly
+and completed the post-trim native tool call. The test-owned proxy and app-server
+were terminated afterward; no live proxy restart was needed.
+
+This validates tool-history pruning through the app-server transport used by the
+desktop app with this synthetic workload. It does not validate text summarization,
+default warm-cache behavior, exhaustive long-session reliability, or actual GUI
+trimming. Those remain separate tests. The earlier attempt to restart the live
+proxy interrupted the control session and did not establish a trimming defect.
 
 Do not stop or restart the proxy that carries your control chat. Use a separate
 listener and state directory for development experiments, for example:
