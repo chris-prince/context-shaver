@@ -51,28 +51,51 @@ fi
 # --stand-in prints a Codex for a wrapper to be given in place of the real one,
 # for a wrapper that wants the files beside its Codex, as an install has:
 # a directory of links to all beside the real Codex, in which Codex itself is
-# a script running this with that Codex. A link to this would not do, as a
-# wrapper following it would look beside this instead.
+# a script running this. A link to this would not do, as a wrapper following
+# it would look beside this instead. The directory is named for
+# SHAVER_REAL_CODEX_LOCATIONS, not for the install found, and its script finds
+# the newest install each time it runs, its links then made again for that
+# install, so a path printed once follows the newer installs a wrapper fetches:
+# from the launch after, as a wrapper looking beside it before running it sees
+# the links made for the previous install.
+#
+# Links in a stand-in's directory to all beside a real Codex, and none to
+# another install's. At best effort: a link it can't make fails no launch.
+stand_in_links() {
+  local dir=$1 real=$2 from l f
+  from=$(dirname "$real")
+  for l in "$dir"/* "$dir"/.[!.]*; do
+    [[ -L $l && $(dirname "$(readlink "$l")") != "$from" ]] && rm -f "$l"
+  done
+  for f in "$from"/* "$from"/.[!.]*; do
+    [[ -e $f && $f != "$real" && $(readlink "$dir/${f##*/}") != "$f" ]] &&
+      ln -sfn "$f" "$dir/"
+  done
+  return 0
+}
+
 if [[ ${1:-} == --stand-in ]]; then
   [[ -n ${SHAVER_REAL_CODEX_LOCATIONS:-} ]] || die "--stand-in needs SHAVER_REAL_CODEX_LOCATIONS"
   real=$(readlink -f "$real")
-  from=$(dirname "$real")
-  dir=$bin/../proxy-data/stand-in/$(printf %s "$from" | cksum | cut -d' ' -f1)
+  dir=$(readlink -f "$bin/..")/proxy-data/stand-in/$(printf %s "$SHAVER_REAL_CODEX_LOCATIONS" | cksum | cut -d' ' -f1)
   stub=$dir/$(basename "$real")
-  script=$(printf '#!/usr/bin/env bash\nexport SHAVER_REAL_CODEX_LOCATIONS=%q\nexec %q "$@"' \
-    "$real" "$me")
-  # As an install is not changed in place, one made for it already will do.
+  script=$(printf '#!/usr/bin/env bash\nexport SHAVER_REAL_CODEX_LOCATIONS=%q SHAVER_STAND_IN=%q\nexec %q "$@"' \
+    "$SHAVER_REAL_CODEX_LOCATIONS" "$dir" "$me")
+  mkdir -p "$dir"
+  stand_in_links "$dir" "$real"
   if [[ ! -x $stub || $(<"$stub") != "$script" ]]; then
-    mkdir -p "$dir"
-    for f in "$from"/* "$from"/.[!.]*; do
-      [[ -e $f && $f != "$real" ]] && ln -sfn "$f" "$dir/"
-    done
     printf '%s\n' "$script" > "$stub.$$"
     chmod +x "$stub.$$"
     mv -f "$stub.$$" "$stub"
   fi
-  readlink -f "$stub"
+  printf '%s\n' "$stub"
   exit
+fi
+
+# Run by a stand-in's script: its links follow the install found this time.
+if [[ -n ${SHAVER_STAND_IN:-} ]]; then
+  [[ -d $SHAVER_STAND_IN ]] && stand_in_links "$SHAVER_STAND_IN" "$(readlink -f "$real")"
+  unset SHAVER_STAND_IN
 fi
 
 # Percent-encodes all but unreserved characters (RFC 3986), for a path segment.

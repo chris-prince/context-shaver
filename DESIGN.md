@@ -171,8 +171,11 @@ export <WRAPPER_BINARY_VAR>=$(~/context-shaver/bin/codex-via-shaver --stand-in)
 codex [codex args ...]
 ```
 
-It is kept while it still matches the newest install, and made again when it
-doesn't, so it follows a newer install.
+Its path depends only on `SHAVER_REAL_CODEX_LOCATIONS`, not on the install
+found, so it can be printed once, where the variable is set. Its links are made
+again for the newest install each time it is made or run. A wrapper that
+fetches a newer install and then looks beside the stand-in sees the previous
+install's files on that first launch.
 
 The proxy serves only requests whose `Host` is `127.0.0.1` or `localhost`.
 Since a request can name any upstream, a web page that reached the proxy by DNS
