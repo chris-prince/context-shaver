@@ -49,7 +49,7 @@ export type Usage = {
 }
 
 // Dollars a web search (Anthropic's price, as Claude Code's own costUSD
-// counts it; scripts/check-cc-costs.ts).
+// counts it; scripts/check-costs.ts).
 const SEARCH = 0.01
 const searches = (u: Usage) => (u.server_tool_use?.web_search_requests ?? 0) * SEARCH
 
