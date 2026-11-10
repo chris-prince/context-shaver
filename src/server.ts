@@ -40,7 +40,7 @@ import { localHost, route } from './via.ts'
 import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
-import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
+import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -1170,7 +1170,9 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     const whole = recordOf(out.content, f, time, usage?.output_tokens)
     const record = whole ?? salvagedOf(out.content, f, time, stop, usage?.output_tokens)
     const salvaged = !whole && !!record
-    const rejected = record ? undefined : rejectionOf(out.content, f)
+    // Nothing complete yet is the answer the instructions ask for then.
+    const none = !record && nothingComplete(out.content, f)
+    const rejected = record || none ? undefined : rejectionOf(out.content, f)
     stage = 'write'
     let merged: number | undefined
     if (record) {
@@ -1180,14 +1182,14 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
       // A salvage is shown as the last failure (shaver info), by its stop reason.
       const failed = salvaged ? { failed: { time, outcome: 'salvaged', reason: stop ?? 'unknown' } } : {}
       writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain, merged, ...failed }))
-    } else failedFork(key, { time, outcome: 'rejected', reason: rejected?.reason ?? 'unknown' })
+    } else if (!none) failedFork(key, { time, outcome: 'rejected', reason: rejected?.reason ?? 'unknown' })
     const tokens = usage ? `, ${usage.output_tokens} output tokens` : ''
     // proxy.log has problems only: a fork that recorded is in the step events.
-    if (!record) console.error(`${what} rejected, ${rejected?.reason}${tokens}, stopped: ${stop ?? 'unknown'}`)
+    if (rejected) console.error(`${what} rejected, ${rejected?.reason}${tokens}, stopped: ${stop ?? 'unknown'}`)
     if (salvaged) console.error(`${what} cut off (${stop})${tokens}; kept its whole arcs, ending before [${record!.endsBefore}]`)
     if (logDir) {
       const why = rejected ? { reason: rejected.reason, ...(rejected.endsBefore !== undefined && { foundEndsBefore: rejected.endsBefore }), answer: savedAnswer(logDir, time, text) } : salvaged ? { answer: savedAnswer(logDir, time, text) } : undefined
-      writeLine(logDir, { event: 'summary', time, outcome: salvaged ? 'salvaged' : record ? 'recorded' : 'rejected', ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record && (record.arcs?.length ?? 'unparsed'), merged, usage, stop, ...why })
+      writeLine(logDir, { event: 'summary', time, outcome: salvaged ? 'salvaged' : record ? 'recorded' : none ? 'nothing-complete' : 'rejected', ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record && (record.arcs?.length ?? 'unparsed'), merged, usage, stop, ...why })
     }
   } catch (err) {
     const time = new Date().toISOString()

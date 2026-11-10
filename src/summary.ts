@@ -303,6 +303,12 @@ export function rejectionOf(content: readonly Block[], f: SummaryFork): Rejectio
   if (!text.slice(0, m.index).trim()) return { reason: 'empty', endsBefore: n }
 }
 
+// Whether a summary fork answered that no arc is complete yet: only the
+// closing line, naming the turn it started at, as its instructions ask. That
+// gives no record but isn't a failure.
+export const nothingComplete = (content: readonly Block[], f: SummaryFork): boolean =>
+  !content.some((b) => b.type === 'tool_use') && textOf(content).trim() === `Ends before: [${f.start}]`
+
 const textOf = (content: readonly Block[]) => content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
 const endLine = (text: string) => [...text.matchAll(/^Ends before: \[(\d+)\]\s*$/gm)].at(-1)
 

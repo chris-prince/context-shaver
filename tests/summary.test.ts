@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { isMemoir, isSummary, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
-import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, keptNotes, memoirOf, mergedOf, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, keptNotes, memoirOf, mergedOf, nothingComplete, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -104,6 +104,14 @@ test("a summary fork's record is read back, and only one that covers a complete 
   assert.deepEqual(why('x\n**Ends before: [3]**'), { reason: 'ends-before-misformatted' })
   assert.deepEqual(why('\nEnds before: [3]'), { reason: 'empty', endsBefore: 3 })
   assert.deepEqual(rejectionOf([{ type: 'text', text: 'x\nEnds before: [3]' }, { type: 'tool_use', id: 'z', name: 'Bash', input: {} }], f), { reason: 'tool-call' })
+  // Naming only the start turn is the answer the instructions ask for when no
+  // arc is complete: not a failure. Anything more with it still is.
+  const none = (text: string) => nothingComplete([{ type: 'text', text }], f)
+  assert.equal(none('Ends before: [1]'), true)
+  assert.equal(none('\n Ends before: [1]\n'), true)
+  for (const text of ['x\nEnds before: [1]', 'Ends before: [3]', '## Arc\n- did it\n\nEnds before: [3]']) assert.equal(none(text), false)
+  assert.equal(nothingComplete([{ type: 'text', text: 'Ends before: [1]' }, { type: 'tool_use', id: 'z', name: 'Bash', input: {} }], f), false)
+  assert.match(instructions(f), new RegExp(`naming \\[${f.start}\\]`))
   assert.match(instructions(f), /\[1\] "turn one"\n\[2\] "turn two"\n\[3\] "turn three"\n\nThe latest prompt, still in progress:\n\[4\] "turn four"/)
   assert.doesNotMatch(instructions(f), /already in my journal/)
   // After the reply that ended it, the latest turn is answered, and still left out.
