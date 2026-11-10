@@ -88,7 +88,13 @@ encode() {
   printf %s "$out"
 }
 
-"$bin/run-proxy"
+# As in claude-via-shaver: a proxy that can't start leaves Codex to run without
+# it, its arguments as given.
+if ! "$bin/run-proxy"; then
+  echo "codex-via-shaver: the proxy did not start; running Codex without it" >&2
+  [[ -t 2 ]] && sleep 3
+  exec "${real[@]}" "$@"
+fi
 port=${SHAVER_PORT:-18787}
 
 # Where the last -c/--config value for a key is in args, as the last wins in

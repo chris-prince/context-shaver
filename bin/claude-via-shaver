@@ -58,8 +58,26 @@ encode() {
   printf %s "$out"
 }
 
-"$bin/run-proxy"
-port=${SHAVER_PORT:-18787} up=${ANTHROPIC_BASE_URL:-}
+port=${SHAVER_PORT:-18787}
+# A proxy that can't start leaves Claude Code to run without it, as it would
+# with no proxy, rather than not at all. A base URL at the proxy (one a shell
+# inherited from a session run through it, say) would fail, so it is put back
+# to the gateway in its /via/, or dropped when it has none. The pause is for the
+# warning to be read before Claude Code takes the terminal.
+if ! "$bin/run-proxy"; then
+  echo "claude-via-shaver: the proxy did not start; running Claude Code without it" >&2
+  if [[ ${ANTHROPIC_BASE_URL:-} =~ ^http://(127\.0\.0\.1|localhost):$port(/|$) ]]; then
+    if [[ ${ANTHROPIC_BASE_URL%/} =~ /via/([^/]+)$ ]]; then
+      gw=${BASH_REMATCH[1]}
+      export ANTHROPIC_BASE_URL=$(printf '%b' "${gw//%/\\x}")
+    else
+      unset ANTHROPIC_BASE_URL
+    fi
+  fi
+  [[ -t 2 ]] && sleep 3
+  exec "${real[@]}" "$@"
+fi
+up=${ANTHROPIC_BASE_URL:-}
 up=${up%/}
 # Where Claude Code compacts depends on variables it sends nothing about; those
 # set are saved for the proxy, and their ID goes in the base URL

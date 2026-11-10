@@ -21,7 +21,13 @@ depth=${SHAVER_DEPTH:-0}
   die "run again by the opencode it ran; \`opencode\` at your prompt must not run this"
 export SHAVER_LAUNCHER_PID=$$ SHAVER_DEPTH=$((depth + 1))
 real=("${SHELL:-bash}" -lic 'opencode "$@"' opencode)
-"$bin/run-proxy"
+# As in claude-via-shaver: a proxy that can't start leaves OpenCode to run
+# without it, its config as it is.
+if ! "$bin/run-proxy"; then
+  echo "opencode-via-shaver: the proxy did not start; running OpenCode without it" >&2
+  [[ -t 2 ]] && sleep 3
+  exec "${real[@]}" "$@"
+fi
 port=${SHAVER_PORT:-18787}
 # What says where OpenCode compacts and that the proxy can't see itself, the
 # variables that move its config and the compaction settings and model limits

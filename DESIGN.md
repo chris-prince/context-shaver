@@ -19,6 +19,13 @@ base URL isn't Anthropic's, and `auto` or `auto:N` keeps it off until the tools
 reach a share of the context window. Either way every tool's definition goes on
 every request (about 26k more tokens).
 
+If the proxy can't be started (Node can't be installed, say, or its port is
+taken by something else), `claude-via-shaver` says so, pauses 3 seconds for it
+to be read, and runs `claude` without it, as it would run with no proxy; the
+other launchers do the same. A base URL that points at the proxy, inherited
+from a session run through it, goes back to the gateway it chains to, or is
+dropped when there is none.
+
 To pick up changes to the proxy's code, restart it:
 
 ```bash
