@@ -109,6 +109,34 @@ restart the app to test the normal connection. Use the app's sign-in flow if
 the direct connection also fails; do not copy tokens into the proxy settings
 or logs.
 
+## Long-conversation trimming: not yet validated in the GUI
+
+The live desktop routing test above does not establish that trimming works.
+The follow-up test did not record a successful trim. Its attempt to restart the
+live proxy for a cold-cache experiment interrupted the agent's own connection;
+the user restored the proxy. This was a test-procedure failure, not evidence
+that trimming itself is broken.
+
+Do not stop or restart the proxy that carries your control chat. Use a separate
+listener and state directory for development experiments, for example:
+
+```bash
+bin/node-wrapper src/server.ts --port 18788 \
+  --dir /tmp/context-shaver-trim-test --cache-ttl-seconds 0
+```
+
+The zero cache lifetime is a test setting, not a production recommendation.
+Route an isolated client through that listener. For an actual GUI test, keep a
+separate control session connected directly and configure only the test app
+session. Do not change global routing underneath unrelated active chats.
+
+A passing GUI trim test must show that the test chat's removed-token count
+increased, upstream accepted the trimmed request without an untrimmed fallback,
+and the chat could recall an earlier test fact and complete a tool round trip
+afterward. Distinguish tool/reasoning pruning from text summarization, and
+report which actually ran. Until those checks pass, GUI trimming remains
+unverified even if the isolated connection probe passes.
+
 ## Roll back
 
 Restore your previous `openai_base_url` value, or remove just the added key if it

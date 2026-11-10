@@ -13,3 +13,16 @@ Before converting chars to tokens, look for a logged count. For example, each
 summary's real `usage.output_tokens` is in the `"event":"summary"` lines of
 `step_events.jsonl`; estimating summary sizes from chars at 0.39 tokens/char
 once missed the real ≈0.47 (thinking included).
+
+## Developing while routed through context-shaver
+
+Never stop or restart the proxy on port 18787 from an agent session. The agent
+may depend on that listener for its own model connection and cannot recover if
+it goes down. Do not use `bin/run-proxy --stop` or `--restart` against that port.
+
+Run development and cache/trim experiments on a separate port (for example,
+`bin/node-wrapper src/server.ts --port 18788 --cache-ttl-seconds 0`) with a
+separate `--dir` for test state. Route only an isolated test client through it.
+Before testing the actual desktop app, use a separately configured test app
+session or a direct-connected control session so recovery does not depend on
+the proxy being tested. Preserve the user's live routing configuration.
