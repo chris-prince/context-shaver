@@ -38,6 +38,8 @@ the proxy, leaving the CLI's own config untouched. `claude-via-shaver` works wit
 Claude API keys. If Codex or Claude Code calls are already proxied by a
 wrapper, context-shaver can be chained in front of that proxy (see DESIGN.md).
 
+For the Codex desktop app, see [docs/codex-desktop.md](docs/codex-desktop.md).
+
 You can communicate with context-shaver by sending certain built-in commands as prompts:
 
 - `shaver info`: See how context-shaver is doing this session, and where your context is spent.
