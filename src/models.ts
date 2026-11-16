@@ -78,7 +78,10 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },
   'claude-fable-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
   // OpenRouter's listing (2026-11-16): reads at 0.025x input, writes at the
-  // usual 1.25x and 2x. The cache behaviour is assumed to be Anthropic's documented one.
+  // usual 1.25x and 2x, as billed (scripts/check-prices.ts). The 1-hour TTL
+  // was probed on 2026-11-16, served by Anthropic, two reads per gap: read
+  // after 1, 30 and 58 minutes, gone after 62. The lookback is assumed to be
+  // Anthropic's documented 20 blocks.
   'claude-fable-5-2': { price: { input: 8, output: 40, read: 0.2 }, ...CLAUDE_CODE },
   'claude-mythos-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
   // Reads at 0.1, as billed through OpenRouter (scripts/check-prices.ts).
