@@ -8,8 +8,8 @@
 // 2x at the hour; with automatic caching (protocol.ts) they're billed as plain
 // input, which usage reports as uncached. A model whose writes cost something
 // else gives `write`. A long prompt, over `long.over` tokens, costs `long.times`
-// as much in all.
-export type Price = { input: number; output: number; read: number; write?: number; long?: { over: number; times: number } }
+// as much in all, but its output `long.output` times as much where that's given.
+export type Price = { input: number; output: number; read: number; write?: number; long?: { over: number; times: number; output?: number } }
 
 export type Model = {
   price?: Price
@@ -59,13 +59,25 @@ const SHORT = () => 5
 // 1,087 compactions osolmaz measured a median item of 15,820 characters, so
 // about 800 tokens, and 34s for one of a 174K prompt.
 const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 800, ms: 34_000 } // at: 90% of 272K
-const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125 }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
+// OpenAI's long prompts: past 272K input tokens, input, reads and writes
+// double and output is 1.5x (OpenRouter's listings, 2026-11-16).
+const OPENAI_LONG = { over: 272_000, times: 2, output: 1.5 }
+const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long: OPENAI_LONG }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
 // Sol's window is 272K too (codex debug models, Codex 0.163.0).
-const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5 }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
+const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
+// Prices from OpenRouter's listings (2026-11-16): reads at 0.05x input on
+// terra, 0.1x on astra, writes at 1.25x. Neither is in Codex's model cache
+// yet (Codex 0.169.0), so the lookback, TTL, horizon and compaction are sol's,
+// not measured on these.
+const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG } }
+const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG } }
 
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },
   'claude-fable-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
+  // OpenRouter's listing (2026-11-16): reads at 0.025x input, writes at the
+  // usual 1.25x and 2x. The cache behaviour is assumed to be Anthropic's documented one.
+  'claude-fable-5-2': { price: { input: 8, output: 40, read: 0.2 }, ...CLAUDE_CODE },
   'claude-mythos-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
   // Reads at 0.1, as billed through OpenRouter (scripts/check-prices.ts).
   'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.1 }, ...CLAUDE_CODE },
@@ -83,9 +95,7 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   // Codex in use"): writes at 1.25x input, the latest 50 breakpoints looked
   // through, and entries kept at least 30 minutes after their last use. A
   // Codex session read nearly all of it after 35 minutes and nothing after 59,
-  // so the 30 minutes is what's counted on. Past 272K input tokens, input
-  // doubles and output is 1.5x, which `long` can't say. OpenRouter names it
-  // openai/gpt-6-luna.
+  // so the 30 minutes is what's counted on. OpenRouter names it openai/gpt-6-luna.
   'gpt-6-luna': LUNA,
   'openai/gpt-6-luna': LUNA,
   // Prices from OpenAI's model page, matching OpenRouter's: reads at 0.05x
@@ -96,6 +106,10 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   // measured on sol.
   'gpt-6.1-sol': SOL,
   'openai/gpt-6.1-sol': SOL,
+  'gpt-6.1-terra': TERRA,
+  'openai/gpt-6.1-terra': TERRA,
+  'gpt-6-astra': ASTRA,
+  'openai/gpt-6-astra': ASTRA,
   // Priced apart by each provider, so only per provider.
   'deepseek/deepseek-v4.1-flash': {
     providers: {

@@ -57,6 +57,10 @@ test('5-minute writes, long prompts and unknown models', () => {
   assert.equal(short!.actual, (1000 * 5) / 1e6)
   const haiku = cost([{ stats: at(0, 200_000, 0, 'claude-haiku-5-5'), usage: usage(200_000, 0, 0) }], HOUR)
   assert.equal(haiku!.actual, (200_000 * 0.5) / 1e6)
+  // Past 272K, OpenAI's input doubles and output is 1.5x.
+  const terra = (n: number) => spent('gpt-6.1-terra', undefined, { input_tokens: n, output_tokens: 1000 })
+  assert.ok(Math.abs(terra(272_000) - (272_000 * 1 + 1000 * 5) / 1e6) < 1e-12)
+  assert.ok(Math.abs(terra(300_000) - (300_000 * 2 + 1000 * 7.5) / 1e6) < 1e-12)
   assert.equal(cost([{ stats: at(0, 1000, 0, 'm'), usage: usage(0, 0, 1000) }], HOUR), undefined)
 })
 

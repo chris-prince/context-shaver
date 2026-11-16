@@ -114,9 +114,9 @@ const keptOf = (c: Compaction, s: Stats, rest: number) => (c.kept === 'prompts' 
 // A request's tokens in dollars; writes at the hour's price but for the share
 // written for 5 minutes, or at the model's own write price.
 function dollars(p: Price, t: Tokens, short: number): number {
-  const times = p.long && t.uncached + t.reads + t.writes > p.long.over ? p.long.times : 1
+  const long = p.long && t.uncached + t.reads + t.writes > p.long.over ? p.long : undefined
   const writes = p.write ? t.writes * p.write : (short * 1.25 + (t.writes - short) * 2) * p.input
-  return ((t.uncached * p.input + t.reads * p.read + writes + t.output * p.output) * times) / 1e6
+  return ((t.uncached * p.input + t.reads * p.read + writes) * (long?.times ?? 1) + t.output * p.output * (long?.output ?? long?.times ?? 1)) / 1e6
 }
 
 // What a request the client never saw cost, as a summary fork (summary.ts);

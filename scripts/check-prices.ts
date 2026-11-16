@@ -79,9 +79,9 @@ async function send(model: string, text: string, ttl?: '1h'): Promise<Usage> {
 function priced(m: Model, u: Usage, ttl?: '1h') {
   const p = m.price!
   const write = p.write ?? p.input * (ttl ? 2 : 1.25)
-  const times = p.long && u.prompt > p.long.over ? p.long.times : 1
+  const long = p.long && u.prompt > p.long.over ? p.long : undefined
   const uncached = u.prompt - u.cached - u.written
-  return { prompt: times * (uncached * p.input + u.written * write + u.cached * p.read) / 1e6, output: times * (u.output * p.output) / 1e6 }
+  return { prompt: (long?.times ?? 1) * (uncached * p.input + u.written * write + u.cached * p.read) / 1e6, output: (long?.output ?? long?.times ?? 1) * (u.output * p.output) / 1e6 }
 }
 
 const $ = (n: number) => '$' + n.toFixed(8)
