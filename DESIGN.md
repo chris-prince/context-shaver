@@ -89,6 +89,14 @@ listed registry in turn. Being a variable, it reaches the install through
 Deleting `proxy-data/node` makes the next run install the newest 24.x.
 `bin/run-proxy` starts the proxy through it.
 
+Where `node` and `npm` are a version manager's shims (nodenv, asdf, mise),
+they pick the version by the directory they run in, and a `.node-version` there
+may name one not installed. So a `node` that fails from the caller's directory
+is tried again from the checkout's, npm runs from there, and the Node found runs
+by its own path, from the caller's directory. npm so reads the user's own
+`.npmrc` but not the caller's project's. An npm that can't run at all is
+reported as that, with no registries offered.
+
 | Option | Default | |
 | --- | --- | --- |
 | `--port` | `18787` | Listens on 127.0.0.1 only. The scripts pass `SHAVER_PORT` here ([above](#running)) |

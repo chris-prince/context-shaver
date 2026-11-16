@@ -43,7 +43,7 @@ port=${SHAVER_PORT:-18787}
 id=$("$bin/node-wrapper" "$bin/../src/launch-vals.ts" opencode "$bin/../proxy-data" -- "$@")
 # Our providers are merged over the user's own OPENCODE_CONFIG_CONTENT, which
 # would otherwise be lost; one that isn't JSON is dropped, with a warning.
-OPENCODE_CONFIG_CONTENT=$(node -e '
+OPENCODE_CONFIG_CONTENT=$("$bin/node-wrapper" -e '
 const [user, base] = process.argv.slice(1)
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
 const merge = (a, b) => isObj(a) && isObj(b) ? Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map((k) => [k, k in b ? merge(a[k], b[k]) : a[k]])) : b

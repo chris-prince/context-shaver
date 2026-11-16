@@ -12,6 +12,12 @@
 # first, in the foreground, so it can still ask. (Backgrounded or redirected by
 # the caller, it could not: bash gives a script's background job no terminal to
 # read.)
+#
+# A version manager's shim (nodenv, asdf, mise) as `node` or `npm` picks the
+# version by the directory it runs in, where a file such as .node-version may
+# name one not installed. So a node that fails from the caller's directory is
+# tried again from this repo's, npm runs from there, and the Node found runs by
+# its own path, from the caller's directory.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -26,7 +32,19 @@ if [[ ${1:-} == --nohup ]]; then
   shift 2
 fi
 
-ok() { (($(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0) >= 24)); }
+# Sets $node to the path of a Node 24 or newer, as found from the caller's
+# directory or else this repo's.
+node=
+ok() {
+  local d
+  for d in "$PWD" "$repo"; do
+    node=$(cd "$d" && node -p 'process.versions.node.split(".")[0] >= 24 ? process.execPath : ""' 2>/dev/null) &&
+      [[ -n $node ]] && return
+  done
+  node=
+  return 1
+}
+npm() { (cd "$repo" && command npm "$@"); }
 # npm's output goes to $out, shown only if every try fails.
 install() { npm install -g --prefix "$dir" "$@" node@24 >"$out" 2>&1 && ok; }
 
@@ -82,9 +100,16 @@ pick() {
 }
 
 if ! ok; then
-  command -v npm >/dev/null || die "Node 24 or newer is needed, and there is no npm to install it with"
-  echo "node-wrapper: Node 24 or newer is needed; installing it under $dir with npm" >&2
+  type -P npm >/dev/null || die "Node 24 or newer is needed, and there is no npm to install it with"
   out=$(mktemp)
+  # One that can't run at all, as a shim for a version not installed, is no
+  # registry's fault, so none is offered.
+  npm --version >"$out" 2>&1 || {
+    cat "$out" >&2
+    rm -f "$out"
+    die "Node 24 or newer is needed, and npm does not run here to install it"
+  }
+  echo "node-wrapper: Node 24 or newer is needed; installing it under $dir with npm" >&2
   # Default registry first, then those pick gives (none when it gives none).
   tried() {
     install && return
@@ -101,11 +126,11 @@ if ! ok; then
     die "could not install Node 24; set a registry npm can reach (npm config set registry <url>)"
   }
   rm -f "$out"
-  echo "node-wrapper: installed Node $(node -v)" >&2
+  echo "node-wrapper: installed Node $("$node" -v)" >&2
 fi
 if [[ -n $log ]]; then
   # Node restores SIGHUP's default, undoing nohup; the proxy ignores it itself.
-  nohup node "$@" >>"$log" 2>&1 </dev/null &
+  nohup "$node" "$@" >>"$log" 2>&1 </dev/null &
 else
-  exec node "$@"
+  exec "$node" "$@"
 fi
