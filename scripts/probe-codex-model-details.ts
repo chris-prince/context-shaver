@@ -130,6 +130,13 @@ for (let n = 1; n <= 200; n++) {
   writeFileSync(join(dir, `s${n}`), `step ${n}\n${words.join(' ')}\n`)
 }
 
+// Stops the probe, as there is nothing to measure: the model refused, or
+// Codex's requests never came through the forwarder.
+function stop(why: string): never {
+  console.error(`probe-codex-model-details: ${why}`)
+  process.exit(1)
+}
+
 // Runs Codex once; resolves to its session id.
 function codex(prompt: string, resume?: string): Promise<string> {
   const args = ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '-C', dir, '-m', model, '-c', `openai_base_url="http://127.0.0.1:${port}"`]
@@ -141,8 +148,11 @@ function codex(prompt: string, resume?: string): Promise<string> {
     p.stdout.on('data', (c) => (out += c))
     p.on('close', (code) => {
       const id = out.match(/"thread_id":"([^"]+)"/)?.[1] ?? resume
-      if (code === 0 && id) resolve(id)
-      else reject(new Error(`codex exited ${code}: ${out.slice(-500)}`))
+      const failed = out.match(/"type":"turn\.failed","error":\{"message":"((?:[^"\\]|\\.)*)"/)?.[1]
+      if (failed) stop(`Codex's turn failed, so ${model} can't be probed here: ${JSON.parse(`"${failed}"`)}`)
+      if (code !== 0 || !id) return reject(new Error(`codex exited ${code}: ${out.slice(-500)}`))
+      if (!of(id).length) stop(`Codex answered, but none of its requests came through the forwarder: is it using another model provider than its built-in OpenAI one?`)
+      resolve(id)
     })
   })
 }
