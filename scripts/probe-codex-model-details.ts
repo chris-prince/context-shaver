@@ -19,7 +19,7 @@
 //   lookback  [--runs 80] [--k 70,55,51,49,45,21,19,10]
 //   ttl       [--gaps 1,20,40,70]       minutes
 //   --upstream URL   default https://chatgpt.com/backend-api/codex (ChatGPT sign-in)
-//   --codex PATH     default codex
+//   --codex PATH     default codex, as the user's shell has it (alias, function or PATH)
 import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { zstdDecompressSync } from 'node:zlib'
@@ -143,7 +143,11 @@ function codex(prompt: string, resume?: string): Promise<string> {
   if (resume) args.push('resume', resume)
   args.push(prompt)
   return new Promise((resolve, reject) => {
-    const p = spawn(codexPath, args, { stdio: ['ignore', 'pipe', 'inherit'] })
+    // Through an interactive login shell, as codex-via-shaver does, so `codex`
+    // is what it is at the user's prompt: their alias or function, set up by
+    // their profile. Its output is only searched, so a profile's own lines do no harm.
+    const command = codexPath === 'codex' ? 'codex' : `'${codexPath.replaceAll("'", `'\\''`)}'`
+    const p = spawn('bash', ['-lic', `${command} "$@"`, 'bash', ...args], { stdio: ['ignore', 'pipe', 'inherit'] })
     let out = ''
     p.stdout.on('data', (c) => (out += c))
     p.on('close', (code) => {
