@@ -66,8 +66,10 @@ const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long:
 // Sol's window is 272K too (codex debug models, Codex 0.163.0).
 const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
 // Prices from OpenRouter's listings (2026-11-16): reads at 0.05x input on
-// terra, 0.1x on astra, writes at 1.25x. Neither is in Codex's model cache
-// yet (Codex 0.169.0), so the lookback, TTL, horizon and compaction are sol's,
+// terra, 0.1x on astra, writes at 1.25x. The TTL was probed on 2026-11-16
+// through OpenRouter (check-prices.ts --lifetime), as sol's was: entries read
+// after 1, 15 and 28 minutes, nothing after 32. Neither is in Codex's model
+// cache yet (Codex 0.169.0), so the lookback, horizon and compaction are sol's,
 // not measured on these.
 const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG } }
 const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG } }
