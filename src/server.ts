@@ -918,8 +918,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     write(held.rest())
   }
-  res.end()
+  // An answer that isn't streamed is complete only here; it is journaled
+  // before its end goes out, as a stream's is above.
   finish(false)
+  res.end()
 }
 
 // What answers a command, for the request `body` of conversation `key`, the
