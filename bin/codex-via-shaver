@@ -57,26 +57,47 @@ fi
 # the newest install each time it runs, its links then made again for that
 # install, so a path printed once follows the newer installs a wrapper fetches:
 # from the launch after, as a wrapper looking beside it before running it sees
-# the links made for the previous install.
+# the links made for the previous install. A Codex that is itself a link (as
+# npm's and Homebrew's are) is followed to its install, but the directories
+# above it are kept as matched, so links through a `current` link that a
+# deploy tool swaps to each new release follow each release with no relinking.
 #
 # Links in a stand-in's directory to all beside a real Codex, and none to
-# another install's. At best effort: a link it can't make fails no launch.
+# another install's. The links are each replaced by a rename, never removed
+# first, and only links to names the install lacks are removed, so a launch
+# beside it while another relinks, even for another install, finds every file,
+# the old or the new. At best effort: a link it can't make fails no launch.
 stand_in_links() {
   local dir=$1 real=$2 from l f
   from=$(dirname "$real")
-  for l in "$dir"/* "$dir"/.[!.]*; do
-    [[ -L $l && $(dirname "$(readlink "$l")") != "$from" ]] && rm -f "$l"
-  done
   for f in "$from"/* "$from"/.[!.]*; do
-    [[ -e $f && $f != "$real" && $(readlink "$dir/${f##*/}") != "$f" ]] &&
-      ln -sfn "$f" "$dir/"
+    l=$dir/${f##*/}
+    [[ -e $f && $f != "$real" && $(readlink "$l") != "$f" ]] || continue
+    [[ -d $l && ! -L $l ]] && continue
+    # Onto a link to a directory, plain mv would move into it: -T is GNU's
+    # way not to, -h BSD's; each fails on the other's, leaving all as it was.
+    ln -s "$f" "$l.$$" 2>/dev/null &&
+      { mv -fT "$l.$$" "$l" 2>/dev/null || mv -fh "$l.$$" "$l" 2>/dev/null || rm -f "$l.$$"; }
+  done
+  for l in "$dir"/* "$dir"/.[!.]*; do
+    [[ -L $l && ! -e $from/${l##*/} ]] && rm -f "$l"
   done
   return 0
 }
 
+# Follows links on the file itself, not on the directories above it.
+file_of() {
+  local p=$1 t
+  while [[ -L $p ]]; do
+    t=$(readlink "$p")
+    [[ $t == /* ]] && p=$t || p=$(dirname "$p")/$t
+  done
+  printf %s "$p"
+}
+
 if [[ ${1:-} == --stand-in ]]; then
   [[ -n ${SHAVER_REAL_CODEX_LOCATIONS:-} ]] || die "--stand-in needs SHAVER_REAL_CODEX_LOCATIONS"
-  real=$(readlink -f "$real")
+  real=$(file_of "$real")
   dir=$(readlink -f "$bin/..")/proxy-data/stand-in/$(printf %s "$SHAVER_REAL_CODEX_LOCATIONS" | cksum | cut -d' ' -f1)
   stub=$dir/$(basename "$real")
   script=$(printf '#!/usr/bin/env bash\nexport SHAVER_REAL_CODEX_LOCATIONS=%q SHAVER_STAND_IN=%q\nexec %q "$@"' \
@@ -94,7 +115,7 @@ fi
 
 # Run by a stand-in's script: its links follow the install found this time.
 if [[ -n ${SHAVER_STAND_IN:-} ]]; then
-  [[ -d $SHAVER_STAND_IN ]] && stand_in_links "$SHAVER_STAND_IN" "$(readlink -f "$real")"
+  [[ -d $SHAVER_STAND_IN ]] && stand_in_links "$SHAVER_STAND_IN" "$(file_of "$real")"
   unset SHAVER_STAND_IN
 fi
 

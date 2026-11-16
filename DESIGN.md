@@ -183,7 +183,15 @@ Its path depends only on `SHAVER_REAL_CODEX_LOCATIONS`, not on the install
 found, so it can be printed once, where the variable is set. Its links are made
 again for the newest install each time it is made or run. A wrapper that
 fetches a newer install and then looks beside the stand-in sees the previous
-install's files on that first launch.
+install's files on that first launch. A Codex that is itself a link (as npm's
+and Homebrew's are) is followed to its install, but the directories above it
+are kept as matched, so through a `current` link that a deploy tool swaps to
+each new release, the links follow each release without being made again.
+Only a name the new release lacks dangles, until the next launch removes
+it. Each link is replaced
+by a rename, never removed first, and only links to names the install lacks
+are removed, so a launch while another relinks finds every file, from one
+install or the other.
 
 The proxy serves only requests whose `Host` is `127.0.0.1` or `localhost`.
 Since a request can name any upstream, a web page that reached the proxy by DNS
