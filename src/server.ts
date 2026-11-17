@@ -72,6 +72,15 @@ mkdirSync(stateDir, { recursive: true })
 const commit = (() => {
   try { return execFileSync('git', ['-C', import.meta.dirname, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return '' }
 })()
+// The version proxy.log, request lines and `shaver info` give: the commit's
+// first 8 characters, marked +uncommitted when src/ differed from it at
+// startup, when the code that runs was loaded.
+const version = (() => {
+  if (!commit) return 'unknown'
+  let changed = true
+  try { changed = !!execFileSync('git', ['-C', import.meta.dirname, 'status', '--porcelain', '.'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch {}
+  return commit.slice(0, 8) + (changed ? '+uncommitted' : '')
+})()
 
 // A conversation's applied clock; the cache entries its answered requests
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
@@ -413,7 +422,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     // The messages as the client sent them, when they went up changed, so
     // what was taken (a newest answer's thinking, say) can be rebuilt.
     const changed = msgs.length !== body.messages.length || msgs.some((m, i) => JSON.stringify(m) !== JSON.stringify(body.messages[i]))
-    p.logLine = { event: 'request', time, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), messages: writeMessages(p.logDir, body.messages, ids?.of), ...(changed && { received: writeMessages(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, version, model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), messages: writeMessages(p.logDir, body.messages, ids?.of), ...(changed && { received: writeMessages(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -457,7 +466,7 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   if (trimmed) splitShaved(described, trimmed)
   const text = s ? render(s, key, false, withSummaryForks, summaryRequests) : render(estimate(described), key, true, withSummaryForks, summaryRequests)
   const warning = missed ? `\n\nshaver: since it started, the journal missed ${countOf(missed, 'request')}; see proxy.log` : ''
-  return '```\n' + text + warning + '\n```'
+  return '```\n' + `Shaver Version: ${version}\n` + text + warning + '\n```'
 }
 
 // What each thinking block of a response bills when sent back: the output
@@ -1441,7 +1450,7 @@ server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code !== 'EADDRINUSE') throw err
   console.error(`shaver: ${inUse(a.port)}`)
   process.exit(1)
-}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}`))
+}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: version ${version}, listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}`))
 
 function inUse(port: string) {
   return `port ${port} is in use by another program. Set SHAVER_PORT=NNNN to an available port number.`

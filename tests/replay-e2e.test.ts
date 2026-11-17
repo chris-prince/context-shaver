@@ -114,6 +114,9 @@ test('the replay rebuilds a logged conversation and reprices it consistently', a
     assert.deepEqual(sent.map((l) => l.turns), [...Array(7).fill([1]), ...Array(4).fill([1, 8])])
     const read = (h: string) => JSON.parse(readFileSync(path.join(dir, 'logs', key, 'objects', h + '.json'), 'utf8'))
     receivedOf(lines).forEach((hashes, n) => assert.equal(sent[n].turns.length, promptsOf(hashes.map(read)).length))
+    // Every request line names the proxy's version: its commit, marked when
+    // src/ had uncommitted changes.
+    for (const l of sent) assert.match(l.version, /^[0-9a-f]{8}(\+uncommitted)?$/)
   } finally {
     child.kill()
     up.close()
