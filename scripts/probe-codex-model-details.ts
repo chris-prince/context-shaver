@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Measures a model's prompt-cache lookback and TTL through Codex itself, so
 // the requests are the ones Codex makes, on Codex's own auth and route. It
 // needs nothing from this repo: it runs Codex with its base URL set to a
@@ -15,7 +14,7 @@
 //   ttl: one short session per gap, all side by side; each is resumed after
 //     its gap, and the read shows whether the entry was still there.
 //
-// usage: probe-codex-model-details.ts lookback|ttl --model M [options]
+// Usage: bin/node-wrapper scripts/probe-codex-model-details.ts lookback|ttl --model M [options]
 //   lookback  [--runs 80] [--k 70,55,51,49,45,21,19,10]
 //   ttl       [--gaps 1,20,40,70]       minutes
 //   --upstream URL   default https://chatgpt.com/backend-api/codex (ChatGPT sign-in)

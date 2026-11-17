@@ -1,7 +1,7 @@
 // Checks the journals against each harness's own record of the API calls it
 // made, and lists every call no journal line accounts for.
 //
-//   bin/node-wrapper scripts/audit-journal.ts [--since <iso date>] [--verbose]
+// Usage: bin/node-wrapper scripts/audit-journal.ts [--since <iso date>] [--verbose]
 //
 // Sources: Codex's rollout files (one token_count event per API call),
 // OpenCode's log (one "stream" line per model call, tagged with its agent),
