@@ -101,8 +101,12 @@ if [[ ${1:-} == --stand-in ]]; then
   real=$(file_of "$real")
   dir=$(readlink -f "$bin/..")/proxy-data/stand-in/$(printf %s "$SHAVER_REAL_CODEX_LOCATIONS" | cksum | cut -d' ' -f1)
   stub=$dir/$(basename "$real")
-  script=$(printf '#!/usr/bin/env bash\nexport SHAVER_REAL_CODEX_LOCATIONS=%q SHAVER_REAL_CODEX_LOCK=%q SHAVER_STAND_IN=%q\nexec %q "$@"' \
-    "$SHAVER_REAL_CODEX_LOCATIONS" "${SHAVER_REAL_CODEX_LOCK:-}" "$dir" "$me")
+  # The lock setting is kept only when set: an empty one kept would override
+  # the caller's until --stand-in is run again.
+  lock=
+  [[ -z ${SHAVER_REAL_CODEX_LOCK:-} ]] || printf -v lock ' SHAVER_REAL_CODEX_LOCK=%q' "$SHAVER_REAL_CODEX_LOCK"
+  script=$(printf '#!/usr/bin/env bash\nexport SHAVER_REAL_CODEX_LOCATIONS=%q%s SHAVER_STAND_IN=%q\nexec %q "$@"' \
+    "$SHAVER_REAL_CODEX_LOCATIONS" "$lock" "$dir" "$me")
   mkdir -p "$dir"
   stand_in_links "$dir" "$real"
   if [[ ! -x $stub || $(<"$stub") != "$script" ]]; then
@@ -124,11 +128,12 @@ fi
 # (after links) on which a shared flock(2) keeps a deploy tool from removing
 # that directory, Codex is run from that directory, kept so while it runs,
 # since Codex keeps starting helper programs from its own directory (with
-# links followed), which a release removed under it would leave it unable to. The lock is held by a process of its own, which ends when Codex
-# does, so nothing Codex starts holds it on. A directory that can't be locked,
-# as one being removed, is looked up again, a few times. At best effort, as
-# without flock(1): a lock it can't take fails no launch, which then runs
-# Codex as found.
+# links followed), which a release removed under it would leave it unable
+# to. The lock is held by a process of its own, which ends when Codex does, so
+# nothing Codex starts holds it on. A directory that can't be locked, as one
+# being removed, is looked up again, a few times. At best effort, as without
+# flock(1): a lock it can't take fails no launch, which then runs Codex as
+# found.
 pin_install() {
   local f d i held
   f=$(file_of "$real")

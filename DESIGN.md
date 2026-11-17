@@ -199,8 +199,10 @@ a running Codex without them. Where the tool keeps a release while a shared
 `flock(2)` is held on a file in it, `SHAVER_REAL_CODEX_LOCK` names that file,
 and `codex-via-shaver` runs Codex from the release's own directory, with the
 lock held by a process of its own until Codex exits, so nothing Codex starts
-inherits it. A stand-in passes it on as it does
-`SHAVER_REAL_CODEX_LOCATIONS`:
+inherits it. A stand-in made with it set keeps it, as it does
+`SHAVER_REAL_CODEX_LOCATIONS`; one made without it uses whatever its caller
+has, since an empty one kept would override that until the stand-in is made
+again:
 
 ```bash
 export SHAVER_REAL_CODEX_LOCATIONS=~/path/to/releases/current/codex
