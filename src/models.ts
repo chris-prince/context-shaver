@@ -63,16 +63,25 @@ const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 800, ms: 34_0
 // double and output is 1.5x (OpenRouter's listings, 2026-11-16).
 const OPENAI_LONG = { over: 272_000, times: 2, output: 1.5 }
 const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long: OPENAI_LONG }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
-// Sol's window is 272K too (codex debug models, Codex 0.163.0).
-const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
+// Sol's window is 272K too (`codex debug models`, Codex 0.163.0). Its lookback
+// was probed on 2026-11-17 through Codex (probe-codex-model-details.ts
+// lookback): read 38 runs back, nothing at 39, at about 250 and 1,000 tokens
+// a run, so it counts runs, not tokens.
+const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 38, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
 // Prices from OpenRouter's listings (2026-11-16): reads at 0.05x input on
 // terra, 0.1x on astra, writes at 1.25x. The TTL was probed on 2026-11-16
-// through OpenRouter (check-prices.ts --lifetime), as sol's was: entries read
-// after 1, 15 and 28 minutes, nothing after 32. Neither is in Codex's model
-// cache yet (Codex 0.169.0), so the lookback, horizon and compaction are sol's,
-// not measured on these.
-const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG } }
-const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG } }
+// through OpenRouter (check-prices.ts --lifetime): entries read after 1, 15
+// and 28 minutes, nothing after 32. The lookback was probed on 2026-11-17
+// through Codex, as sol's was: astra's is sol's, 38 runs (at about 250 tokens
+// a run only); terra's is 20 runs at about 250 and 1,000 tokens a run (read at
+// 20, at 21 and 22 only the session's opening, 21,488 tokens, which terra kept
+// past its lookback, a read this table doesn't model). Terra's window is
+// 500K where Codex's model catalog lists it (`codex debug models`, Codex
+// 0.169.0), so Codex compacts it at 450K; a ChatGPT sign-in's catalog doesn't
+// list terra or astra yet. The horizon and the compaction's summary and time
+// are sol's, not measured on these.
+const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG }, lookback: 20, compaction: { ...CODEX_V2, at: 450_000 } } // at: 90% of 500K
+const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG }, lookback: 38 }
 
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },

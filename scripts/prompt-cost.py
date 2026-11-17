@@ -30,7 +30,13 @@ import sys
 from datetime import datetime
 
 LOGS = "proxy-data/logs"
-PRICES = (("opus-5-5", 4.0, 0.05), ("haiku-5-5", 0.10, 0.1), ("haiku", 1.0, 0.1), ("sonnet", 3.0, 0.1), ("opus", 5.0, 0.1))
+# (name in the model id, input $/M, reads as a fraction of input), first match
+# wins; as src/models.ts prices them.
+PRICES = (
+    ("opus-5-5", 4.0, 0.05), ("fable-5-2", 8.0, 0.025), ("fable-5-1", 10.0, 0.025), ("mythos-5-1", 10.0, 0.025),
+    ("sonnet-5-5", 2.0, 0.05), ("sonnet-5", 2.0, 0.1), ("haiku-5-5", 0.10, 0.1),
+    ("haiku", 1.0, 0.1), ("sonnet", 3.0, 0.1), ("opus", 5.0, 0.1),
+)
 
 
 def ts(s: str) -> float:
