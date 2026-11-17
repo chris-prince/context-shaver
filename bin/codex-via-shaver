@@ -67,18 +67,22 @@ fi
 # another install's. The links are each replaced by a rename, never removed
 # first, and only links to names the install lacks are removed, so a launch
 # beside it while another relinks, even for another install, finds every file,
-# the old or the new. At best effort: a link it can't make fails no launch.
+# the old or the new. Each is made in a directory of its own beside them first,
+# so a relink in progress isn't undone by another launch's cleanup. At best
+# effort: a link it can't make fails no launch.
 stand_in_links() {
-  local dir=$1 real=$2 from l f
+  local dir=$1 real=$2 from l f t tmp=$1/.stand-in-tmp
   from=$(dirname "$real")
+  mkdir -p "$tmp" 2>/dev/null || return 0
   for f in "$from"/* "$from"/.[!.]*; do
     l=$dir/${f##*/}
     [[ -e $f && $f != "$real" && $(readlink "$l") != "$f" ]] || continue
     [[ -d $l && ! -L $l ]] && continue
     # Onto a link to a directory, plain mv would move into it: -T is GNU's
     # way not to, -h BSD's; each fails on the other's, leaving all as it was.
-    ln -s "$f" "$l.$$" 2>/dev/null &&
-      { mv -fT "$l.$$" "$l" 2>/dev/null || mv -fh "$l.$$" "$l" 2>/dev/null || rm -f "$l.$$"; }
+    t=$tmp/${f##*/}.$$
+    ln -s "$f" "$t" 2>/dev/null &&
+      { mv -fT "$t" "$l" 2>/dev/null || mv -fh "$t" "$l" 2>/dev/null || rm -f "$t"; }
   done
   for l in "$dir"/* "$dir"/.[!.]*; do
     [[ -L $l && ! -e $from/${l##*/} ]] && rm -f "$l"
@@ -86,10 +90,11 @@ stand_in_links() {
   return 0
 }
 
-# Follows links on the file itself, not on the directories above it.
+# Follows links on the file itself, not on the directories above it. Links
+# that loop are left after 40, as the kernel does, for running it to fail on.
 file_of() {
-  local p=$1 t
-  while [[ -L $p ]]; do
+  local p=$1 t n=0
+  while [[ -L $p ]] && ((n++ < 40)); do
     t=$(readlink "$p")
     [[ $t == /* ]] && p=$t || p=$(dirname "$p")/$t
   done

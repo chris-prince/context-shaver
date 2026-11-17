@@ -188,10 +188,10 @@ and Homebrew's are) is followed to its install, but the directories above it
 are kept as matched, so through a `current` link that a deploy tool swaps to
 each new release, the links follow each release without being made again.
 Only a name the new release lacks dangles, until the next launch removes
-it. Each link is replaced
-by a rename, never removed first, and only links to names the install lacks
-are removed, so a launch while another relinks finds every file, from one
-install or the other.
+it. Each link is replaced by a rename, never removed first, from a directory
+of its own beside them, and only links to names the install lacks are
+removed, so a launch while another relinks finds every file, from one install
+or the other.
 
 While it runs, Codex keeps starting helper programs from its own directory
 (with links followed), so a deploy tool that removes an old release can leave
