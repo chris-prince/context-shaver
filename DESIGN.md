@@ -193,6 +193,23 @@ by a rename, never removed first, and only links to names the install lacks
 are removed, so a launch while another relinks finds every file, from one
 install or the other.
 
+While it runs, Codex keeps starting helper programs from its own directory
+(with links followed), so a deploy tool that removes an old release can leave
+a running Codex without them. Where the tool keeps a release while a shared
+`flock(2)` is held on a file in it, `SHAVER_REAL_CODEX_LOCK` names that file,
+and `codex-via-shaver` runs Codex from the release's own directory, with the
+lock held by a process of its own until Codex exits, so nothing Codex starts
+inherits it. A stand-in passes it on as it does
+`SHAVER_REAL_CODEX_LOCATIONS`:
+
+```bash
+export SHAVER_REAL_CODEX_LOCATIONS=~/path/to/releases/current/codex
+export SHAVER_REAL_CODEX_LOCK=<lock file name>
+```
+
+A release it can't lock, as one being removed, is looked up again; one with no
+such file, or a host without `flock(1)`, runs Codex as found.
+
 The proxy serves only requests whose `Host` is `127.0.0.1` or `localhost`.
 Since a request can name any upstream, a web page that reached the proxy by DNS
 rebinding (which sends the page's own domain as `Host`) could otherwise read

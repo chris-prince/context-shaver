@@ -19,7 +19,8 @@
 # the newest. Set it when this stands
 # in for Codex under a wrapper that passes the provider itself once it starts
 # (DESIGN.md); there, running `codex` would run the wrapper, which would run
-# this again.
+# this again. SHAVER_REAL_CODEX_LOCK, with it, names a lock file that keeps
+# Codex's release from being removed while it runs (pin_install).
 set -euo pipefail
 
 me=$(readlink -f "$0")
@@ -100,8 +101,8 @@ if [[ ${1:-} == --stand-in ]]; then
   real=$(file_of "$real")
   dir=$(readlink -f "$bin/..")/proxy-data/stand-in/$(printf %s "$SHAVER_REAL_CODEX_LOCATIONS" | cksum | cut -d' ' -f1)
   stub=$dir/$(basename "$real")
-  script=$(printf '#!/usr/bin/env bash\nexport SHAVER_REAL_CODEX_LOCATIONS=%q SHAVER_STAND_IN=%q\nexec %q "$@"' \
-    "$SHAVER_REAL_CODEX_LOCATIONS" "$dir" "$me")
+  script=$(printf '#!/usr/bin/env bash\nexport SHAVER_REAL_CODEX_LOCATIONS=%q SHAVER_REAL_CODEX_LOCK=%q SHAVER_STAND_IN=%q\nexec %q "$@"' \
+    "$SHAVER_REAL_CODEX_LOCATIONS" "${SHAVER_REAL_CODEX_LOCK:-}" "$dir" "$me")
   mkdir -p "$dir"
   stand_in_links "$dir" "$real"
   if [[ ! -x $stub || $(<"$stub") != "$script" ]]; then
@@ -117,6 +118,43 @@ fi
 if [[ -n ${SHAVER_STAND_IN:-} ]]; then
   [[ -d $SHAVER_STAND_IN ]] && stand_in_links "$SHAVER_STAND_IN" "$(file_of "$real")"
   unset SHAVER_STAND_IN
+fi
+
+# With SHAVER_REAL_CODEX_LOCK, the name of a file in the real Codex's directory
+# (after links) on which a shared flock(2) keeps a deploy tool from removing
+# that directory, Codex is run from that directory, kept so while it runs,
+# since Codex keeps starting helper programs from its own directory (with
+# links followed), which a release removed under it would leave it unable to. The lock is held by a process of its own, which ends when Codex
+# does, so nothing Codex starts holds it on. A directory that can't be locked,
+# as one being removed, is looked up again, a few times. At best effort, as
+# without flock(1): a lock it can't take fails no launch, which then runs
+# Codex as found.
+pin_install() {
+  local f d i held
+  f=$(file_of "$real")
+  command -v flock >/dev/null || return 0
+  for i in 1 2 3; do
+    ((i == 1)) || sleep 0.2
+    d=$(readlink -f "$(dirname "$f")") && [[ -e $d/$SHAVER_REAL_CODEX_LOCK ]] || return 0
+    # Locked, and Codex still there, before it says so; then it waits for this
+    # PID, which exec leaves to Codex. Started from the $( ), it is no child
+    # of Codex's.
+    held=$( (
+      exec 9<"$d/$SHAVER_REAL_CODEX_LOCK"
+      flock -s -n 9 && [[ -x $d/${f##*/} ]] || exit 0
+      echo held
+      exec >/dev/null
+      while kill -0 $$ 2>/dev/null; do sleep 5; done
+    ) </dev/null 2>/dev/null &)
+    if [[ $held == held ]]; then
+      real=$d/${f##*/}
+      return 0
+    fi
+  done
+  return 0
+}
+if [[ -n ${SHAVER_REAL_CODEX_LOCATIONS:-} && -n ${SHAVER_REAL_CODEX_LOCK:-} ]]; then
+  pin_install
 fi
 
 # Percent-encodes all but unreserved characters (RFC 3986), for a path segment.
