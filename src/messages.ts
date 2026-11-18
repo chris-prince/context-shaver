@@ -9,7 +9,7 @@ import { eventReader, type Canonical, type Content, type Protocol } from './prot
 import { summaryForkMessages } from './summary.ts'
 
 // The usage a response reports: message_start's, with message_delta's output
-// tokens, for a stream; the body's for a plain response. Also its content's
+// tokens and their thinking part, for a stream; the body's for a plain response. Also its content's
 // lengths: each thinking block's signature and the characters of everything
 // else. And the reply's text, with whether it ends the turn.
 function usageReader() {
@@ -27,6 +27,7 @@ function usageReader() {
       if (e.type === 'message_start' && e.message?.input_transformations) transformations = e.message.input_transformations
       if (e.type === 'message_delta' && e.input_transformations) transformations = e.input_transformations
       if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
+      if (e.type === 'message_delta' && usage && e.usage?.output_tokens_details) usage.output_tokens_details = e.usage.output_tokens_details
       // Searches are counted as they run, so the final delta's count is the
       // answer's.
       if (e.type === 'message_delta' && usage && e.usage?.server_tool_use) usage.server_tool_use = e.usage.server_tool_use

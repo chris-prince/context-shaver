@@ -44,6 +44,9 @@ export type Usage = {
   cache_creation_input_tokens?: number
   cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number }
   output_tokens?: number
+  // The thinking part of output_tokens, with the thinking-token-count beta,
+  // which Claude Code sends.
+  output_tokens_details?: { thinking_tokens?: number }
   // Web searches the API ran for the answer, billed by the search.
   server_tool_use?: { web_search_requests?: number }
 }

@@ -363,3 +363,37 @@ test("a reply's thinking counts in its count exactly until the API reports it dr
     assert.equal(again.tokens[k], s.tokens[k], when)
   }
 })
+
+// Where the API reports the thinking part of the output count, a dropped
+// reply costs its output less that, not what its bytes suggest.
+test("a dropped reply's thinking comes off its count as the API reported it", () => {
+  const prompt: ApiMsg = { role: 'user', content: 'hi '.repeat(100) }
+  const reply: ApiMsg = { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'x'.repeat(5000) }, { type: 'text', text: 'hello' }] }
+  const next: ApiMsg = { role: 'user', content: 'more' }
+  const reply2: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'sure' }] }
+  const next2: ApiMsg = { role: 'user', content: 'again' }
+  const trimmed: ApiMsg = { role: 'user', content: 'hi' }
+  const at = (n: number) => `2026-11-18T10:0${n}:00Z`
+  // The reply's output, 2000 tokens, is 1900 of thinking.
+  const first = observe(undefined, describe(body([prompt]), ends, at(0)), 1000, 2000, undefined, [], 1900)
+  // [when the drop is reported: never, on the trim, or on the reply's first send]
+  for (const when of ['never', 'trim', 'first'] as const) {
+    const drops = (on: boolean) => (on ? [1] : [])
+    let s = observe(first, describe(body([prompt, reply, next]), ends, at(1)), when === 'first' ? 1100 : 3100, 10, undefined, drops(when === 'first'))
+    const k = s.messages[1].key
+    assert.equal(s.tokens[k], when === 'first' ? 100 : 2000, when)
+    s = observe(s, describe(body([prompt, reply, next, reply2]), ends, at(2)), s.inputTokens + 10, 0, undefined, drops(when === 'first'))
+    const input = when === 'never' ? 2250 : 250
+    s = observe(s, describe(body([trimmed, reply, next, reply2, next2]), ends, at(3), true), input, 0, undefined, drops(when !== 'never'))
+    assert.ok(Math.abs(sum(s) - input) < 1e-6, when)
+    if (when === 'never') {
+      assert.equal(s.tokens[k], 2000, 'never dropped, the reply costs its whole output, thinking included')
+      assert.equal(s.thinking[k], 1900, 'its thinking count kept for a later drop')
+    } else {
+      assert.equal(s.tokens[k], 100, when)
+      assert.ok(!(k in s.bound) && !(k in s.thinking), when)
+    }
+    const again = observe(s, describe(body([trimmed, reply, next, reply2, next2]), ends, at(4)), input, 0, undefined, drops(when !== 'never'))
+    assert.equal(again.tokens[k], s.tokens[k], `${when}: the next request changes nothing`)
+  }
+})

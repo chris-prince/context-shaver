@@ -38,7 +38,7 @@ import type { Stats } from './stats.ts'
 
 // Every other field is plain, set whole when it changes: listing them let a
 // new one go unjournaled (Stats.compacted, until 2026-10-24).
-const RECORDS = ['tokens', 'bound', 'answers', 'seen'] as const
+const RECORDS = ['tokens', 'bound', 'answers', 'thinking', 'seen'] as const
 type Plain = Exclude<keyof Stats, (typeof RECORDS)[number] | 'messages'>
 const plainOf = (s: Stats | undefined) => Object.keys(s ?? {}).filter((f) => f !== 'messages' && !(RECORDS as readonly string[]).includes(f)) as Plain[]
 

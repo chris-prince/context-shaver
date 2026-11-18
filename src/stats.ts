@@ -107,6 +107,10 @@ export type Stats = {
   // The output count of each answered request, by its last message's key,
   // until the reply it answered with shows up.
   answers: Record<string, number>
+  // The thinking tokens the API reported in an output count: keyed like
+  // answers until its reply shows up, then by the reply, kept while its
+  // thinking is in bound.
+  thinking: Record<string, number>
   // When each message, and each lineage, first appeared.
   seen: Record<string, string>
   // Each message's bytes by kind, and its tokens by kind where the API counted
@@ -279,11 +283,14 @@ function splitCounted(kinds: Record<string, number>, counted: Record<string, num
 // The stats once a request is answered with these counts. Where the API
 // counted messages itself (protocol.ts, Counted), they take its counts, and only
 // the rest are estimated, from what is left. `dropped` is the indexes of the
-// messages whose thinking the API reports dropped.
-export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number, apiCounts?: { defs?: number; messages: Array<number | undefined>; kinds?: Array<Record<string, number> | undefined> }, dropped: readonly number[] = []): Stats {
+// messages whose thinking the API reports dropped, and `thinkingTokens` the
+// thinking part of the output count, where the API reports it.
+export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number, apiCounts?: { defs?: number; messages: Array<number | undefined>; kinds?: Array<Record<string, number> | undefined> }, dropped: readonly number[] = [], thinkingTokens?: number): Stats {
   const known = { ...prev?.tokens }
   const bound = { ...prev?.bound }
   const answers = { ...prev?.answers }
+  // BACKCOMPAT: stats before 2026-11-18 have no thinking.
+  const thinking = { ...prev?.thinking }
   const keys = r.messages.map((p) => p.key)
   const sizes: Record<string, number> = {}
   const count: Record<string, number> = {}
@@ -298,34 +305,48 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   for (const [k, n] of exact) {
     known[k] = n
     delete bound[k]
+    delete thinking[k]
   }
   const isNew = new Set(Object.keys(sizes).filter((k) => !(k in known)))
-  // Messages with thinking the API dropped: one counted before is counted
-  // again, and one new shares what is left; either at its bytes less the
-  // thinking.
+  // Messages with thinking the API dropped: one counted before loses its
+  // thinking tokens where they were reported, and is otherwise counted again;
+  // one new shares what is left, unless its reply's count says it below.
+  // Either shares at its bytes less the thinking.
   const lost = new Set(dropped.map((i) => keys[i]).filter((k) => k !== undefined))
   for (const k of lost)
     if (isNew.has(k)) sizes[k] -= r.messages[keys.indexOf(k)].thinking
     else if (k in bound) {
-      isNew.add(k)
-      sizes[k] -= bound[k]
+      if (k in thinking) known[k] = Math.max(0, known[k] - thinking[k])
+      else {
+        isNew.add(k)
+        sizes[k] -= bound[k]
+      }
       delete bound[k]
+      delete thinking[k]
     }
   const replies: string[] = []
   let left = inputTokens - Object.keys(sizes).filter((k) => !isNew.has(k)).reduce((n, k) => n + known[k] * (count[k] ?? 1), 0)
   r.messages.forEach((p, i) => {
-    if (exact.has(p.key) && p.role === 'assistant' && i) delete answers[keys[i - 1]]
+    if (exact.has(p.key) && p.role === 'assistant' && i) {
+      delete answers[keys[i - 1]]
+      delete thinking[keys[i - 1]]
+    }
     // A reply first sent with its thinking trimmed off costs less than its
     // output, which counted the thinking; one whose thinking was dropped, its
-    // output less the thinking, which only its bytes tell.
+    // output less the thinking: as reported, or else as only its bytes tell.
     if (!isNew.has(p.key) || p.role !== 'assistant' || !i || i < r.ends.reasoning) return
     const out = answers[keys[i - 1]]
     if (!out) return
+    const thought = thinking[keys[i - 1]]
     delete answers[keys[i - 1]]
-    if (lost.has(p.key)) return
-    known[p.key] = out
-    left -= out * count[p.key]
-    if (p.thinking > 2) bound[p.key] = p.thinking
+    delete thinking[keys[i - 1]]
+    if (lost.has(p.key) && thought === undefined) return
+    known[p.key] = lost.has(p.key) ? Math.max(0, out - thought!) : out
+    left -= known[p.key] * count[p.key]
+    if (p.thinking > 2 && !lost.has(p.key)) {
+      bound[p.key] = p.thinking
+      if (thought !== undefined) thinking[p.key] = thought
+    }
     isNew.delete(p.key)
     replies.push(p.key)
   })
@@ -339,6 +360,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
   const rest = [...isNew].reduce((n, k) => n + sizes[k] * (count[k] ?? 1), 0)
   for (const k of isNew) known[k] = (left * sizes[k]) / rest
   if (outputTokens) answers[keys[keys.length - 1]] = outputTokens
+  if (outputTokens && thinkingTokens !== undefined) thinking[keys[keys.length - 1]] = thinkingTokens
 
   // An advance takes out what the previous request's messages cost less what
   // they cost now: the messages through the last one it also sent, counting
@@ -375,6 +397,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     tokens: known,
     bound,
     answers,
+    thinking,
     seen,
     messages: r.messages.map((p, i) => ({ key: p.key, kinds: p.kinds, ...(apiCounts?.kinds?.[i] && { counted: rounded(splitCounted(p.kinds, apiCounts.kinds[i])) }), ...(p.lineage ? { lineage: p.lineage } : {}) })),
     defs: r.defs,

@@ -17,12 +17,14 @@ const ROOT = path.join(import.meta.dirname, '..')
 const DROPPED = [{ type: 'thinking_dropped', path: 'messages.1.content.0', reason: 'prefix_binding_mismatch' }]
 
 type Seen = { beta: string; body: any }
-type Up = { url: string; seen: Seen[]; refuse: { on: boolean }; close(): void }
+type Up = { url: string; seen: Seen[]; refuse: { on: boolean }; thinking: { tokens?: number }; close(): void }
 // An upstream that reports one block dropped when asked to drop, and, told to
-// refuse, refuses block_binding as a model without it would.
+// refuse, refuses block_binding as a model without it would; given a thinking
+// count, reports it as the thinking-token-count beta does.
 async function upstream(): Promise<Up> {
   const seen: Seen[] = []
   const refuse = { on: false }
+  const thinking: { tokens?: number } = {}
   const server = createServer((req, res) => {
     let raw = ''
     req.on('data', (c) => (raw += c))
@@ -41,14 +43,14 @@ async function upstream(): Promise<Up> {
       event('content_block_start', { index: 0, content_block: { type: 'text', text: '' } })
       event('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'ok' } })
       event('content_block_stop', { index: 0 })
-      event('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } })
+      event('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1, ...(thinking.tokens !== undefined && { output_tokens_details: { thinking_tokens: thinking.tokens } }) } })
       event('message_stop', {})
       res.end()
     })
   })
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
   const { port } = server.address() as { port: number }
-  return { url: `http://127.0.0.1:${port}`, seen, refuse, close: () => server.close() }
+  return { url: `http://127.0.0.1:${port}`, seen, refuse, thinking, close: () => server.close() }
 }
 
 type Proxy = { url: string; dir: string; child: ChildProcess; err: () => string }
@@ -147,6 +149,38 @@ test('off: requests holding thinking go up without the setting or the beta', asy
     assert.equal(up.seen[0].body.thinking.block_binding, undefined)
     assert.equal(up.seen[0].beta, 'client-beta-1')
     assert.equal(requests(p.dir)[0].dropAsked, undefined)
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})
+
+// The thinking-token-count beta's count reaches the stats: journaled for the
+// answer when the response reports it, and not when it doesn't.
+test('a reported thinking count is journaled for its answer, and none without one', async () => {
+  const up = await upstream()
+  const p = await proxy(up.url, false)
+  // The journal's thinking record as it stands: a count moves from the answer
+  // to its message once the answer is sent back, a delete and a set.
+  const counts = () => {
+    const now: Record<string, unknown> = {}
+    const lines = readdirSync(path.join(p.dir, 'state'))
+      .filter((f) => f.endsWith('.journal.jsonl'))
+      .flatMap((f) => readFileSync(path.join(p.dir, 'state', f), 'utf8').trim().split('\n'))
+    for (const l of lines) {
+      const r = JSON.parse(l).records?.thinking
+      for (const k of r?.del ?? []) delete now[k]
+      Object.assign(now, r?.set)
+    }
+    return Object.values(now)
+  }
+  try {
+    up.thinking.tokens = 7
+    assert.equal(await send(p, 'claude-opus-5-5', [prompt('one')]), 200)
+    assert.deepEqual(counts(), [7])
+    delete up.thinking.tokens
+    assert.equal(await send(p, 'claude-opus-5-5', [prompt('one'), thought, result]), 200)
+    assert.deepEqual(counts(), [7], 'no count reported, none journaled')
   } finally {
     p.child.kill()
     up.close()

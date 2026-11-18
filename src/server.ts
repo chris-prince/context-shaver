@@ -969,7 +969,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   // journaled bare, and like one cut off leaves the state as it was.
   if (!u || !inputTokens) return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), why: 'no usage' }, p.logLine && { dir: p.logDir!, line: p.logLine })
   const c = attribution !== undefined ? p.counted?.(attribution) : undefined
-  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds }, dropped)
+  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds }, dropped, u.output_tokens_details?.thinking_tokens)
   const was = currentOf(p.key)
   record(journalOf(p.key), was.stats, next, u)
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
