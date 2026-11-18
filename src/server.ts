@@ -329,7 +329,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   let d: Decision | undefined
   // A compaction's messages are never sent again, so a trim on it pays only
   // where it costs no more on this request: no later ones share its savings.
-  const horizon = isCompaction(msgs, compaction) ? 0 : model.horizon(latestOf(key)?.requests ?? 0)
+  const horizon = isCompaction(msgs, compaction) ? 0 : model.horizon(latestOf(key)?.requests ?? 0, clock.requests - held.requests)
   if (forced) [sent, applied, next] = [forced.next, clock, forced.next]
   else if (clock.requests > held.requests || clock.turns > held.turns) {
     next = summarized(apply(msgs, conversationRules, clock, conv, thinking), msgs, chain.slice(0, records), merged, turns)

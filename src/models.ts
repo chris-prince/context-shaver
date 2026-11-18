@@ -27,8 +27,9 @@ export type Model = {
   // messages, up to PROMPTS_KEPT tokens, and the summary.
   compaction?: Compaction
   // The later requests a trim's savings are counted over (trim.ts, decide),
-  // given the requests before this one.
-  horizon: (n: number) => number
+  // given the requests before this one and those since the messages were
+  // last trimmed.
+  horizon: (n: number, since: number) => number
 }
 type Settings = Partial<Model>
 export type Compaction = { at: number; kept: number | 'prompts'; summary: number; ms: number }
@@ -46,10 +47,6 @@ export const PROMPTS_KEPT = 64_000
 // summary ran 6.6-8.9K tokens, and the next request came about a minute later.
 const CLAUDE_CODE = { compaction: { at: 165_000, kept: 0.2, summary: 7600, ms: 65_000 } }
 
-// Backtests of logged sessions (local/notes.md, "A trim's horizon"): Codex and
-// OpenCode sessions did best counting a trim over 5 requests.
-const SHORT = () => 5
-
 // Codex caps its auto-compact limit at 90% of the context window, and luna's
 // is 272K (~/.codex/models_cache.json; local/notes.md, "Make Codex's cost and
 // savings figures accurate"). It compacts remotely (v2): the answer is one
@@ -62,12 +59,12 @@ const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 800, ms: 34_0
 // OpenAI's long prompts: past 272K input tokens, input, reads and writes
 // double and output is 1.5x (OpenRouter's listings, 2026-11-16).
 const OPENAI_LONG = { over: 272_000, times: 2, output: 1.5 }
-const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long: OPENAI_LONG }, lookback: 50, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
+const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long: OPENAI_LONG }, lookback: 50, ttl: 1800, compaction: CODEX_V2 }
 // Sol's window is 272K too (`codex debug models`, Codex 0.163.0). Its lookback
 // was probed on 2026-11-17 through Codex (probe-codex-model-details.ts
 // lookback): read 38 runs back, nothing at 39, at about 250 and 1,000 tokens
 // a run, so it counts runs, not tokens.
-const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 38, ttl: 1800, horizon: SHORT, compaction: CODEX_V2 }
+const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 38, ttl: 1800, compaction: CODEX_V2 }
 // Prices from OpenRouter's listings (2026-11-16): reads at 0.05x input on
 // terra, 0.1x on astra, writes at 1.25x. The TTL was probed on 2026-11-16
 // through OpenRouter (check-prices.ts --lifetime): entries read after 1, 15
@@ -78,8 +75,8 @@ const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI
 // past its lookback, a read this table doesn't model). Terra's window is
 // 500K where Codex's model catalog lists it (`codex debug models`, Codex
 // 0.169.0), so Codex compacts it at 450K; a ChatGPT sign-in's catalog doesn't
-// list terra or astra yet. The horizon and the compaction's summary and time
-// are sol's, not measured on these.
+// list terra or astra yet. The compaction's summary and time are sol's, not
+// measured on these.
 const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG }, lookback: 20, compaction: { ...CODEX_V2, at: 450_000 } } // at: 90% of 500K
 const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG }, lookback: 38 }
 
@@ -116,8 +113,7 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   // input, not luna's 0.1x, and writes at 1.25x. The TTL was probed on
   // 2026-10-27 through Codex 0.163.0, two sessions per gap: all read after 28
   // minutes, nothing after 32 or 60. So the 30 minutes is a hard edge, not a
-  // floor. The lookback, horizon and compaction summary are luna's, not yet
-  // measured on sol.
+  // floor. The compaction summary is luna's, not yet measured on sol.
   'gpt-6.1-sol': SOL,
   'openai/gpt-6.1-sol': SOL,
   'gpt-6.1-terra': TERRA,
@@ -132,15 +128,21 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
       // TTL, writes at the input price, and an entry for every 128-token
       // prefix, found however far back it is. Warm requests read their entry
       // reliably (26 of 26 there; every one in a real OpenCode session here).
-      deepinfra: { price: { input: 0.14, output: 0.42, read: 0.0042 }, lookback: Infinity, summaryThreshold: 7000, horizon: SHORT },
+      deepinfra: { price: { input: 0.14, output: 0.42, read: 0.0042 }, lookback: Infinity, summaryThreshold: 7000 },
     },
   },
 }
 
 // Anthropic's lookback, 20 blocks, and GPT-5.6's, 20 user runs (local/openai-design.md, "CacheModel").
-// The horizon did best on Claude Code sessions, short ones most of all, of
-// those backtested (local/notes.md, "A trim's horizon").
-const DEFAULT: Model = { lookback: 20, horizon: (n) => Math.min(20, 0.6 * n) }
+// The horizon is one for every harness. A trim held back now is mostly made a
+// little later, once as much more is due, so its savings are counted only
+// over half the requests since the last trim. In backtests of Claude Code,
+// Codex and OpenCode sessions (2026-11-17, local/notes.md, "A trim's
+// horizon") that did as well as or better than each harness's best before
+// (min(20, 0.6n) for Claude Code, 5 for Codex and OpenCode). SINCE = Infinity
+// gives the horizon without the cap.
+export const SINCE = 0.5
+const DEFAULT: Model = { lookback: 20, horizon: (n, since) => Math.min(20, 0.6 * n, SINCE * since) }
 
 export function modelOf(name: string, provider?: string): Model {
   const { providers, ...m } = MODELS[name] ?? {}

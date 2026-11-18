@@ -1,28 +1,30 @@
 // Backtests how many later requests a trim's savings are counted over (the
 // horizon H in trim.ts, decide). Each logged conversation's requests are
 // rebuilt untrimmed, as in replay.ts, then trimmed afresh under the live
-// policy with each horizon: the model's own (models.ts), K, and N x the
-// requests so far for several N. Each
-// request is priced with the cache model (positionsOf, readThrough) and its
-// model's prices, in characters at the input price. Only the messages are
-// priced: the base is the same under every horizon. The model's actions are
-// held fixed, so a trim never makes it fetch again what was taken. The
-// anchor goes on as in server.ts (prepare), assuming a spare breakpoint, and
-// so do summary records: each one from when it was made, applied on a cold
-// cache. A record a later one replaced isn't kept, so it is missed while it
-// stood. The rebuild uses the messages as received where they were logged
-// (server.ts, received), and as sent before that.
-// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--compare] [--since ISO] [--until ISO] [--first n] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
+// policy with each horizon: the model's own (models.ts), the earlier ones
+// (5, and min(20, 0.6n)), and the model's with other caps on the requests
+// since the last trim. Each request is priced with the cache model
+// (positionsOf, readThrough) and its model's prices, in characters at the
+// input price. Only the messages are priced: the base is the same under every
+// horizon. The model's actions are held fixed, so a trim never makes it fetch
+// again what was taken. The anchor goes on as in server.ts (prepare),
+// assuming a spare breakpoint, and so do summary records: each one from when
+// it was made, applied on a cold cache. A record a later one replaced isn't
+// kept, so it is missed while it stood. The rebuild uses the messages as
+// received where they were logged (server.ts, received), and as sent before
+// that. Each conversation's line is printed as it finishes, the totals at the
+// end; --out writes each request's cost too.
+// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--compare] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
 import { harnessOf, NO_CONVENTIONS, type Harness } from '../src/harness.ts'
-import { modelOf, type Model } from '../src/models.ts'
+import { modelOf, SINCE, type Model } from '../src/models.ts'
 import { loadPolicy, textRules } from '../src/policy.ts'
 import { isCompaction } from '../src/stats.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { kinds, messagesOf, objectsOf, receivedOf } from '../src/log.ts'
-import { anchored, apply, transitions, decide, fullyTrimmed, K, markedTtl, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
+import { anchored, apply, transitions, decide, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
 
 const args = process.argv.slice(2)
 const opt = (name: string) => {
@@ -30,7 +32,7 @@ const opt = (name: string) => {
   return i < 0 ? undefined : args.splice(i, 2)[1]
 }
 const compare = args.includes('--compare') && !!args.splice(args.indexOf('--compare'), 1)
-const since = opt('--since') ?? ''
+const fromTime = opt('--since') ?? ''
 const until = opt('--until') ?? '9999'
 const outFile = opt('--out')
 const first = Number(opt('--first') ?? Infinity)
@@ -42,10 +44,11 @@ const dirs = args.length ? args : readdirSync(path.join(root, 'proxy-data/logs')
 
 // Each request's model's horizon, as the proxy asks it (server.ts, prepare):
 // 0 on a compaction, whose messages are never sent again.
-const modelHorizon = (n: number, q: Req) => (isCompaction(q.msgs) ? 0 : q.model.horizon(n))
-const HORIZONS: [string, (n: number, q: Req) => number][] = [
-  ['none', () => -1], ['model', modelHorizon], [`K=${K}`, () => K], ['K=20', () => 20],
-  ...[0.3, 0.4, 0.5, 0.6, 0.7].map((c): [string, (n: number) => number] => [`min(20,${c}n)`, (n) => Math.min(20, c * n)]),
+// `since` is the requests since the messages were last trimmed.
+const modelHorizon = (n: number, q: Req, since: number) => (isCompaction(q.msgs) ? 0 : q.model.horizon(n, since))
+const HORIZONS: [string, (n: number, q: Req, since: number) => number][] = [
+  ['none', () => -1], [`model (${SINCE}x since)`, modelHorizon], ['K=5', () => 5], ['min(20,0.6n)', (n) => Math.min(20, 0.6 * n)],
+  ...[0.25, 0.4, 0.6, 1].map((c): [string, (n: number, q: Req, since: number) => number] => [`cap ${c}x since`, (n, _q, since) => Math.min(20, 0.6 * n, c * since)]),
 ]
 // --horizons '[[label, [[from, k, slope], ...]], ...]': piecewise-linear
 // horizons over request numbers r = n + 1, each segment running from its
@@ -116,7 +119,7 @@ function rebuild(dir: string): Conv {
   // takes it (server.ts, prepare).
   const ttlOf = (e: { system?: { hash: string }[] }, n: number) => markedTtl({ system: (e.system ?? []).map((b) => load(b.hash)), messages: sent[n] })
   const reqs = all.map((e, n) => ({ time: e.time, model: { ...modelOf(e.model, e.provider), ...(ttlOf(e, n) && { ttl: ttlOf(e, n) }) }, auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n] }))
-  const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= since && e.time < until).length
+  const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= fromTime && e.time < until).length
   // What each thinking block and counted tool call billed, as the proxy last
   // saved it (server.ts, State and recordedOf).
   const state = path.join(dir, '../../state', path.basename(dir) + '.json')
@@ -154,7 +157,7 @@ function renumbered(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary
 // Read and write prices relative to input (replay.ts and trim.ts, writeCost).
 const rates = (m: Model, auto: boolean) => ({ read: m.price ? m.price.read / m.price.input : 0.1, write: m.price?.write ? m.price.write / m.price.input : auto ? 1 : 2 })
 
-function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Req) => number, trace?: (n: number, q: Req, d?: Logged) => void): Tally {
+function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Req, since: number) => number, trace?: (n: number, q: Req, d?: Logged) => void): Tally {
   const conv = h?.conventions ?? NO_CONVENTIONS
   let applied: Clock = { requests: 0, turns: 0 }
   let sentRecords = 0
@@ -187,9 +190,9 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Re
       return reads(x) >= reads(m) ? x : m
     }
     let body = anchor(keep.msgs)
-    if (horizon(n, q) >= 0 && (clock.requests > held.requests || clock.turns > held.turns)) {
+    if (horizon(n, q, 0) >= 0 && (clock.requests > held.requests || clock.turns > held.turns)) {
       const next = summarized(apply(q.msgs, rules, clock, conv, thinking), q.msgs, chain.slice(0, records))
-      const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', q.model, thinking, q.auto, horizon(n, q))
+      const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', q.model, thinking, q.auto, horizon(n, q, clock.requests - held.requests))
       if (process.env.DEBUG_N === String(n) && trace) {
         const context: Record<string, number> = {}
         for (const m of keep.msgs) for (const [k, v] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + v
@@ -206,10 +209,10 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Re
       if (trace ? q.logged?.advanced : d.advanced) {
         body = anchor(next.msgs)
         applied = clock
-        if (d.savedChars && q.time >= since && q.time < until) out.trims++
+        if (d.savedChars && q.time >= fromTime && q.time < until) out.trims++
       }
     }
-    if (process.env.DEBUG_SENT && trace && q.time >= since && q.time < until) {
+    if (process.env.DEBUG_SENT && trace && q.time >= fromTime && q.time < until) {
       const norm = (m: ApiMsg) => { const x = strip(m); return JSON.stringify(typeof x.content === 'string' ? { ...x, content: [{ type: 'text', text: x.content }] } : x) }
       const i = q.sent.findIndex((m, j) => !body[j] || norm(m) !== norm(body[j]))
       if (i >= 0 || body.length !== q.sent.length) console.log('sent differs', n, q.time, 'at', i, 'of', q.sent.length, body.length, '\n  sent ', JSON.stringify(strip(q.sent[i] ?? {} as ApiMsg)).slice(0, 300), '\n  model', JSON.stringify(strip(body[i] ?? {} as ApiMsg)).slice(0, 300))
@@ -218,7 +221,7 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Re
     const r = readThrough(pos, live, q.model.lookback)
     const last = pos.findLastIndex((p) => p.breakpoint)
     const { read, write } = rates(q.model, q.auto)
-    if (q.time >= since && q.time < until) {
+    if (q.time >= fromTime && q.time < until) {
       const c = pos.reduce((x, p, i) => x + p.size * (i <= r ? read : i <= last ? write : 1), 0)
       out.cost += c
       out.costs.push(c)
@@ -241,7 +244,7 @@ if (compare) {
     run(c, modelHorizon, (n, _q, d) => sim.set(n, d!))
     let bad = 0, both = 0
     reqs.forEach((q, n) => {
-      if (q.time < since || q.time >= until || (!q.logged && !sim.get(n)?.savedChars)) return
+      if (q.time < fromTime || q.time >= until || (!q.logged && !sim.get(n)?.savedChars)) return
       both++
       const s = sim.get(n)
       if ((s?.advanced ?? false) === (q.logged?.advanced ?? false) && s?.savedChars === q.logged?.savedChars) return
@@ -255,15 +258,17 @@ if (compare) {
 
 // Totals by harness, then over all.
 const totals = new Map<string, { convs: number; reqs: number; broken: number; logged: number; by: Tally[] }>()
-for (const dir of dirs) {
+for (const [k, dir] of dirs.entries()) {
   let got
   try { got = rebuild(dir) } catch { continue }
   if (isSearch(got)) continue
   got.reqs = got.reqs.slice(0, first)
   const { reqs, broken, logged, h } = got
-  const inWindow = reqs.filter((q) => q.time >= since && q.time < until).length
+  const inWindow = reqs.filter((q) => q.time >= fromTime && q.time < until).length
   if (!inWindow) continue
   const by = HORIZONS.map(([, f]) => run(got, f))
+  const pct = (i: number) => `${by[i].cost >= by[1].cost ? '+' : ''}${(((by[i].cost - by[1].cost) / (by[1].cost || 1)) * 100).toFixed(1)}%`
+  console.log(`${k + 1}/${dirs.length} ${path.basename(dir)} ${h?.name ?? 'unknown'} ${inWindow} req | ${HORIZONS.map(([label], i) => `${label} ${i === 1 ? `${(by[i].cost / 1e6).toFixed(2)}M` : pct(i)} ${by[i].trims}`).join(' | ')}`)
   if (outFile) appendFileSync(outFile, JSON.stringify({ conv: path.basename(dir), harness: h?.name ?? 'unknown', costs: Object.fromEntries(HORIZONS.map(([label], i) => [label, by[i].costs])) }) + '\n')
   for (const name of [h?.name ?? 'unknown', 'all']) {
     const t = totals.get(name) ?? { convs: 0, reqs: 0, broken: 0, logged: 0, by: HORIZONS.map(() => ({ cost: 0, trims: 0 })) }

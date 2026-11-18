@@ -175,7 +175,7 @@ function run(policy: PartRules | 'sent', actual?: PartRules): Run {
       body = anchor(keep.msgs)
       if (clock.requests > held.requests || clock.turns > held.turns) {
         const next = apply(msgs, policy, clock, undefined, thinking)
-        const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', model, thinking, false, model.horizon(n))
+        const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', model, thinking, false, model.horizon(n, clock.requests - held.requests))
         if (d.advanced) { body = anchor(next.msgs); applied = clock; if (d.savedChars) out.advanced++ }
       }
     }
