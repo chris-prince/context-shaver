@@ -104,6 +104,13 @@ test('the replay rebuilds a logged conversation and reprices it consistently', a
     assert.doesNotMatch(row('drop wait 2'), /trims 0$/)
     assert.equal(row('POLICY'), row('drop wait 2'))
     assert.ok(cost('drop wait 2') < cost('no trimming'))
+    // The horizon backtest, replaying the log under the same policy, makes
+    // every decision the proxy logged, so it can't silently replay with no
+    // rules (as it did when the policy took sections).
+    const compared = execFileSync(process.execPath, [path.join(ROOT, 'scripts/backtest-horizon.ts'), '--compare', path.join(dir, 'logs', key)], { env: { ...process.env, POLICY: policy }, encoding: 'utf8' })
+    const [, differ, decisions] = compared.match(/: (\d+) of (\d+) decisions differ\n$/)!
+    assert.equal(differ, '0', compared)
+    assert.ok(Number(decisions) > 0)
     // Each request line has its internal ID, and its prompts' turns by ID,
     // one for each prompt in the messages as the client sent them,
     // `received` where the drops changed them: the second turn's prompt was

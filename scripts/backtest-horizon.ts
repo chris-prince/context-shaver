@@ -1,7 +1,8 @@
 // Backtests how many later requests a trim's savings are counted over (the
 // horizon H in trim.ts, decide). Each logged conversation's requests are
 // rebuilt untrimmed, as in replay.ts, then trimmed afresh under the live
-// policy with each horizon: K, and N x the requests so far for several N. Each
+// policy with each horizon: the model's own (models.ts), K, and N x the
+// requests so far for several N. Each
 // request is priced with the cache model (positionsOf, readThrough) and its
 // model's prices, in characters at the input price. Only the messages are
 // priced: the base is the same under every horizon. The model's actions are
@@ -11,16 +12,17 @@
 // cache. A record a later one replaced isn't kept, so it is missed while it
 // stood. The rebuild uses the messages as received where they were logged
 // (server.ts, received), and as sent before that.
-// Usage: bin/node-wrapper scripts/backtest-horizon.ts [--since ISO] [--until ISO] [--first n] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
+// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--compare] [--since ISO] [--until ISO] [--first n] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
 import { harnessOf, NO_CONVENTIONS, type Harness } from '../src/harness.ts'
 import { modelOf, type Model } from '../src/models.ts'
-import { loadPolicy } from '../src/policy.ts'
+import { loadPolicy, textRules } from '../src/policy.ts'
+import { isCompaction } from '../src/stats.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { kinds, messagesOf, objectsOf, receivedOf } from '../src/log.ts'
-import { anchored, apply, transitions, decide, fullyTrimmed, K, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
+import { anchored, apply, transitions, decide, fullyTrimmed, K, markedTtl, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
 
 const args = process.argv.slice(2)
 const opt = (name: string) => {
@@ -33,11 +35,16 @@ const until = opt('--until') ?? '9999'
 const outFile = opt('--out')
 const first = Number(opt('--first') ?? Infinity)
 const root = path.join(import.meta.dirname, '..')
-const policy = loadPolicy(path.join(root, 'policy.json'))!
+const policy = loadPolicy(process.env.POLICY ?? path.join(root, 'policy.json'))!
+const rules = policy.conversation_shaver_rules ?? {}
+const summaryAt = textRules(policy).summary_threshold_tokens
 const dirs = args.length ? args : readdirSync(path.join(root, 'proxy-data/logs'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(root, 'proxy-data/logs', d.name))
 
-const HORIZONS: [string, (n: number) => number][] = [
-  ['none', () => -1], [`K=${K}`, () => K], ['K=20', () => 20],
+// Each request's model's horizon, as the proxy asks it (server.ts, prepare):
+// 0 on a compaction, whose messages are never sent again.
+const modelHorizon = (n: number, q: Req) => (isCompaction(q.msgs) ? 0 : q.model.horizon(n))
+const HORIZONS: [string, (n: number, q: Req) => number][] = [
+  ['none', () => -1], ['model', modelHorizon], [`K=${K}`, () => K], ['K=20', () => 20],
   ...[0.3, 0.4, 0.5, 0.6, 0.7].map((c): [string, (n: number) => number] => [`min(20,${c}n)`, (n) => Math.min(20, c * n)]),
 ]
 // --horizons '[[label, [[from, k, slope], ...]], ...]': piecewise-linear
@@ -105,15 +112,18 @@ function rebuild(dir: string): Conv {
   }
   const h = harnessOf(path.basename(dir).split('-')[0], {}) as Harness | undefined
   const trims = new Map(lines.filter((e) => e.event === 'compaction').map((e) => [e.time, e]))
-  const reqs = all.map((e, n) => ({ time: e.time, model: modelOf(e.model, e.provider), auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n] }))
+  // Each model with the TTL its request's breakpoints asked for, as the proxy
+  // takes it (server.ts, prepare).
+  const ttlOf = (e: { system?: { hash: string }[] }, n: number) => markedTtl({ system: (e.system ?? []).map((b) => load(b.hash)), messages: sent[n] })
+  const reqs = all.map((e, n) => ({ time: e.time, model: { ...modelOf(e.model, e.provider), ...(ttlOf(e, n) && { ttl: ttlOf(e, n) }) }, auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n] }))
   const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= since && e.time < until).length
   // What each thinking block and counted tool call billed, as the proxy last
   // saved it (server.ts, State and recordedOf).
-  const state = path.join(root, 'proxy-data/state', path.basename(dir) + '.json')
+  const state = path.join(dir, '../../state', path.basename(dir) + '.json')
   const saved = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : {}
   const thinking: Thinking = new Map([...Object.entries<number>(saved.thinking ?? {}), ...Object.entries<number>(saved.calls ?? {}).map(([id, n]) => [`call:${id}`, n] as const)])
   const records = state.replace(/\.json$/, '.summaries.json')
-  const chain: Summary[] = policy.summary_threshold_tokens && existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
+  const chain: Summary[] = summaryAt && existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
   return { reqs, broken, logged, h: h && 'name' in h ? h : undefined, thinking, chain }
 }
 
@@ -144,7 +154,7 @@ function renumbered(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary
 // Read and write prices relative to input (replay.ts and trim.ts, writeCost).
 const rates = (m: Model, auto: boolean) => ({ read: m.price ? m.price.read / m.price.input : 0.1, write: m.price?.write ? m.price.write / m.price.input : auto ? 1 : 2 })
 
-function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => number, trace?: (n: number, q: Req, d?: Logged) => void): Tally {
+function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Req) => number, trace?: (n: number, q: Req, d?: Logged) => void): Tally {
   const conv = h?.conventions ?? NO_CONVENTIONS
   let applied: Clock = { requests: 0, turns: 0 }
   let sentRecords = 0
@@ -159,7 +169,7 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => nu
     const clock = clockOf(q.msgs)
     const chain = validChain(renumbered(all.filter((r) => r.time <= q.time), q.msgs), q.msgs)
     let records = Math.min(sentRecords, chain.length)
-    let keep = summarized(apply(q.msgs, policy, held, conv, thinking), q.msgs, chain.slice(0, records))
+    let keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain.slice(0, records))
     const reads = (m: ApiMsg[]) => {
       const ps = positionsOf(m, 's', thinking, q.auto)
       return ps.slice(0, readThrough(ps, live, q.model.lookback) + 1).reduce((x, p) => x + p.size, 0)
@@ -167,19 +177,19 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => nu
     const cold = (m: ApiMsg[]) => { const ps = positionsOf(m, 's', thinking, q.auto); return ps.some((p) => p.breakpoint) && readThrough(ps, live, q.model.lookback) < 0 }
     if (records < chain.length && cold(keep.msgs)) {
       records = chain.length
-      keep = summarized(apply(q.msgs, policy, held, conv, thinking), q.msgs, chain)
+      keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain)
     }
     sentRecords = records
-    const end = q.auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(q.msgs, policy, conv, thinking), q.msgs, chain.slice(0, records)).msgs, 's', thinking)
+    const end = q.auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(q.msgs, rules, conv, thinking), q.msgs, chain.slice(0, records)).msgs, 's', thinking)
     const anchor = (m: ApiMsg[]) => {
       if (q.auto) return m
       const x = anchored(m, end, 's', thinking)
       return reads(x) >= reads(m) ? x : m
     }
     let body = anchor(keep.msgs)
-    if (horizon(n) >= 0 && (clock.requests > held.requests || clock.turns > held.turns)) {
-      const next = summarized(apply(q.msgs, policy, clock, conv, thinking), q.msgs, chain.slice(0, records))
-      const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', q.model, thinking, q.auto, horizon(n))
+    if (horizon(n, q) >= 0 && (clock.requests > held.requests || clock.turns > held.turns)) {
+      const next = summarized(apply(q.msgs, rules, clock, conv, thinking), q.msgs, chain.slice(0, records))
+      const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', q.model, thinking, q.auto, horizon(n, q))
       if (process.env.DEBUG_N === String(n) && trace) {
         const context: Record<string, number> = {}
         for (const m of keep.msgs) for (const [k, v] of Object.entries(kinds(JSON.stringify(m), m).kinds)) context[k] = (context[k] ?? 0) + v
@@ -218,7 +228,8 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number) => nu
   return out
 }
 
-// With --compare, each request K's decision and the logged one differ on,
+// With --compare, each request whose decision at its model's horizon and the
+// logged one differ on,
 // side by side, then how many differ.
 if (compare) {
   const f = (d?: Logged) => (d ? `${d.advanced ? 'TRIM' : 'keep'} ${d.cacheState} saved ${d.savedChars} rewrite ${d.rewriteChars} extra ${d.extraChars}` : '-')
@@ -227,7 +238,7 @@ if (compare) {
     if (isSearch(c)) continue
     const { reqs } = c
     const sim = new Map<number, Logged>()
-    run(c, () => K, (n, _q, d) => sim.set(n, d!))
+    run(c, modelHorizon, (n, _q, d) => sim.set(n, d!))
     let bad = 0, both = 0
     reqs.forEach((q, n) => {
       if (q.time < since || q.time >= until || (!q.logged && !sim.get(n)?.savedChars)) return
