@@ -36,6 +36,7 @@
 // rules did, the rewriting being theirs.
 
 import { lifetimeMs, modelOf, PROMPTS_KEPT, type Compaction, type Price } from './models.ts'
+import { keptTokens } from './compact-keep.ts'
 import { BASE, baseOf, promptsOf, removedByType, type Stats } from './stats.ts'
 
 export type Usage = {
@@ -110,9 +111,21 @@ const reshaved = (prev: Stats | undefined, s: Stats): string[] => {
   return was && now ? (['tools', 'skills'] as const).filter((t) => was[t] !== now[t]).map((t) => `${t}-shaved`) : []
 }
 
+// What a compaction keeps past the base besides its summary: what the journal
+// folded of the client's messages (compact-keep.ts), at the request's tokens
+// a byte, or else the model's figure.
+const keptBy = (c: Compaction, s: Stats): number | 'prompts' => {
+  if (c.kept === 'prompts' || !s.keep) return c.kept
+  const sent = s.messages.reduce((n, p) => n + Object.values(p.kinds).reduce((a, b) => a + b, 0), 0) + (s.defs ? s.defs.systemPrompt + s.defs.tools : 0)
+  return (sent && keptTokens(s.keep, s.inputTokens / sent)) || c.kept
+}
+
 // What a compaction keeps of the prompt past the base, the client's user
 // messages being what the shaverless prompt's are: the policy trims none.
-const keptOf = (c: Compaction, s: Stats, rest: number) => Math.min(rest, (c.kept === 'prompts' ? Math.min(promptsOf(s), PROMPTS_KEPT) : c.kept) + c.summary)
+const keptOf = (c: Compaction, s: Stats, rest: number) => {
+  const kept = keptBy(c, s)
+  return Math.min(rest, (kept === 'prompts' ? Math.min(promptsOf(s), PROMPTS_KEPT) : kept) + (c.summarized ?? c.summary))
+}
 
 // A request's tokens in dollars; writes at the hour's price but for the share
 // written for 5 minutes, or at the model's own write price.
@@ -192,7 +205,10 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   // so it weighs that much against what's taken out after: the share of the
   // prompt past the base the newest messages kept are. Keeping the user's
   // messages keeps none of it.
-  const keptShare = (c: Compaction) => (c.kept === 'prompts' ? 0 : Math.min(1, c.kept / Math.max(1, all - baseWithout(s))))
+  const keptShare = (c: Compaction) => {
+    const kept = keptBy(c, s)
+    return kept === 'prompts' ? 0 : Math.min(1, kept / Math.max(1, all - baseWithout(s)))
+  }
   if (wo.compacted) for (const t in removed) removed[t] *= keptShare(m.compaction!)
   // Searches cost the same with the shaver or without, so they save nothing.
   return {

@@ -186,3 +186,32 @@ test('a reported thinking count is journaled for its answer, and none without on
     up.close()
   }
 })
+
+// What Claude Code's compaction would keep is folded from the client's
+// messages and journaled, so shaver info can use it.
+test("the fold of what Claude Code's compaction keeps is journaled with each request", async () => {
+  const up = await upstream()
+  const p = await proxy(up.url, false)
+  const keeps = () => readdirSync(path.join(p.dir, 'state'))
+    .filter((f) => f.endsWith('.journal.jsonl'))
+    .flatMap((f) => readFileSync(path.join(p.dir, 'state', f), 'utf8').trim().split('\n'))
+    .map((l) => JSON.parse(l).set?.keep)
+    .filter(Boolean)
+  try {
+    assert.equal(await send(p, 'claude-opus-5-5', [prompt('one')]), 200)
+    assert.equal(await send(p, 'claude-opus-5-5', [prompt('one'), thought, result, prompt('two')]), 200)
+    const said = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] })
+    const three = [prompt('one'), thought, result, prompt('two'), said('a'), prompt('three')]
+    assert.equal(await send(p, 'claude-opus-5-5', three), 200)
+    // A fourth that changes nothing it keeps: the answers are counted only to two.
+    assert.equal(await send(p, 'claude-opus-5-5', [...three, said('b'), prompt('four')]), 200)
+    const k = keeps()
+    // The answers among the messages, journaled only when what it keeps
+    // changed, and not where the fold got to.
+    assert.deepEqual(k.map((x) => x.rounds), [0, 1, 2])
+    assert.ok(k.every((x) => !('n' in x) && !('last' in x) && !('calls' in x)))
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})

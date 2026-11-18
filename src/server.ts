@@ -15,7 +15,7 @@
 import { execFileSync } from 'node:child_process'
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
@@ -39,9 +39,16 @@ import { bareLines, history, latest, record, recordBare, recordFork, recordResen
 import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
+import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
+
+// A file's modification time in ms, or undefined where it can't be read.
+const mtimeOf: MtimeOf = (p) => {
+  if (!path.isAbsolute(p)) return undefined
+  try { return statSync(p).mtimeMs } catch { return undefined }
+}
 
 const repoPolicy = path.resolve(import.meta.dirname, '..', 'policy.json')
 const { values: a } = parseArgs({
@@ -179,7 +186,9 @@ function loadSummaries(key: string): Summaries {
 // Each conversation's stats as its journal ends (journal.ts) and its cost so
 // far (cost.ts), replayed from the journal the first time they're asked for and
 // kept up as requests are answered.
-type Current = { stats?: Stats; cost?: Cost }
+// keep: the fold of the client's messages so far (compact-keep.ts), of which
+// the journal holds only what it keeps.
+type Current = { stats?: Stats; cost?: Cost; keep?: Keep }
 const current = new Map<string, Current>()
 const journalOf = (key: string) => path.join(stateDir, `${key}.journal.jsonl`)
 function currentOf(key: string): Current {
@@ -374,6 +383,14 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   if (ac?.guessed) described.windowGuessed = true
   if (covers) described.covers = covers
   const last = latestOf(key)
+  // What Claude Code's compaction would keep of its messages, folded on from
+  // the last request's, each file's modification time looked up as its call
+  // is answered (Claude Code's paths are absolute; the proxy is on its machine).
+  if (h?.name === 'claude') {
+    const c = currentOf(key)
+    c.keep = folded(c.keep ?? last?.keep, own, mtimeOf, ccVersion(body.system))
+    described.keep = kept(c.keep)
+  }
   const lastMessage = (last?.suggestion ? last.messages.at(-2) : last?.messages.at(-1))?.key
   if (h?.resends && lastMessage && !described.messages.some((q) => q.key === lastMessage)) described.compacted = true
   // Each record is dated by the first message it covers, the memoir by its first record's.

@@ -159,7 +159,7 @@ export function preambleEnd(msgs: readonly ApiMsg[]): number {
 
 // Text the harness put in a user message: Claude Code's reminders, and Codex's
 // preamble messages, which after a compaction come as user messages.
-const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && ['<system-reminder>', ...CODEX_PREAMBLE].some((p) => (b.text as string).startsWith(p))
+export const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && ['<system-reminder>', ...CODEX_PREAMBLE].some((p) => (b.text as string).startsWith(p))
 // Codex's compaction item, which holds the history before it: conversation, not base.
 const isCompaction = (b: Block) => b.type === 'item' && (b.item as { type?: string } | undefined)?.type === 'compaction'
 

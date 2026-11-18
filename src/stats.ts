@@ -24,6 +24,7 @@ import { hash, isNote, kinds as kindsOf, preambleEnd, sections as sectionsOf } f
 import { CATEGORIES, firstLine, notesOfBlock } from './notes.ts'
 import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Conventions } from './items.ts'
 import type { Cost } from './cost.ts'
+import type { Kept } from './compact-keep.ts'
 import { loaded as alwaysLoaded } from './defer.ts'
 import { modelOf } from './models.ts'
 
@@ -73,6 +74,9 @@ export type Sent = {
   // The first lines of the notes after the preamble under no heading
   // (notes.ts), which `shaver info` lists; none before 2026-11-03.
   unrecognized?: string[]
+  // What the client's compaction would keep of its own messages, folded
+  // (compact-keep.ts); Claude Code's only, none before 2026-11-18.
+  keep?: Kept
 }
 
 export type Stats = {
@@ -97,6 +101,8 @@ export type Stats = {
   covers?: string[]
   // The latest request's Sent.unrecognized.
   unrecognized?: string[]
+  // The latest request's Sent.keep.
+  keep?: Kept
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
@@ -392,6 +398,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     ...(r.compacted && { compacted: true }),
     ...(r.covers && { covers: r.covers }),
     ...(r.unrecognized && { unrecognized: r.unrecognized }),
+    ...(r.keep && { keep: r.keep }),
     inputTokens,
     removedTokens,
     tokens: known,

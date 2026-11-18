@@ -33,8 +33,10 @@ export type Model = {
 }
 type Settings = Partial<Model>
 // `kept`: the tokens of the newest messages a compaction keeps besides its
-// summary, or the user's messages (up to PROMPTS_KEPT).
-export type Compaction = { at: number; kept: number | 'prompts'; summary: number; ms: number }
+// summary, or the user's messages (up to PROMPTS_KEPT), where the journal
+// doesn't fold what it keeps (compact-keep.ts). `summarized`: the tokens the
+// summary takes in the prompt after, where less than its output.
+export type Compaction = { at: number; kept: number | 'prompts'; summary: number; summarized?: number; ms: number }
 
 // Codex keeps the newest user messages up to 64K tokens (compact_remote_v2.rs,
 // RETAINED_MESSAGE_TOKEN_BUDGET, by osolmaz's reading of its source; local/notes.md).
@@ -51,8 +53,11 @@ export const PROMPTS_KEPT = 64_000
 // doesn't grow with the window: 20K tokens. Five compactions logged here kept
 // 11-29% past the base of 167K, about 15-45K with the summary, and one on
 // 2026-11-08 about 10.6K besides it. (2026-11-18: was 20% of what came after
-// the base, which on a 1M window kept ~175K.)
-const CLAUDE_CODE = { compaction: { at: 165_000, kept: 20_000, summary: 7600, ms: 65_000 } }
+// the base, which on a 1M window kept ~175K.) Journals from 2026-11-18 fold
+// what it keeps (compact-keep.ts), and `kept` stands only without that. The
+// summary in the prompt after is shorter than its output, its analysis cut:
+// 2.6-7.0K tokens, a median of 3.4K, over ten compactions logged here.
+const CLAUDE_CODE = { compaction: { at: 165_000, kept: 20_000, summary: 7600, summarized: 3400, ms: 65_000 } }
 
 // Codex caps its auto-compact limit at 90% of the context window, and luna's
 // is 272K (~/.codex/models_cache.json; local/notes.md, "Make Codex's cost and

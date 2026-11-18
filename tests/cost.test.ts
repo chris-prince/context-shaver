@@ -97,7 +97,7 @@ test("past the compaction's limit the client compacts, keeping the base and some
     // 172k w/o the proxy: a 12k base and a 160k rest. It compacts after.
     { stats: big(1, 70_000, 100_000), usage: usage(0, 10_000, 60_000) },
     // The client's rest grew 20k: w/o, the rest is the 20k kept and the
-    // 7.6k summary, plus 20k.
+    // 3.4k the summary takes in the prompt, plus 20k.
     { stats: big(2, 90_000, 100_000), usage: usage(0, 70_000, 20_000) },
   ]
   const c = cost(lines, HOUR)!
@@ -107,10 +107,10 @@ test("past the compaction's limit the client compacts, keeping the base and some
   // compaction too.
   const price = modelOf('claude-opus-5-5').price!
   assert.ok(Math.abs(c.saved['tools-shaved'] - (2000 * 2 * price.input + 2 * 2000 * price.read) / 1e6) < 1e-12)
-  assert.ok(Math.abs(c.context!.rest - ((20_000 + 7600) + 20_000)) < 1e-6)
+  assert.ok(Math.abs(c.context!.rest - ((20_000 + 3400) + 20_000)) < 1e-6)
   // The request after it reads the base and writes the rest.
-  const w = without(lines[1].stats, lines[2].stats, lines[2].usage, HOUR, { rest: (20_000 + 7600), client: 160_000, cached: 12_000 }, modelOf('claude-opus-5-5').compaction)
-  assert.ok(Math.abs(w.tokens.reads - 12_000) < 1e-6 && Math.abs(w.tokens.writes - ((20_000 + 7600) + 20_000)) < 1e-6)
+  const w = without(lines[1].stats, lines[2].stats, lines[2].usage, HOUR, { rest: (20_000 + 3400), client: 160_000, cached: 12_000 }, modelOf('claude-opus-5-5').compaction)
+  assert.ok(Math.abs(w.tokens.reads - 12_000) < 1e-6 && Math.abs(w.tokens.writes - ((20_000 + 3400) + 20_000)) < 1e-6)
 })
 
 // A 10K base and a 2K prompt, the rest a tool result.
@@ -282,8 +282,19 @@ test("the client compacts where the request's harness said, or not at all", () =
 test("what Claude Code's compaction keeps doesn't grow with the window", () => {
   const big = (minute: number, inputTokens: number, removedTokens: number) =>
     ({ ...at(minute, inputTokens, removedTokens), compactAt: 900_000, tokens: { d: 10_000 }, messages: [], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
-  // 910k without the proxy on a 1M window: it compacts after, keeping 20k and the summary.
+  // 910k without the proxy on a 1M window: it compacts after, keeping 20k and the summary, 3.4k in the prompt.
   const c = cost([{ stats: big(0, 100_000, 0), usage: usage(0, 0, 100_000) }, { stats: big(1, 110_000, 800_000), usage: usage(0, 10_000, 100_000) }], HOUR)!
   assert.equal(c.compactions, 1)
-  assert.ok(Math.abs(c.context!.rest - (20_000 + 7600)) < 1e-6)
+  assert.ok(Math.abs(c.context!.rest - (20_000 + 3400)) < 1e-6)
+})
+
+test("where the journal folded what Claude Code's compaction keeps, it keeps that, not the model's figure", () => {
+  // 1,000 bytes sent for 110k tokens: 110 tokens a byte. The fold holds 100
+  // bytes sent again, 11k tokens, and two answers, so it compacts.
+  const keep = { n: 3, last: 'x', resent: 100, latest: {}, rounds: 2, files: [], calls: {}, reads: [] }
+  const big = (minute: number, inputTokens: number, removedTokens: number) =>
+    ({ ...at(minute, inputTokens, removedTokens), compactAt: 900_000, keep, tokens: { d: 10_000 }, messages: [], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
+  const c = cost([{ stats: big(0, 100_000, 0), usage: usage(0, 0, 100_000) }, { stats: big(1, 110_000, 800_000), usage: usage(0, 10_000, 100_000) }], HOUR)!
+  assert.equal(c.compactions, 1)
+  assert.ok(Math.abs(c.context!.rest - (11_000 + 3400)) < 1e-6, String(c.context!.rest))
 })
