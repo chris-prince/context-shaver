@@ -12,9 +12,13 @@
 // without breakpoints, keyOf), or the defs', the system blocks and tools sent
 // in full together. A tool a tool search loads
 // counts with the message that loads it, since the API expands each reference
-// into the tool's definition whether or not the tool is deferred. A trim that changes an earlier message unbinds the
-// thinking of the replies after it, so those are counted again, at their bytes
-// less the thinking.
+// into the tool's definition whether or not the tool is deferred. A reply's
+// thinking counts until the API reports it dropped (binding.ts, droppedAt), as
+// it does where a trim before it unbinds it and the request asks for that;
+// then the reply is counted again, at its bytes less the thinking. Before
+// 2026-11-18 a trim before a reply was taken to unbind its thinking, reported
+// or not, though Opus 5.5 bills it then, and a reply sent first after the trim
+// that unbound it kept its thinking.
 
 import { hash, isNote, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
 import { CATEGORIES, firstLine, notesOfBlock } from './notes.ts'
@@ -98,7 +102,7 @@ export type Stats = {
   removedTokens: number
   // Each message's latest count, and the defs', by key.
   tokens: Record<string, number>
-  // Counted replies' thinking, in bytes, which a trim before them unbinds.
+  // Counted replies' thinking, in bytes, until the API reports it dropped.
   bound: Record<string, number>
   // The output count of each answered request, by its last message's key,
   // until the reply it answered with shows up.
@@ -158,7 +162,7 @@ export function describe(body: { model: string; provider?: string; messages: Api
   const messages = msgs.map((m, i) => {
     const json = JSON.stringify(m)
     const k = kindsOf(json, m, responded < 0 || i < responded)
-    const thinking = m.role === 'assistant' ? blocks(m).filter((b) => b.type === 'thinking') : []
+    const thinking = m.role === 'assistant' ? blocks(m).filter((b) => b.type === 'thinking' || b.type === 'redacted_thinking') : []
     const loaded = referenced(m).reduce((n, t) => n + (size.get(t) ?? 0), 0)
     const kinds = loaded ? { ...k.kinds, toolsLoaded: loaded } : k.kinds
     return { key: keyOf(m), bytes: json.length + loaded, kinds, lineage: k.lineage, role: m.role, thinking: thinking.length ? JSON.stringify(thinking).length : 0 }
@@ -274,8 +278,9 @@ function splitCounted(kinds: Record<string, number>, counted: Record<string, num
 
 // The stats once a request is answered with these counts. Where the API
 // counted messages itself (protocol.ts, Counted), they take its counts, and only
-// the rest are estimated, from what is left.
-export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number, apiCounts?: { defs?: number; messages: Array<number | undefined>; kinds?: Array<Record<string, number> | undefined> }): Stats {
+// the rest are estimated, from what is left. `dropped` is the indexes of the
+// messages whose thinking the API reports dropped.
+export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, outputTokens: number, apiCounts?: { defs?: number; messages: Array<number | undefined>; kinds?: Array<Record<string, number> | undefined> }, dropped: readonly number[] = []): Stats {
   const known = { ...prev?.tokens }
   const bound = { ...prev?.bound }
   const answers = { ...prev?.answers }
@@ -295,24 +300,29 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     delete bound[k]
   }
   const isNew = new Set(Object.keys(sizes).filter((k) => !(k in known)))
-  const first = keys.findIndex((k) => isNew.has(k))
-  if (first >= 0)
-    for (const k of new Set(keys.slice(first)))
-      if (!isNew.has(k) && k in bound) {
-        isNew.add(k)
-        sizes[k] -= bound[k]
-        delete bound[k]
-      }
+  // Messages with thinking the API dropped: one counted before is counted
+  // again, and one new shares what is left; either at its bytes less the
+  // thinking.
+  const lost = new Set(dropped.map((i) => keys[i]).filter((k) => k !== undefined))
+  for (const k of lost)
+    if (isNew.has(k)) sizes[k] -= r.messages[keys.indexOf(k)].thinking
+    else if (k in bound) {
+      isNew.add(k)
+      sizes[k] -= bound[k]
+      delete bound[k]
+    }
   const replies: string[] = []
   let left = inputTokens - Object.keys(sizes).filter((k) => !isNew.has(k)).reduce((n, k) => n + known[k] * (count[k] ?? 1), 0)
   r.messages.forEach((p, i) => {
     if (exact.has(p.key) && p.role === 'assistant' && i) delete answers[keys[i - 1]]
     // A reply first sent with its thinking trimmed off costs less than its
-    // output, which counted the thinking.
+    // output, which counted the thinking; one whose thinking was dropped, its
+    // output less the thinking, which only its bytes tell.
     if (!isNew.has(p.key) || p.role !== 'assistant' || !i || i < r.ends.reasoning) return
     const out = answers[keys[i - 1]]
     if (!out) return
     delete answers[keys[i - 1]]
+    if (lost.has(p.key)) return
     known[p.key] = out
     left -= out * count[p.key]
     if (p.thinking > 2) bound[p.key] = p.thinking

@@ -1,6 +1,7 @@
 // Anthropic's Messages protocol (/v1/messages), as Claude Code speaks it: the
 // core's own shape, so a request is the core's as it comes (protocol.ts).
 
+import { droppedAt, transformed } from './binding.ts'
 import { closeHeld, replying } from './command.ts'
 import type { Usage } from './cost.ts'
 import type { ApiMsg, Block } from './items.ts'
@@ -17,9 +18,14 @@ function usageReader() {
   const text: Record<number, string> = {}
   let called = false
   let stop: string | undefined
+  // The input_transformations: message_start's, or after a mid-stream
+  // fallback the final message_delta's.
+  let transformations: unknown
   return eventReader({
     event(e) {
       if (e.type === 'message_start') usage = { ...e.message?.usage }
+      if (e.type === 'message_start' && e.message?.input_transformations) transformations = e.message.input_transformations
+      if (e.type === 'message_delta' && e.input_transformations) transformations = e.input_transformations
       if (e.type === 'message_delta' && usage && e.usage?.output_tokens !== undefined) usage.output_tokens = e.usage.output_tokens
       // Searches are counted as they run, so the final delta's count is the
       // answer's.
@@ -41,13 +47,14 @@ function usageReader() {
         if (c.type === 'thinking') content.signatures.push(c.signature ?? '')
         else content.visibleChars += c.type === 'text' ? c.text.length : c.type === 'tool_use' ? JSON.stringify(c.name).length + JSON.stringify(c.input).length : 0
       usage = b.usage
+      transformations = b.input_transformations
       for (const [k, c] of (b.content ?? []).entries()) if (c.type === 'text') text[k] = c.text
       called = (b.content ?? []).some((c: Block) => c.type === 'tool_use')
       stop = b.stop_reason
     },
     // A turn goes on after a tool call (or a server tool's pause); a reply that
     // didn't fully arrive is none.
-    result: () => ({ usage, content, reply: stop === undefined ? undefined : { text: Object.values(text), ended: !called && stop !== 'tool_use' && stop !== 'pause_turn' } }),
+    result: () => ({ usage, content, reply: stop === undefined ? undefined : { text: Object.values(text), ended: !called && stop !== 'tool_use' && stop !== 'pause_turn' }, transformations: transformed(transformations), dropped: droppedAt(transformations) }),
     final: (e) => e.type === 'message_stop',
   })
 }

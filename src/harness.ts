@@ -62,7 +62,7 @@ const CLAUDE: Harness = {
       return session && `${session}-${headers['x-claude-code-agent-id'] ?? 'main'}`
     } catch {}
   },
-  logged: ['x-claude-code-'],
+  logged: ['x-claude-code-', 'anthropic-beta'],
   side(headers) {
     const c = String(headers['x-claude-code-request-class'] ?? '')
     return SIDE_CLASSES.has(c) ? true : LOOP_CLASSES.has(c) ? false : undefined

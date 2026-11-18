@@ -23,6 +23,7 @@ import { errorShape, hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDef
 import { blocks, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
+import { fetchBound, on as dropUnbound } from './binding.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { actionOf, dropTools, forceDefer, offerable, searchOn, toolListMessage, withPicked, type ToolRule } from './defer.ts'
@@ -797,8 +798,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // Codex closes before the stream's last bytes, which are still read for the
   // usage.
   res.on('close', () => res.writableFinished || usage.done || abort.abort())
+  // A served Messages request may ask for unbound thinking to be dropped (binding.ts).
+  const sender = served && proto.name === 'messages' ? fetchBound : fetch
   const send = (body: Buffer | undefined) =>
-    fetch(upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
+    sender(upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
   if (p?.freeze.mode === 'retry') console.error(`${new Date().toISOString()} shaver: shave tried again for ${p.key}, frozen since ${load(p.key)?.frozen?.since}: it saves ${p.freeze.gap} tokens a request`)
   let up = await send(p?.body ?? raw)
   // What was sent, in order, and how each went: the request shaved or frozen
@@ -955,7 +958,7 @@ async function answerOf(command: string, proto: Protocol, h: Harness | undefined
 // Records an answered request: its stats, cost and cache entries, the
 // conversation's state, any summary fork due and its log line.
 function answered(p: Prepared, usage: UsageReader, target: string, headers: Record<string, string>): void {
-  const { usage: u, content, attribution, reply, served } = usage.end()
+  const { usage: u, content, attribution, reply, served, transformations, dropped } = usage.end()
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
@@ -963,7 +966,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   // journaled bare, and like one cut off leaves the state as it was.
   if (!u || !inputTokens) return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), why: 'no usage' }, p.logLine && { dir: p.logDir!, line: p.logLine })
   const c = attribution !== undefined ? p.counted?.(attribution) : undefined
-  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds })
+  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds }, dropped)
   const was = currentOf(p.key)
   record(journalOf(p.key), was.stats, next, u)
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
@@ -974,7 +977,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList, frozen: p.freeze.frozen })
   // A reply with no text leaves the instructions where they'd go without one.
   if (due) void summarize(p, due, target, headers, reply?.text.some((t) => t.trim()) ? reply.text : undefined)
-  if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }), ...(served && { served }), ...(check && { summaryCheck: due ? 'sent' : check }) })
+  if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }), ...(served && { served }), ...(transformations && { inputTransformations: transformations }), ...(check && { summaryCheck: due ? 'sent' : check }) })
 }
 
 // A log line's counts from a request's usage.
@@ -1078,7 +1081,7 @@ async function forked(p: Pick<Prepared, 'key' | 'proto' | 'model' | 'provider'>,
     a['log-step-events'] && writeLine(path.join(logRoot, p.key), { event: 'fork', kind, id, time, model: p.model, provider: p.provider, protocol: p.proto.name, params: paramsOf(body), ...fields })
   let r: Response
   try {
-    r = await fetch(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
+    r = await (p.proto.name === 'messages' ? fetchBound : fetch)(target, { method: 'POST', headers: { ...headers, accept: body.stream ? 'text/event-stream' : 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) })
   } catch (err) {
     log({ error: String(err).slice(0, 2000) })
     throw staged(err, 'fetch')
@@ -1450,7 +1453,7 @@ server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code !== 'EADDRINUSE') throw err
   console.error(`shaver: ${inUse(a.port)}`)
   process.exit(1)
-}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: version ${version}, listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}`))
+}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: version ${version}, listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}${dropUnbound ? ', dropping unbound thinking (SHAVER_DROP_UNBOUND_THINKING)' : ''}`))
 
 function inUse(port: string) {
   return `port ${port} is in use by another program. Set SHAVER_PORT=NNNN to an available port number.`

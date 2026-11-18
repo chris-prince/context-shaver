@@ -23,7 +23,10 @@ export type Content = { signatures: string[]; visibleChars: number }
 // reply is the answer's text, where the protocol reads it, and whether it ends
 // the turn (no tool calls left to answer). Only the text: the reasoning rules
 // drop a finished turn's reasoning from the requests that follow it.
-export type Read = { usage?: Usage; content: Content; attribution?: unknown; reply?: Reply }
+// transformations is the Messages API's input_transformations, counted
+// (binding.ts), where it lists any, and dropped the indexes of the messages
+// whose thinking it dropped.
+export type Read = { usage?: Usage; content: Content; attribution?: unknown; reply?: Reply; transformations?: Record<string, number>; dropped?: number[] }
 export type Reply = { text: string[]; ended: boolean }
 export type UsageReader = { push(chunk: Uint8Array): void; end(): Read; readonly done: boolean }
 

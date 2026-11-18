@@ -329,3 +329,37 @@ test('a saving under half a cent is still listed in the breakdown', () => {
   assert.ok(!lines.includes('    none yet'))
   assert.ok(costLines({ ...c, saved: {} }).includes('    none yet'))
 })
+
+// A reply's thinking counts until the API reports it dropped (binding.ts,
+// droppedAt): whether or not a trim came before it, and whether it's dropped
+// the first time the reply is sent or later.
+test("a reply's thinking counts in its count exactly until the API reports it dropped", () => {
+  const prompt: ApiMsg = { role: 'user', content: 'hi '.repeat(100) }
+  const reply: ApiMsg = { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'x'.repeat(5000) }, { type: 'text', text: 'hello' }] }
+  const next: ApiMsg = { role: 'user', content: 'more' }
+  const reply2: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'sure' }] }
+  const next2: ApiMsg = { role: 'user', content: 'again' }
+  const trimmed: ApiMsg = { role: 'user', content: 'hi' }
+  const at = (n: number) => `2026-11-18T10:0${n}:00Z`
+  const first = observe(undefined, describe(body([prompt]), ends, at(0)), 1000, 2000)
+  // [when the drop is reported: never, on the trim, or on the reply's first send]
+  for (const when of ['never', 'trim', 'first'] as const) {
+    let s = observe(first, describe(body([prompt, reply, next]), ends, at(1)), when === 'first' ? 1100 : 3100, 10, undefined, when === 'first' ? [1] : [])
+    const k = s.messages[1].key
+    s = observe(s, describe(body([prompt, reply, next, reply2]), ends, at(2)), s.inputTokens + 10, 0, undefined, when === 'first' ? [1] : [])
+    // The trim takes about 900 tokens off the prompt, a drop the reply's 2000 of thinking.
+    const input = when === 'never' ? 2250 : 250
+    s = observe(s, describe(body([trimmed, reply, next, reply2, next2]), ends, at(3), true), input, 0, undefined, when === 'never' ? [] : [1])
+    assert.ok(Math.abs(sum(s) - input) < 1e-6, when)
+    if (when === 'never') {
+      assert.equal(s.tokens[k], 2000, 'never dropped, the reply costs its output')
+      assert.ok(k in s.bound)
+    } else {
+      assert.ok(s.tokens[k] < 2000 * 0.2, `${when}: dropped, its count is ${s.tokens[k]}`)
+      assert.ok(!(k in s.bound), when)
+    }
+    // A drop reported again changes nothing.
+    const again = observe(s, describe(body([trimmed, reply, next, reply2, next2]), ends, at(4)), input, 0, undefined, when === 'never' ? [] : [1])
+    assert.equal(again.tokens[k], s.tokens[k], when)
+  }
+})
