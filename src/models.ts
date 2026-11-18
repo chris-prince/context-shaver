@@ -32,6 +32,8 @@ export type Model = {
   horizon: (n: number, since: number) => number
 }
 type Settings = Partial<Model>
+// `kept`: the tokens of the newest messages a compaction keeps besides its
+// summary, or the user's messages (up to PROMPTS_KEPT).
 export type Compaction = { at: number; kept: number | 'prompts'; summary: number; ms: number }
 
 // Codex keeps the newest user messages up to 64K tokens (compact_remote_v2.rs,
@@ -42,10 +44,15 @@ export const PROMPTS_KEPT = 64_000
 // settings (autocompact.ts); `at` here stands where that can't be said.
 // Claude Code compacts on a 200K window at 167K: the eight automatic
 // compaction requests logged here that the shaver left untrimmed read
-// 164.7-167.1K tokens (usage). In five compactions, what came after the
-// base kept 11-29% of its tokens (a median of 18%, rounded to 20%), the
-// summary ran 6.6-8.9K tokens, and the next request came about a minute later.
-const CLAUDE_CODE = { compaction: { at: 165_000, kept: 0.2, summary: 7600, ms: 65_000 } }
+// 164.7-167.1K tokens (usage). The summary ran 6.6-8.9K tokens, and the next
+// request came about a minute later. A compaction keeps the conversation's
+// last round, with the files and such it restores (Claude Code 2.1.327's
+// source; a token budget for the tail is off by default), so what it keeps
+// doesn't grow with the window: 20K tokens. Five compactions logged here kept
+// 11-29% past the base of 167K, about 15-45K with the summary, and one on
+// 2026-11-08 about 10.6K besides it. (2026-11-18: was 20% of what came after
+// the base, which on a 1M window kept ~175K.)
+const CLAUDE_CODE = { compaction: { at: 165_000, kept: 20_000, summary: 7600, ms: 65_000 } }
 
 // Codex caps its auto-compact limit at 90% of the context window, and luna's
 // is 272K (~/.codex/models_cache.json; local/notes.md, "Make Codex's cost and

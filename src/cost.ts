@@ -112,7 +112,7 @@ const reshaved = (prev: Stats | undefined, s: Stats): string[] => {
 
 // What a compaction keeps of the prompt past the base, the client's user
 // messages being what the shaverless prompt's are: the policy trims none.
-const keptOf = (c: Compaction, s: Stats, rest: number) => (c.kept === 'prompts' ? Math.min(rest, Math.min(promptsOf(s), PROMPTS_KEPT) + c.summary) : rest * c.kept)
+const keptOf = (c: Compaction, s: Stats, rest: number) => Math.min(rest, (c.kept === 'prompts' ? Math.min(promptsOf(s), PROMPTS_KEPT) : c.kept) + c.summary)
 
 // A request's tokens in dollars; writes at the hour's price but for the share
 // written for 5 minutes, or at the model's own write price.
@@ -189,9 +189,11 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   for (const [t, w] of by) credit(t, (rest * w) / weight)
   // Once the prompt without the shaver compacts, what was taken out before
   // would have been summarised away but for what the compaction keeps of it,
-  // so it weighs that much against what's taken out after. Keeping the user's
+  // so it weighs that much against what's taken out after: the share of the
+  // prompt past the base the newest messages kept are. Keeping the user's
   // messages keeps none of it.
-  if (wo.compacted) for (const t in removed) removed[t] *= m.compaction!.kept === 'prompts' ? 0 : m.compaction!.kept
+  const keptShare = (c: Compaction) => (c.kept === 'prompts' ? 0 : Math.min(1, c.kept / Math.max(1, all - baseWithout(s))))
+  if (wo.compacted) for (const t in removed) removed[t] *= keptShare(m.compaction!)
   // Searches cost the same with the shaver or without, so they save nothing.
   return {
     without: c.without + withoutAll + searches(u),
