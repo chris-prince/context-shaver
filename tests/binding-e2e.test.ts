@@ -118,6 +118,8 @@ test('on: every request holding thinking to a newer model asks to drop unbound t
     const logged = requests(p.dir)
     assert.deepEqual(logged.map((x) => x.inputTransformations), [undefined, { 'thinking_dropped/prefix_binding_mismatch': 1 }, { 'thinking_dropped/prefix_binding_mismatch': 1 }, undefined])
     assert.ok(logged.every((x) => x.headers['anthropic-beta'] === 'client-beta-1'), 'the client\'s beta header logged')
+    // Each request's log says whether it asked, exactly when it was sent asking.
+    assert.deepEqual(logged.map((x) => x.dropAsked), up.seen.map((s) => (asksDrop(s) ? true : undefined)))
 
     // A model that refuses the setting gets the request again without it, and
     // isn't sent it again.
@@ -128,6 +130,7 @@ test('on: every request holding thinking to a newer model asks to drop unbound t
     assert.match(p.err(), /claude-sonnet-5-5 refused drop_block for unbound thinking; sent without it/)
     assert.equal(await send(p, 'claude-sonnet-5-5', [prompt('one'), thought, result, prompt('two')]), 200)
     assert.deepEqual(up.seen.slice(before + 2).map(asksDrop), [false])
+    assert.deepEqual(requests(p.dir).slice(logged.length).map((x) => x.dropAsked), [undefined, undefined], 'sent again without it, logged as not asked')
   } finally {
     p.child.kill()
     up.close()
@@ -143,6 +146,7 @@ test('off: requests holding thinking go up without the setting or the beta', asy
     assert.equal(up.seen.length, 1)
     assert.equal(up.seen[0].body.thinking.block_binding, undefined)
     assert.equal(up.seen[0].beta, 'client-beta-1')
+    assert.equal(requests(p.dir)[0].dropAsked, undefined)
   } finally {
     p.child.kill()
     up.close()

@@ -23,7 +23,7 @@ import { errorShape, hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDef
 import { blocks, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
-import { fetchBound, on as dropUnbound } from './binding.ts'
+import { dropAsked, fetchBound, on as dropUnbound } from './binding.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { actionOf, dropTools, forceDefer, offerable, searchOn, toolListMessage, withPicked, type ToolRule } from './defer.ts'
@@ -878,15 +878,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const finish = (cut: boolean) => {
     if (finished || !served || up.status !== 200) return
     finished = true
+    // Its log says whether unbound thinking was asked to be dropped (binding.ts).
+    const asked = dropAsked(up) ? { dropAsked: true } : undefined
+    for (const q of [p, resent]) if (asked && q?.logLine) Object.assign(q.logLine, asked)
     journaling(url.split('?')[0], () => {
       const body = c?.body
       // A request sent as the client sent it, not as the proxy prepared it,
       // is logged with its messages whole.
-      const whole = (event: string): WholeLog | undefined => (a['log-step-events'] && body ? { dir: path.join(logRoot, bareKey()), event, side: body, protocol: proto.name, params, headers: logged } : undefined)
+      const whole = (event: string): WholeLog | undefined => (a['log-step-events'] && body ? { dir: path.join(logRoot, bareKey()), event, side: body, protocol: proto.name, params, headers: logged, more: asked } : undefined)
       if (p && !cut) answered(p, usage, upstream + url, headers)
       else if (resent && !cut) {
         const w = whole('resent')
-        answeredResent(resent, usage, w && { ...w, more: freezeLog(resent) || undefined })
+        answeredResent(resent, usage, w && { ...w, more: { ...asked, ...freezeLog(resent) } })
       }
       else {
         const q = p ?? resent

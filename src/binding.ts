@@ -61,13 +61,18 @@ export function withBeta(headers: Record<string, string>): Record<string, string
   return was.split(',').some((v) => v.trim() === BETA) ? headers : { ...headers, 'anthropic-beta': `${was},${BETA}` }
 }
 
+// Responses to requests sent with drop_block, so their logs can say so: one
+// with no input_transformations logged then dropped nothing.
+const asked = new WeakSet<Response>()
+export const dropAsked = (r: Response) => asked.has(r)
+
 // Sends a Messages request, with drop_block where bound sets it, when on. A
 // 400 that names the setting or the beta sends it again as given.
 export async function fetchBound(url: string, init: { method?: string; headers: Record<string, string>; body?: Buffer | string; signal?: AbortSignal }): Promise<Response> {
   const b = on && init.body !== undefined ? bound(Buffer.from(init.body)) : undefined
   if (!b) return fetch(url, init)
   const r = await fetch(url, { ...init, headers: withBeta(init.headers), body: b.body })
-  if (r.status !== 400 || !/block_binding|thinking-binding-controls/.test(await r.clone().text())) return r
+  if (r.status !== 400 || !/block_binding|thinking-binding-controls/.test(await r.clone().text())) return asked.add(r), r
   refused.add(b.model)
   console.error(`${new Date().toISOString()} shaver: ${b.model} refused drop_block for unbound thinking; sent without it, and not sent it again until the proxy restarts`)
   return fetch(url, init)
