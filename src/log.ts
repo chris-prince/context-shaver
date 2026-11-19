@@ -64,7 +64,7 @@ export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Recor
   const injected = preamble ? 'system' : 'harness'
   const content = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content
   for (const b of content) {
-    const k = isCompaction(b) ? 'harness' : isNote(b, m) ? injected : kindOf(b, m.role)
+    const k = isCompactionItem(b) ? 'harness' : isNote(b, m) ? injected : kindOf(b, m.role)
     if (k === 'system' && b.type === 'text') for (const [s, n] of sections(b)) add(s, n)
     else if (k === 'harness') for (const [s, n] of noteBytes(b)) add(s, n)
     else add(k === 'system' && b.type === 'tool_addition' ? 'system:deferred-tools-list' : k, JSON.stringify(b).length)
@@ -161,11 +161,11 @@ export function preambleEnd(msgs: readonly ApiMsg[]): number {
 // preamble messages, which after a compaction come as user messages.
 export const isReminder = (b: Block) => b.type === 'text' && typeof b.text === 'string' && ['<system-reminder>', ...CODEX_PREAMBLE].some((p) => (b.text as string).startsWith(p))
 // Codex's compaction item, which holds the history before it: conversation, not base.
-const isCompaction = (b: Block) => b.type === 'item' && (b.item as { type?: string } | undefined)?.type === 'compaction'
+export const isCompactionItem = (b: Block) => b.type === 'item' && (b.item as { type?: string } | undefined)?.type === 'compaction'
 
 // Whether a block is the harness's: a system message's, a reminder, or a
 // compaction item.
-export const isNote = (b: Block, m: ApiMsg) => isCompaction(b) || m.role === 'system' || isReminder(b)
+export const isNote = (b: Block, m: ApiMsg) => isCompactionItem(b) || m.role === 'system' || isReminder(b)
 
 function kindOf(b: Block, role: string): string {
   switch (b.type) {

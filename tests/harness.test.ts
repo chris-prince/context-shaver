@@ -31,6 +31,7 @@ test('the headers say which requests are side requests, where they know', () => 
   const codex = of('codex')!
   const kind = (k: string) => codex.side!({ 'x-codex-turn-metadata': JSON.stringify({ request_kind: k, turn_id: 't' }) })
   assert.deepEqual([kind('turn'), kind('compaction'), kind('other')], [false, true, undefined])
+  assert.equal(codex.compaction!({ 'x-codex-turn-metadata': JSON.stringify({ request_kind: 'compaction' }) }), true)
   assert.equal(codex.side!({}), undefined)
   assert.equal(codex.side!({ 'x-codex-turn-metadata': 'not json' }), undefined)
   assert.equal(of('opencode')!.side, undefined)

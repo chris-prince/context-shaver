@@ -34,7 +34,7 @@ import { totals } from './totals.ts'
 import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { autocompactAt } from './autocompact.ts'
 import { load as loadLaunch, type LaunchVals } from './launch-vals.ts'
-import { bornFrom, bornOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, splitShaved, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
+import { bornFrom, bornOf, compactedSince, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, splitShaved, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
 import { record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
@@ -376,8 +376,8 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     c.keep = folded(c.keep ?? last?.keep, own, mtimeOf, ccVersion(body.system))
     described.keep = kept(c.keep)
   }
-  const lastMessage = (last?.suggestion ? last.messages.at(-2) : last?.messages.at(-1))?.key
-  if (h?.resends && lastMessage && !described.messages.some((q) => q.key === lastMessage)) described.compacted = true
+  if (isCompaction(msgs, compaction)) described.compaction = true
+  if (compactedSince(last, body.messages)) described.compacted = true
   // Each record is dated by the first message it covers, the memoir by its first record's.
   const starts = startsOf(msgs, chain.slice(0, records), turns)
   described.messages.filter((q) => q.kinds.memoir).forEach((q) => (q.born = bornFrom(latestOf(key), msgs, starts[0])))
@@ -957,7 +957,9 @@ async function answerOf(command: string, proto: Protocol, h: Harness | undefined
 // Records an answered request: its stats, cost and cache entries, the
 // conversation's state, any summary fork due and its log line.
 function answered(p: Prepared, usage: UsageReader, target: string, headers: Record<string, string>): void {
-  const { usage: u, content, attribution, reply, served, transformations, dropped } = usage.end()
+  const { usage: u, content, attribution, reply, served, transformations, dropped, failure } = usage.end()
+  // How the response said it failed goes in its log line, answered or bare.
+  if (failure && p.logLine) p.logLine.failure = failure
   const now = Date.now()
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
@@ -995,11 +997,12 @@ const usageFields = (u: Usage | undefined) =>
 // since none of this request's trim went up. A conversation with no journal
 // yet has no stats to count it in, so it's journaled bare.
 function answeredResent(p: Prepared, usage: UsageReader, log?: WholeLog): void {
-  const { usage: u } = usage.end()
+  const { usage: u, failure } = usage.end()
   const was = currentOf(p.key)
   const b: BareLine = { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), ...(u && { usage: u }), why: u ? 'resent' : 'no usage' }
+  if (log && failure) log.more = { ...log.more, failure }
   if (!u || !was.stats) return answeredBare(p.key, b, log)
-  const stats = recordResent(journalOf(p.key), was.stats, new Date().toISOString(), u)
+  const stats = recordResent(journalOf(p.key), was.stats, new Date().toISOString(), u, p.sent.compaction)
   current.set(p.key, { stats, cost: addResent(was.cost, stats, u) })
   if (log) writeWhole(log, b, usageFields(u))
 }

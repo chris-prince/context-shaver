@@ -21,8 +21,11 @@ function usageReader() {
   // The input_transformations: message_start's, or after a mid-stream
   // fallback the final message_delta's.
   let transformations: unknown
+  // A stream's error event, as overloaded_error's, as it came.
+  let failure: Record<string, unknown> | undefined
   return eventReader({
     event(e) {
+      if (e.type === 'error') failure = e
       if (e.type === 'message_start') usage = { ...e.message?.usage }
       if (e.type === 'message_start' && e.message?.input_transformations) transformations = e.message.input_transformations
       if (e.type === 'message_delta' && e.input_transformations) transformations = e.input_transformations
@@ -55,7 +58,7 @@ function usageReader() {
     },
     // A turn goes on after a tool call (or a server tool's pause); a reply that
     // didn't fully arrive is none.
-    result: () => ({ usage, content, reply: stop === undefined ? undefined : { text: Object.values(text), ended: !called && stop !== 'tool_use' && stop !== 'pause_turn' }, transformations: transformed(transformations), dropped: droppedAt(transformations) }),
+    result: () => ({ usage, content, reply: stop === undefined ? undefined : { text: Object.values(text), ended: !called && stop !== 'tool_use' && stop !== 'pause_turn' }, transformations: transformed(transformations), dropped: droppedAt(transformations), ...(failure && { failure }) }),
     final: (e) => e.type === 'message_stop',
   })
 }

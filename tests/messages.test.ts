@@ -78,3 +78,12 @@ test("a summary fork's answer keeps its blocks, usage and stop reason", () => {
   assert.equal(out.usage?.output_tokens, 7)
   assert.equal(out.stop, 'max_tokens')
 })
+
+test("a stream's error event is how it said it failed", () => {
+  const r = MESSAGES.usageReader()
+  const ev = (o: unknown) => new TextEncoder().encode(`event: x\ndata: ${JSON.stringify(o)}\n\n`)
+  r.push(ev({ type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 1 } } }))
+  const error = { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }
+  r.push(ev(error))
+  assert.deepEqual(r.end().failure, error)
+})

@@ -65,6 +65,11 @@ test('a resent request counts as a request, with its usage, and leaves the rest 
   const lines = Array.from(history(file), (l) => ({ ...l, stats: copy(l.stats) }))
   assert.deepEqual(lines.at(-1), { stats: s2, usage: u, resent: true })
   assert.equal(lines[0].resent, undefined)
+  // A compaction request resent as it came is marked, so the next request is
+  // known to follow a compaction; on replay too.
+  const s3 = recordResent(file, copy(s2), '2026-10-11T10:02:00Z', u, true)
+  assert.equal(s3.compaction, true)
+  assert.equal(Array.from(history(file)).at(-1)!.stats.compaction, true)
 })
 
 test('a field that goes away stays gone on replay', () => {

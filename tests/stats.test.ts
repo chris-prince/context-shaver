@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bornFrom, bornOf, costLines, describe, estimate, isCompaction, isSideRequest, observe, render, splitShaved, textTokens, withoutSideRequest, type Stats } from '../src/stats.ts'
+import { bornFrom, bornOf, compactedSince, costLines, describe, estimate, isCompaction, isSideRequest, observe, render, splitShaved, textTokens, withoutSideRequest, type Stats } from '../src/stats.ts'
 import { clockOf, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 
 const ends = { tools: 0, reasoning: 0 }
@@ -396,4 +396,24 @@ test("a dropped reply's thinking comes off its count as the API reported it", ()
     const again = observe(s, describe(body([trimmed, reply, next, reply2, next2]), ends, at(4)), input, 0, undefined, drops(when !== 'never'))
     assert.equal(again.tokens[k], s.tokens[k], `${when}: the next request changes nothing`)
   }
+})
+
+test('a compaction is known by its marks: the request before was one, or a compaction item is new; not by the last message going', () => {
+  const prompt: ApiMsg = { role: 'user', content: 'fix it' }
+  const thought: ApiMsg = { role: 'assistant', content: [{ type: 'thinking', thinking: 'look first' }] }
+  const called: ApiMsg = { role: 'assistant', content: [{ type: 'thinking', thinking: 'look first' }, { type: 'tool_use', id: 'c1', name: 'Bash', input: { command: 'ls' } }] }
+  const sent = (msgs: ApiMsg[], compaction = false) => ({ ...describe(body(msgs), ends, '2026-11-19T07:14:00Z'), ...(compaction && { compaction: true }) })
+  // A response that failed after its reasoning: it's sent again, and the next
+  // response's call joins it, so the last message before is gone.
+  const failed = observe(undefined, sent([prompt, thought]), 1000, 0)
+  assert.equal(compactedSince(failed, [prompt, called]), false)
+  const asked = observe(failed, sent([prompt, called, { role: 'user', content: 'compact' }], true), 1100, 0)
+  assert.equal(asked.compaction, true)
+  assert.equal(compactedSince(asked, [prompt, { role: 'user', content: 'summary' }]), true)
+  // Codex's /responses/compact isn't journaled as a request; its item, a
+  // system message of its own (responses.ts), is new after it.
+  const item: ApiMsg = { role: 'system', content: [{ type: 'item', item: { type: 'compaction', encrypted_content: 'x' } }] }
+  assert.equal(compactedSince(failed, [prompt, item]), true)
+  assert.equal(compactedSince(observe(failed, sent([prompt, item]), 900, 0), [prompt, item, thought]), false)
+  assert.equal(compactedSince(undefined, [prompt, item]), false)
 })

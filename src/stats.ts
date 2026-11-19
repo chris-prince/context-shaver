@@ -20,7 +20,7 @@
 // or not, though Opus 5.5 bills it then, and a reply sent first after the trim
 // that unbound it kept its thinking.
 
-import { hash, isNote, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
+import { hash, isCompactionItem, isNote, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
 import { CATEGORIES, firstLine, notesOfBlock } from './notes.ts'
 import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Conventions } from './items.ts'
 import type { Cost } from './cost.ts'
@@ -64,8 +64,11 @@ export type Sent = {
   // Whether it is a side request on the conversation, as Claude Code's prompt
   // suggestion (isSideRequest); named for that, the first one known.
   suggestion?: boolean
+  // Whether it is the client's compaction request (isCompaction); none before
+  // 2026-11-19.
+  compaction?: boolean
   // Whether the client compacted its conversation since the request before
-  // (harness.ts, resends). What it keeps, the base, the user's messages and a
+  // (compactedSince). What it keeps, the base, the user's messages and a
   // summary, is nothing the policy trims, so all the trims took out is gone.
   compacted?: boolean
   // The keys of the messages the request before sent that the records it adds
@@ -95,6 +98,8 @@ export type Stats = {
   // Whether the latest request was a prompt suggestion, which counts as no
   // request or turn; none before 2026-10-23, when suggestions weren't journaled.
   suggestion?: boolean
+  // Whether the latest request was the client's compaction (Sent.compaction).
+  compaction?: boolean
   // Whether the client compacted before the latest request (Sent.compacted).
   compacted?: boolean
   // The latest request's Sent.covers.
@@ -260,6 +265,20 @@ export function withoutSideRequest(msgs: ApiMsg[], side?: boolean): ApiMsg[] {
   return last && isSideRequest(msgs, side) && isPrompt(last) ? msgs.slice(0, -1) : msgs
 }
 
+// Whether the client compacted since the latest request: that request was its
+// compaction, or a message sent now holds a compaction item (log.ts) not among
+// that request's, as after Codex's /responses/compact, which is journaled
+// bare, not as a request. Not that the last message before is gone, which
+// also follows a response that failed partway (harness.ts, Codex). Keys are
+// of the messages as sent, and the proxy never rewrites a compaction item, so
+// a trim can't make an old one look new. A compaction cancelled after its
+// request was answered still counts.
+export function compactedSince(prev: Stats | undefined, sent: readonly ApiMsg[]): boolean {
+  if (!prev) return false
+  const before = new Set(prev.messages.map((p) => p.key))
+  return !!prev.compaction || sent.some((m) => blocks(m).some(isCompactionItem) && !before.has(keyOf(m)))
+}
+
 // Moves the bytes of the skills the proxy shortened (skills.ts) from the
 // skill list's section to `skills-shaved`: in the preamble message holding it,
 // as Claude Code's always is and Codex's after a compaction, else in the
@@ -395,6 +414,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     ...(r.window && { window: r.window }),
     ...(r.windowGuessed && { windowGuessed: true }),
     suggestion: !!r.suggestion,
+    ...(r.compaction && { compaction: true }),
     ...(r.compacted && { compacted: true }),
     ...(r.covers && { covers: r.covers }),
     ...(r.unrecognized && { unrecognized: r.unrecognized }),

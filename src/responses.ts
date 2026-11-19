@@ -244,7 +244,7 @@ export function canonical(wire: Record<string, unknown>): Wire {
   return { body, render, ids: { head: idsOf(head), of: (m) => idsOf(renderMsg(m)) }, counted }
 }
 
-type Response = { output?: Item[]; status?: string; incomplete_details?: { reason?: string }; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; attribution?: unknown } }
+type Response = { output?: Item[]; status?: string; error?: unknown; incomplete_details?: { reason?: string }; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; attribution?: unknown } }
 
 // ChatGPT's backend doesn't say what it wrote. Measured through OpenRouter
 // (local/notes.md, "Make Codex's cost and savings figures accurate"), OpenAI
@@ -276,6 +276,16 @@ function usageReader() {
   let attribution: unknown
   const content: Content = { signatures: [], visibleChars: 0 }
   let reply: Reply | undefined
+  let failure: Record<string, unknown> | undefined
+  // A stream's error event as it came; a failed or incomplete response by its
+  // status, error and incomplete_details.
+  const failed = (e: { type?: string; response?: Response }) => {
+    if (e.type === 'error') failure = e
+    else if (e.type === 'response.failed' || e.type === 'response.incomplete') {
+      const r = e.response
+      failure = { type: e.type, status: r?.status, ...(r?.error != null && { error: r.error }), ...(r?.incomplete_details != null && { incomplete_details: r.incomplete_details }) }
+    }
+  }
   const read = (r: Response | undefined) => {
     if (!r) return
     usage = usageOf(r.usage) ?? usage
@@ -288,7 +298,12 @@ function usageReader() {
     const out = r.output ?? []
     if (out.length) reply = { text: out.filter((it) => it.type === 'message').map(textOf), ended: out.at(-1)!.type === 'message' }
   }
-  return eventReader({ event: (e) => read(finished(e)), body: read, result: () => ({ usage, content, attribution, reply }), final: (e) => !!finished(e) })
+  return eventReader({
+    event: (e) => (failed(e), read(finished(e))),
+    body: read,
+    result: () => ({ usage, content, attribution, reply, ...(failure && { failure }) }),
+    final: (e) => !!finished(e),
+  })
 }
 
 function replying(model: string, stream: boolean, context: number): Replying {

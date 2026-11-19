@@ -21,10 +21,6 @@ export type Harness = {
   defers: boolean
   // The tools never deferred or dropped, whatever the rules say (defer.ts).
   alwaysLoaded: readonly string[]
-  // Whether it sends again all it sent before, but after compacting, so a
-  // request without the last message of the one before follows a compaction
-  // (stats.ts, Sent.compacted).
-  resends: boolean
   // Its session's ID, part of each conversation's (conversationId).
   session(c: Canonical, headers: IncomingHttpHeaders): unknown
   // The prefixes of the headers of its own that are logged (loggedHeaders).
@@ -54,8 +50,6 @@ const CLAUDE: Harness = {
   // ToolSearch loads the others; the model uses the file and shell tools on
   // most requests, and leaves Skill uncalled when it's deferred.
   alwaysLoaded: ['ToolSearch', 'Skill', 'Bash', 'Edit', 'Read', 'Write'],
-  // It rewrites its last message's reminders on the next request.
-  resends: false,
   session(c, headers) {
     try {
       const session = JSON.parse((c.metadata as { user_id?: string } | undefined)?.user_id ?? '{}').session_id
@@ -71,6 +65,14 @@ const CLAUDE: Harness = {
     const c = String(headers['x-claude-code-request-class'] ?? '')
     return SIDE_CLASSES.has(c) || LOOP_CLASSES.has(c) ? c === 'compaction' : undefined
   },
+}
+
+// Whether a Codex request is its compaction, by its request_kind.
+function codexCompaction(headers: IncomingHttpHeaders): boolean | undefined {
+  try {
+    const kind = JSON.parse(String(headers['x-codex-turn-metadata'])).request_kind
+    return kind === 'compaction' ? true : kind === 'turn' ? false : undefined
+  } catch {}
 }
 
 // Codex's tools are run from JavaScript, by one custom exec tool, so no call's
@@ -89,19 +91,16 @@ const CODEX: Harness = {
   defers: true,
   // exec runs every other tool, and wait resumes its cells.
   alwaysLoaded: ['functions.exec', 'functions.wait'],
-  // In 265 journaled requests to 2026-10-24, the 3 that left out the last
-  // message before were those after its 3 compactions.
-  resends: true,
   session: (c, headers) => c.prompt_cache_key ?? headers['session-id'],
   logged: ['x-codex-', 'x-openai-'],
   // Each request's x-codex-turn-metadata has a request_kind: turn, or
-  // compaction (0.166.0's two).
-  side(headers) {
-    try {
-      const kind = JSON.parse(String(headers['x-codex-turn-metadata'])).request_kind
-      return kind === 'compaction' ? true : kind === 'turn' ? false : undefined
-    } catch {}
-  },
+  // compaction (0.166.0's two), its only side request. Its compactions are
+  // known by that, not by a request leaving out the last message of the one
+  // before: one does after a response that failed partway too, sending again
+  // the reasoning item that came, which the next response's call joins (12 of
+  // 929 requests in four sessions checked on 2026-11-19, through AWS Bedrock).
+  side: codexCompaction,
+  compaction: codexCompaction,
 }
 
 // OpenCode's tools, as its 2.x requests name them: edit's and write's text, and
@@ -128,8 +127,6 @@ const OPENCODE: Harness = {
   },
   defers: false,
   alwaysLoaded: [],
-  // Unchecked: no logged OpenCode session has compacted.
-  resends: false,
   session: (_, headers) => headers['x-opencode-session-id'],
   // It sends no header saying what kind a request is.
   logged: ['x-opencode-'],

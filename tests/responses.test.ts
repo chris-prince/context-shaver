@@ -264,3 +264,17 @@ test('a stream is held from response.completed, and text added is a message item
   searched.push(Buffer.from(event('response.completed', { response: { output: [{ type: 'tool_search_call', call_id: 's1' }, { type: 'tool_search_output', call_id: 's1' }, item] } })))
   assert.equal(searched.ended, true)
 })
+
+test('how a stream said it failed: its error event, or a failed or incomplete response', () => {
+  const failureOf = (...events: unknown[]) => {
+    const r = RESPONSES.usageReader()
+    for (const e of events) r.push(new TextEncoder().encode(`data: ${JSON.stringify(e)}\n\n`))
+    return r.end().failure
+  }
+  const error = { type: 'error', code: 'server_error', message: 'upstream closed', sequence_number: 4 }
+  assert.deepEqual(failureOf({ type: 'response.created', response: {} }, error), error)
+  assert.deepEqual(failureOf({ type: 'response.failed', response: { status: 'failed', error: { code: 'server_error', message: 'm' }, output: [] } }), { type: 'response.failed', status: 'failed', error: { code: 'server_error', message: 'm' } })
+  const incomplete = { type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [], usage: { input_tokens: 10, output_tokens: 5 } } }
+  assert.deepEqual(failureOf(incomplete), { type: 'response.incomplete', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } })
+  assert.equal(failureOf(completed), undefined)
+})

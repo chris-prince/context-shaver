@@ -128,9 +128,11 @@ export function recordBare(file: string, b: BareLine): void {
 }
 
 // Appends a resent request's line, given the stats the journal ends with, and
-// returns the stats it leaves.
-export function recordResent(file: string, prev: Stats, time: string, usage: Usage): Stats {
-  const set = { requests: prev.requests + 1, time }
+// returns the stats it leaves. A resent compaction request is marked, so the
+// request after it is known to follow a compaction (stats.ts, compactedSince);
+// one that isn't leaves a mark before it for the next request answered.
+export function recordResent(file: string, prev: Stats, time: string, usage: Usage, compaction?: boolean): Stats {
+  const set = { requests: prev.requests + 1, time, ...(compaction && { compaction: true }) }
   append(file, { set, usage, resent: true })
   return { ...prev, ...set }
 }

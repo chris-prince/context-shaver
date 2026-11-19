@@ -25,8 +25,10 @@ export type Content = { signatures: string[]; visibleChars: number }
 // drop a finished turn's reasoning from the requests that follow it.
 // transformations is the Messages API's input_transformations, counted
 // (binding.ts), where it lists any, and dropped the indexes of the messages
-// whose thinking it dropped.
-export type Read = { usage?: Usage; content: Content; attribution?: unknown; reply?: Reply; transformations?: Record<string, number>; dropped?: number[] }
+// whose thinking it dropped. failure is how a response said it failed or
+// stopped short: its error event, or a Responses stream's response.failed or
+// response.incomplete, as sent.
+export type Read = { usage?: Usage; content: Content; attribution?: unknown; reply?: Reply; transformations?: Record<string, number>; dropped?: number[]; failure?: Record<string, unknown> }
 export type Reply = { text: string[]; ended: boolean }
 export type UsageReader = { push(chunk: Uint8Array): void; end(): Read; readonly done: boolean }
 
