@@ -573,9 +573,10 @@ export const money = (v: number) => (v.toFixed(2).startsWith('-') && Number(v.to
 // The session's cost without the shaver and as it was (cost.ts), the saving
 // split by type of trim, each named for the base or the conversation (each a
 // share of the cost without the shaver, as the saving is), with the client's
-// own compactions the shaver kept it from needing.
-export const costLines = (c: Cost, heading = 'Costs (session)') => [
-  ...difference(heading, c.without, c.actual, money, ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
+// own compactions the shaver kept it from needing. A note, saying what more
+// than the conversation the sums cover, comes first.
+export const costLines = (c: Cost, heading = 'Costs (session)', note?: string) => [
+  ...difference(heading, c.without, c.actual, money, ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']).flatMap((l, i) => (i === 0 && note ? [l, `    ${note}`] : [l])),
   '',
   '  Savings Breakdown',
   ...(split(c).length ? split(c) : ['    none yet']),
@@ -608,7 +609,7 @@ export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')
 // when.
 export type Forks = { applied: number; pending: number; dropped: number; failed?: { time: string; outcome: string; reason: string } }
 
-export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, dropped: 0 }): string {
+export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, dropped: 0 }, costNote?: string): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
@@ -650,7 +651,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const conversation = total - base - frontier
 
   const window = `Context Window: ${s.window ? `${s.window.toLocaleString('en-US')} tokens${s.windowGuessed ? ' (guessing)' : ''}` : '(unknown)'}`
-  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost)] : unpriced(s, estimated))]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost, undefined, costNote)] : unpriced(s, estimated))]
   // The prompt as sent, then as it would be without the shaver, lined up.
   const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
   const { failed, ...counts } = forks

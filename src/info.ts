@@ -2,7 +2,7 @@
 // the proxy (server.ts, stats) and scripts/info.ts, which gives it for any
 // conversation with no proxy running.
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { counted, render, SUMMARIES, type Forks, type Stats } from './stats.ts'
 import { bareLines, history, latest } from './journal.ts'
@@ -35,21 +35,65 @@ export function journaled(dir: string, key: string, ttlMs: number): { stats?: St
   return { stats: latest(journalIn(dir, key)), cost: c }
 }
 
+// The rest of a conversation's session, which `shaver info`'s cost sums: its
+// earlier histories, each a conversation of its own once a compaction or
+// rewind gave it a new first message (harness.ts, conversationId), and in
+// Claude Code's main conversation, its subagents, whose session ends in their
+// agent ID where the main's ends in "main". A key with no session (its first
+// message alone) has none. `agent` is a subagent's ID; `spent`, its summary
+// forks' dollars.
+export type Other = { key: string; agent?: string; stats?: Stats; cost?: Cost; spent: number }
+export function othersOf(dir: string, key: string, read: (key: string) => { stats?: Stats; cost?: Cost }): Other[] {
+  const own = key.slice(0, key.lastIndexOf('-') + 1)
+  if (!own.slice(0, -1).includes('-')) return []
+  const session = key.startsWith('claude-') && own.endsWith('-main-') ? own.slice(0, -'main-'.length) : own
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.journal.jsonl'))
+    .map((f) => f.slice(0, -'.journal.jsonl'.length))
+    // A journal moved aside (`<key>.pre-repair`) isn't a conversation's.
+    .filter((k) => k !== key && k.startsWith(session) && !k.includes('.'))
+    .map((k) => ({ key: k, ...(!k.startsWith(own) && { agent: k.slice(session.length, k.lastIndexOf('-')) }), ...read(k), spent: summariesFrom(dir, k).spent }))
+}
+
+// A cost with its summary forks' spend, which is charged to the summaries'
+// saving.
+const withForks = (c: Cost, spent: number): Cost => ({ ...c, actual: c.actual + spent, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - spent } })
+
+function plus(a: Cost, b: Cost): Cost {
+  const saved = { ...a.saved }
+  for (const [t, n] of Object.entries(b.saved)) saved[t] = (saved[t] ?? 0) + n
+  return { ...a, without: a.without + b.without, actual: a.actual + b.actual, saved, compactions: a.compactions + b.compactions, waitMs: a.waitMs + b.waitMs }
+}
+
+// What the session's cost covers besides the conversation: its earlier
+// histories and subagents with stats (one of side requests only is counted,
+// but isn't a history), and those whose model has no price, so aren't.
+function noteOf(others: Other[]): string | undefined {
+  const shown = others.filter((o) => o.stats)
+  const histories = shown.filter((o) => !o.agent).length
+  const agents = new Set(shown.flatMap((o) => o.agent ?? [])).size
+  const parts = [...(histories ? [`${histories} earlier ${histories === 1 ? 'history' : 'histories'}`] : []), ...(agents ? [counted(agents, 'subagent')] : [])]
+  const unpriced = shown.filter((o) => !o.cost).length
+  if (!parts.length) return undefined
+  return `Includes ${parts.join(' and ')}${unpriced ? ` (${unpriced} not counted: no price for its model)` : ''}.`
+}
+
 // What the proxy knows that the state files don't: the summary records that
 // still fit the messages, and the requests no journal line was written for.
 // Without a running proxy, no summary fork is in flight and none were missed.
 export type Live = { valid: number; inFlight?: boolean; missed?: number }
 
 // `shaver info`'s text: the stats, or with none journaled yet, `estimated`
-// ones; the cost with the summary forks' spend; and the summary requests,
-// each of which is running, or left a record or none. A record no longer
-// fitting the messages is dropped, like one replaced or none at all.
-export function infoText(key: string, version: string, s: Stats, estimated: boolean, c: Cost | undefined, sums: Summaries, summarized: number, live: Live): string {
-  const withForks = c && { ...c, actual: c.actual + sums.spent, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - sums.spent } }
+// ones; the cost with the summary forks' spend, summed over the session
+// (othersOf); and the summary requests, each of which is running, or left a
+// record or none. A record no longer fitting the messages is dropped, like
+// one replaced or none at all.
+export function infoText(key: string, version: string, s: Stats, estimated: boolean, c: Cost | undefined, sums: Summaries, summarized: number, live: Live, others: Other[] = []): string {
+  const session = c && others.reduce((t, o) => (o.cost ? plus(t, withForks(o.cost, o.spent)) : t), withForks(c, sums.spent))
   const applied = Math.min(summarized, live.valid)
   const pending = live.valid - applied + (live.inFlight ? 1 : 0)
   const forks: Forks = { applied, pending, dropped: sums.requests - applied - pending, ...(sums.failed && { failed: sums.failed }) }
-  const text = render(s, key, estimated, withForks, forks)
+  const text = render(s, key, estimated, session, forks, noteOf(others))
   const warning = live.missed ? `\n\nshaver: since it started, the journal missed ${counted(live.missed, 'request')}; see proxy.log` : ''
   return '```\n' + `Shaver Version: ${version}\n` + text + warning + '\n```'
 }

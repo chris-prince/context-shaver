@@ -41,7 +41,7 @@ import { localHost, route } from './via.ts'
 import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
-import { infoText, journaled, journalIn, summariesFrom, summariesIn, type Summaries } from './info.ts'
+import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Summaries } from './info.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
@@ -460,10 +460,11 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   const sums = loadSummaries(key)
   const valid = validChain(sums.chain, sent.messages, idsOf(key, sent.messages, false).turns).length
   const live = { valid, inFlight: summaryForking.has(key), missed }
-  if (s) return infoText(key, version, s, false, c, sums, load(key)?.summarized ?? 0, live)
+  const others = othersOf(stateDir, key, currentOf)
+  if (s) return infoText(key, version, s, false, c, sums, load(key)?.summarized ?? 0, live, others)
   const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS, h?.alwaysLoaded)
   if (trimmed) splitShaved(described, trimmed)
-  return infoText(key, version, estimate(described), true, c, sums, load(key)?.summarized ?? 0, live)
+  return infoText(key, version, estimate(described), true, c, sums, load(key)?.summarized ?? 0, live, others)
 }
 
 // What each thinking block of a response bills when sent back: the output

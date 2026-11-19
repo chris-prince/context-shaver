@@ -7,12 +7,14 @@
 // are checked against the messages of its last logged request, as the proxy
 // checks them against the request asking, and the version is that request's
 // proxy's. A summary fork in flight and requests the journal missed are known
-// only to a running proxy, so neither is shown.
+// only to a running proxy, so neither is shown. The cost is the session's, its
+// earlier histories and subagents included, as the proxy's is (src/info.ts,
+// othersOf).
 
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
-import { infoText, journaled, summariesFrom } from '../src/info.ts'
+import { infoText, journaled, othersOf, summariesFrom } from '../src/info.ts'
 import { LOG_DIR, objectsOf, receivedOf } from '../src/log.ts'
 import { turnsOf, validChain } from '../src/summary.ts'
 import type { ApiMsg } from '../src/items.ts'
@@ -33,7 +35,8 @@ if (!key) fail('usage: bin/shaver-info <key> [--dir proxy-data] [--cache-ttl-sec
 const stateDir = path.join(a.dir, 'state')
 const logDir = path.join(a.dir, LOG_DIR, key)
 if (!existsSync(path.join(stateDir, `${key}.journal.jsonl`))) fail(`no journal for ${key} in ${stateDir}`)
-const { stats, cost } = journaled(stateDir, key, Number(a['cache-ttl-seconds']) * 1000)
+const ttlMs = Number(a['cache-ttl-seconds']) * 1000
+const { stats, cost } = journaled(stateDir, key, ttlMs)
 // A journal of side requests only (a title, a recap: the bare lines) has no
 // conversation stats to show.
 if (!stats) fail(`${key} has only side requests journaled, so no conversation stats`)
@@ -55,4 +58,5 @@ if (last && sums.chain.length) {
   valid = validChain(sums.chain, msgs, turnsOf(msgs, ids.turns, () => NaN)).length
 }
 const state = existsSync(path.join(stateDir, `${key}.json`)) ? JSON.parse(readFileSync(path.join(stateDir, `${key}.json`), 'utf8')) : {}
-console.log(infoText(key, last?.version ?? 'unknown', stats, false, cost, sums, state.summarized ?? 0, { valid }))
+const others = othersOf(stateDir, key, (k) => journaled(stateDir, k, ttlMs))
+console.log(infoText(key, last?.version ?? 'unknown', stats, false, cost, sums, state.summarized ?? 0, { valid }, others))
