@@ -102,7 +102,8 @@ test('the horizon backtest compacts each horizon past the limit, and not with --
     assert.equal(c.kept, 20_000)
     const on = backtest('--compact-at', String(AT))
     const off = backtest('--no-compaction')
-    assert.ok(off.tokens.none.at(-1)! > 2 * AT, 'the log should grow well past the limit')
+    const NONE = 'no message trims'
+    assert.ok(off.tokens[NONE].at(-1)! > 2 * AT, 'the log should grow well past the limit')
     for (const [row, tokens] of Object.entries(on.tokens)) {
       const compacted = new Set(on.compacted[row])
       // Every prompt past the limit, but the last, is followed by a
@@ -114,12 +115,12 @@ test('the horizon backtest compacts each horizon past the limit, and not with --
       for (const n of compacted) assert.ok(tokens[n + 1] <= tokens[0] + c.summarized! + ROUND * 10_500 + 5 * 100, `${row}: after request ${n}, ${tokens[n + 1]} tokens`)
     }
     // The horizon with no trimming crosses the limit, more than once.
-    assert.ok(on.compacted.none.length >= 2, JSON.stringify(on.compacted.none))
+    assert.ok(on.compacted[NONE].length >= 2, JSON.stringify(on.compacted[NONE]))
     // Without compaction, no horizon compacts, and the prompts are the
     // logged ones up to the first compaction.
     for (const row of Object.keys(off.compacted)) assert.deepEqual(off.compacted[row], [], row)
-    const first = on.compacted.none[0]
-    assert.deepEqual(on.tokens.none.slice(0, first + 1), off.tokens.none.slice(0, first + 1))
+    const first = on.compacted[NONE][0]
+    assert.deepEqual(on.tokens[NONE].slice(0, first + 1), off.tokens[NONE].slice(0, first + 1))
   } finally {
     child.kill()
     up.close()

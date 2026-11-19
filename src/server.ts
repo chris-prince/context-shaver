@@ -34,13 +34,14 @@ import { totals } from './totals.ts'
 import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { autocompactAt } from './autocompact.ts'
 import { load as loadLaunch, type LaunchVals } from './launch-vals.ts'
-import { bornFrom, bornOf, counted as countOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, render, splitShaved, SUMMARIES, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
-import { bareLines, history, latest, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
-import { add, addBare, addResent, cost, spent, type Cost, type Usage } from './cost.ts'
+import { bornFrom, bornOf, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, splitShaved, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
+import { record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
+import { add, addBare, addResent, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
+import { infoText, journaled, journalIn, summariesFrom, summariesIn, type Summaries } from './info.ts'
 import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
@@ -167,21 +168,9 @@ function idsOf(key: string, msgs: readonly ApiMsg[], next = true): { id: number;
   return { id: ids.last, turns }
 }
 
-// A conversation's records (summary.ts), how many of the oldest the memoir
-// holds, and the dollars its summary forks have cost. They are kept apart from
-// its state, which a request answered after a summary fork began, and prepared
-// before it ended, would save over. `failed` is the last summary fork that gave
-// no record (Forks, stats.ts).
-type Summaries = { chain: Summary[]; merged?: number; spent: number; requests: number; failed?: Forks['failed'] }
-const summariesOf = (key: string) => path.join(stateDir, `${key}.summaries.json`)
-function loadSummaries(key: string): Summaries {
-  try {
-    const s = JSON.parse(readFileSync(summariesOf(key), 'utf8'))
-    return { ...s, requests: s.requests ?? s.chain.length }
-  } catch {
-    return { chain: [], spent: 0, requests: 0 }
-  }
-}
+// A conversation's records and their spend (info.ts).
+const summariesOf = (key: string) => summariesIn(stateDir, key)
+const loadSummaries = (key: string): Summaries => summariesFrom(stateDir, key)
 
 // Each conversation's stats as its journal ends (journal.ts) and its cost so
 // far (cost.ts), replayed from the journal the first time they're asked for and
@@ -190,14 +179,10 @@ function loadSummaries(key: string): Summaries {
 // the journal holds only what it keeps.
 type Current = { stats?: Stats; cost?: Cost; keep?: Keep }
 const current = new Map<string, Current>()
-const journalOf = (key: string) => path.join(stateDir, `${key}.journal.jsonl`)
+const journalOf = (key: string) => journalIn(stateDir, key)
 function currentOf(key: string): Current {
   let c = current.get(key)
-  if (!c) {
-    let spentSoFar = cost(history(journalOf(key)), ttlMs)
-    for (const b of bareLines(journalOf(key))) spentSoFar = addBare(spentSoFar, b)
-    current.set(key, (c = { stats: latest(journalOf(key)), cost: spentSoFar }))
-  }
+  if (!c) current.set(key, (c = journaled(stateDir, key, ttlMs)))
   return c
 }
 
@@ -472,19 +457,13 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   const trimmed = policy.skill_shaver_rules ? shaveSkills(sent, policy.skill_shaver_rules).trimmed : undefined
   const { stats: s, cost: c } = currentOf(key)
   // `shaver optimize`'s requests are one-time work, so they aren't counted.
-  const { spent: summaryForks, requests, chain, failed } = loadSummaries(key)
-  const withSummaryForks = c && { ...c, actual: c.actual + summaryForks, saved: { ...c.saved, [SUMMARIES]: (c.saved[SUMMARIES] ?? 0) - summaryForks } }
-  // Each summary request is running, or left a record or none. A record no
-  // longer fitting the messages is dropped, like one replaced or none at all.
-  const valid = validChain(chain, sent.messages, idsOf(key, sent.messages, false).turns).length
-  const applied = Math.min(load(key)?.summarized ?? 0, valid)
-  const pending = valid - applied + (summaryForking.has(key) ? 1 : 0)
-  const summaryRequests = { applied, pending, dropped: requests - applied - pending, ...(failed && { failed }) }
+  const sums = loadSummaries(key)
+  const valid = validChain(sums.chain, sent.messages, idsOf(key, sent.messages, false).turns).length
+  const live = { valid, inFlight: summaryForking.has(key), missed }
+  if (s) return infoText(key, version, s, false, c, sums, load(key)?.summarized ?? 0, live)
   const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS, h?.alwaysLoaded)
   if (trimmed) splitShaved(described, trimmed)
-  const text = s ? render(s, key, false, withSummaryForks, summaryRequests) : render(estimate(described), key, true, withSummaryForks, summaryRequests)
-  const warning = missed ? `\n\nshaver: since it started, the journal missed ${countOf(missed, 'request')}; see proxy.log` : ''
-  return '```\n' + `Shaver Version: ${version}\n` + text + warning + '\n```'
+  return infoText(key, version, estimate(described), true, c, sums, load(key)?.summarized ?? 0, live)
 }
 
 // What each thinking block of a response bills when sent back: the output
