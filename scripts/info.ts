@@ -1,7 +1,7 @@
 // `shaver info` for any conversation, from its state files and log, with no
 // proxy running: the same text the proxy answers with (src/info.ts).
 //
-// Usage: bin/node-wrapper scripts/info.ts <key> [--dir proxy-data] [--cache-ttl-seconds 3600]
+// Usage: bin/shaver-info <key> [--dir proxy-data] [--cache-ttl-seconds 3600]
 //
 // The key is the conversation's state and log folder name. Its summary records
 // are checked against the messages of its last logged request, as the proxy
@@ -25,11 +25,18 @@ const { values: a, positionals } = parseArgs({
   },
 })
 const key = positionals[0]
-if (!key) throw new Error('usage: scripts/info.ts <key> [--dir proxy-data] [--cache-ttl-seconds 3600]')
+const fail = (why: string): never => {
+  console.error(why)
+  process.exit(1)
+}
+if (!key) fail('usage: bin/shaver-info <key> [--dir proxy-data] [--cache-ttl-seconds 3600]; the key is a folder name under proxy-data/logs/')
 const stateDir = path.join(a.dir, 'state')
 const logDir = path.join(a.dir, LOG_DIR, key)
+if (!existsSync(path.join(stateDir, `${key}.journal.jsonl`))) fail(`no journal for ${key} in ${stateDir}`)
 const { stats, cost } = journaled(stateDir, key, Number(a['cache-ttl-seconds']) * 1000)
-if (!stats) throw new Error(`no journal for ${key} in ${stateDir}`)
+// A journal of side requests only (a title, a recap: the bare lines) has no
+// conversation stats to show.
+if (!stats) fail(`${key} has only side requests journaled, so no conversation stats`)
 
 const lines = existsSync(path.join(logDir, 'step_events.jsonl'))
   ? readFileSync(path.join(logDir, 'step_events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
@@ -41,7 +48,10 @@ let valid = 0
 if (last && sums.chain.length) {
   const objects = objectsOf(logDir)
   const msgs: ApiMsg[] = receivedOf(lines).at(-1)!.map((h) => JSON.parse(readFileSync(path.join(objects, `${h}.json`), 'utf8')))
-  const ids = JSON.parse(readFileSync(path.join(stateDir, `${key}.ids.json`), 'utf8'))
+  // A conversation from before internal IDs has no IDs file; as in the
+  // proxy (idsOf, server.ts), none of its turns has an ID then.
+  const idsFile = path.join(stateDir, `${key}.ids.json`)
+  const ids = existsSync(idsFile) ? JSON.parse(readFileSync(idsFile, 'utf8')) : { turns: {} }
   valid = validChain(sums.chain, msgs, turnsOf(msgs, ids.turns, () => NaN)).length
 }
 const state = existsSync(path.join(stateDir, `${key}.json`)) ? JSON.parse(readFileSync(path.join(stateDir, `${key}.json`), 'utf8')) : {}

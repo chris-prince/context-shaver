@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Prints `shaver info` for a conversation from its saved state and log, with no
+# proxy running (scripts/info.ts). The key is its folder name under
+# proxy-data/logs/; `ls -t proxy-data/logs | head` lists the newest.
+# Usage: bin/shaver-info <key> [--dir proxy-data] [--cache-ttl-seconds 3600]
+set -euo pipefail
+bin=$(dirname "$(readlink -f "$0")")
+exec "$bin/node-wrapper" "$bin/../scripts/info.ts" "$@"
