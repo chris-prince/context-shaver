@@ -610,7 +610,9 @@ export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')
 // when.
 export type Forks = { applied: number; pending: number; dropped: number; failed?: { time: string; outcome: string; reason: string } }
 
-export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, dropped: 0 }, costNote?: string): string {
+// `elsewhere` are lines under the requests line for the rest of the session
+// (info.ts): its ancestor conversations' and subagents' requests.
+export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, dropped: 0 }, costNote?: string, elsewhere: string[] = []): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
@@ -652,7 +654,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const conversation = total - base - frontier
 
   const window = `Context Window: ${s.window ? `${s.window.toLocaleString('en-US')} tokens${s.windowGuessed ? ' (guessing)' : ''}` : '(unknown)'}`
-  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', '', ...costLines(cost, undefined, costNote)] : unpriced(s, estimated))]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...elsewhere, ...(cost ? ['', 'Shaver Summary', '', ...costLines(cost, undefined, costNote)] : unpriced(s, estimated))]
   // The prompt as sent, then as it would be without the shaver, lined up.
   const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
   const { failed, ...counts } = forks

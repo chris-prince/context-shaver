@@ -50,6 +50,9 @@ test("shaver info's costs are the session's, with a note first saying what they 
   assert.match(out, /\$31\.00 \(50%\) conv:tools/)
   assert.match(out, /-\$0\.75 \(-1%\) conv:summary\+memoir/)
   assert.match(out, /5 minutes saved \(by avoiding 5 \/autocompact\)/)
+  // Under the requests line, the rest of the session's requests and turns, a
+  // line for its ancestor conversations and one for its subagents.
+  assert.match(out, /spanning .*\n  \+ 2 requests across 2 turns, in ancestor conversations\n  \+ 2 requests across 2 turns, in subagents\n/)
   // With nothing else in the session, there's no note.
   assert.doesNotMatch(infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }), /Includes/)
 })

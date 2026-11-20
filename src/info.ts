@@ -85,6 +85,18 @@ function noteOf(others: Other[]): string | undefined {
   return `Includes ${parts.join(' and ')}${unpriced ? ` (${unpriced} not counted: no price for its model)` : ''}.`
 }
 
+// The requests and turns of the session's ancestor conversations, and of its
+// subagents, a line each where there are any: those with stats, priced or not.
+function elsewhereOf(others: Other[]): string[] {
+  const line = (os: Other[], where: string) => {
+    const shown = os.filter((o) => o.stats)
+    if (!shown.length) return []
+    const sum = (f: (s: Stats) => number) => shown.reduce((n, o) => n + f(o.stats!), 0)
+    return [`  + ${counted(sum((s) => s.requests), 'request')} across ${counted(sum((s) => s.turns), 'turn')}, in ${where}`]
+  }
+  return [...line(others.filter((o) => !o.agent), 'ancestor conversations'), ...line(others.filter((o) => o.agent), 'subagents')]
+}
+
 // What the proxy knows that the state files don't: the summary records that
 // still fit the messages, and the requests no journal line was written for.
 // Without a running proxy, no summary fork is in flight and none were missed.
@@ -100,7 +112,7 @@ export function infoText(key: string, version: string, s: Stats, estimated: bool
   const applied = Math.min(summarized, live.valid)
   const pending = live.valid - applied + (live.inFlight ? 1 : 0)
   const forks: Forks = { applied, pending, dropped: sums.requests - applied - pending, ...(sums.failed && { failed: sums.failed }) }
-  const text = render(s, key, estimated, session, forks, noteOf(others))
+  const text = render(s, key, estimated, session, forks, noteOf(others), elsewhereOf(others))
   const warning = live.missed ? `\n\nshaver: since it started, the journal missed ${counted(live.missed, 'request')}; see proxy.log` : ''
   return '```\n' + `Shaver Version: ${version}\n` + text + warning + '\n```'
 }
