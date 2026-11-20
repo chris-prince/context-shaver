@@ -44,8 +44,17 @@ export function journaled(dir: string, key: string, ttlMs: number): { stats?: St
 // A conversation going on from one in another session (Stats.from, as Claude
 // Code's moved to the background) brings that session in too, and so on back.
 // A key with no session (its first message alone) has none. `agent` is a
-// subagent's ID; `spent`, its summary forks' dollars.
-export type Other = { key: string; agent?: string; stats?: Stats; cost?: Cost; spent: number }
+// subagent's ID; `spent`, its summary forks' dollars; `sides`, for one of side
+// requests only (sideOnly), how many it journaled.
+export type Other = { key: string; agent?: string; stats?: Stats; cost?: Cost; spent: number; sides?: number }
+
+// Whether a conversation's journal holds side requests only: no stats, its
+// requests all journaled bare, or none counted as a request (isSideRequest,
+// stats.ts), as a Claude Code web search, a request of its own with its own
+// first message, is from its x-claude-code-request-class. One from before
+// the proxy was sent that header (2026-11-08 here) was journaled as a
+// request, so is still a conversation of one request.
+const sideOnly = (stats?: Stats) => !stats || stats.requests === 0
 export function othersOf(dir: string, key: string, read: (key: string) => { stats?: Stats; cost?: Cost }): Other[] {
   const first = sessionOf(key)
   if (!first) return []
@@ -68,7 +77,9 @@ export function othersOf(dir: string, key: string, read: (key: string) => { stat
       // Between the session and the first message's hash: "main", a Claude
       // Code agent ID, a Codex thread ID, or nothing (a Codex parent's).
       const between = k.slice(session.length, Math.max(session.length, k.lastIndexOf('-')))
-      const o: Other = { key: k, ...(between && between !== 'main' && { agent: between }), ...read(k), spent: summariesFrom(dir, k).spent }
+      const r = read(k)
+      const sides = sideOnly(r.stats) ? [...history(journalIn(dir, k))].length + [...bareLines(journalIn(dir, k))].length : undefined
+      const o: Other = { key: k, ...(between && between !== 'main' && { agent: between }), ...r, spent: summariesFrom(dir, k).spent, ...(sides !== undefined && { sides }) }
       found.set(k, o)
       fromOf(o.stats)
     }
@@ -87,17 +98,17 @@ function plus(a: Cost, b: Cost): Cost {
 }
 
 // What the session's cost covers besides the conversation: its ancestor
-// conversations and subagents with stats (one of side requests only is
-// counted, but isn't a conversation), and those whose model has no price, so
-// aren't.
+// conversations and subagents, the side requests of journals with only those
+// (sideOnly), and those whose model has no price, so aren't.
 function noteOf(others: Other[]): string | undefined {
-  const shown = others.filter((o) => o.stats)
+  const shown = others.filter((o) => !sideOnly(o.stats))
   const histories = shown.filter((o) => !o.agent).length
   const agents = new Set(shown.flatMap((o) => o.agent ?? [])).size
-  const parts = [...(histories ? [counted(histories, 'ancestor convo')] : []), ...(agents ? [counted(agents, 'subagent')] : [])]
+  const sides = sidesOf(others)
+  const parts = [...(histories ? [counted(histories, 'ancestor convo')] : []), ...(agents ? [counted(agents, 'subagent')] : []), ...(sides ? [counted(sides, 'side req')] : [])]
   const unpriced = shown.filter((o) => !o.cost).length
   if (!parts.length) return undefined
-  return `Includes ${parts.join(' and ')}${unpriced ? ` (${unpriced} not counted: no price for its model)` : ''}.`
+  return `Includes ${parts.join(', ')}${unpriced ? ` (${unpriced} not counted: no price for its model)` : ''}.`
 }
 
 // The requests and turns of the session's ancestor conversations, and of its
@@ -111,15 +122,19 @@ function elsewhereOf(others: Other[], s: Stats): string[] {
   const turnsOf = new Map(others.map((o) => [o.key, o.stats?.turns ?? 0]))
   const added = (t: Stats) => (t.requests === 1 ? (t.compaction ? 0 : Math.min(t.turns, 1)) : Math.max(0, t.turns - (t.from ? turnsOf.get(t.from) ?? 0 : 0)))
   const line = (os: Other[], where: string) => {
-    const shown = os.filter((o) => o.stats)
+    const shown = os.filter((o) => !sideOnly(o.stats))
     if (!shown.length) return []
     const requests = shown.reduce((n, o) => n + o.stats!.requests, 0)
     const counts = shown.some((o) => o.key === s.from) ? turnsOf.get(s.from!)! : 0
     const turns = Math.max(0, shown.reduce((n, o) => n + added(o.stats!), 0) - counts)
     return [`  + ${counted(requests, 'request')}${turns ? ` across ${counted(turns, 'turn')}` : ''}, in ${where}`]
   }
-  return [...line(others.filter((o) => !o.agent), 'ancestor convos'), ...line(others.filter((o) => o.agent), 'subagents')]
+  const sides = sidesOf(others)
+  return [...line(others.filter((o) => !o.agent), 'ancestor convos'), ...line(others.filter((o) => o.agent), 'subagents'), ...(sides ? [`  + ${counted(sides, 'side req')}`] : [])]
 }
+
+// The side requests of the session's journals with only those (sideOnly).
+const sidesOf = (others: Other[]) => others.reduce((n, o) => n + (o.sides ?? 0), 0)
 
 // What the proxy knows that the state files don't: the summary records that
 // still fit the messages, and the requests no journal line was written for.

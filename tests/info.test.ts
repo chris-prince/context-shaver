@@ -18,6 +18,10 @@ test("a Claude Code conversation's session is its ancestor conversations and its
   assert.deepEqual(others.map((o) => [o.key, o.agent, o.spent]).sort(), [['claude-s1-ag1-cccc', 'ag1', 0], ['claude-s1-ag1-dddd', 'ag1', 0], ['claude-s1-main-bbbb', undefined, 0.5]])
   // A subagent's session is its own conversations, not the main conversation.
   assert.deepEqual(othersOf(dir, 'claude-s1-ag1-cccc', () => ({})).map((o) => o.key), ['claude-s1-ag1-dddd'])
+  // A journal of side requests only gives how many it journaled; others don't.
+  appendFileSync(path.join(dir, 'claude-s1-main-bbbb.journal.jsonl'), JSON.stringify({ bare: { time: '2026-11-19T10:00:00Z', model: 'm', why: 'side' } }) + '\n')
+  assert.equal(othersOf(dir, 'claude-s1-main-aaaa', () => ({})).find((o) => o.key === 'claude-s1-main-bbbb')!.sides, 1)
+  assert.equal(othersOf(dir, 'claude-s1-main-aaaa', (k) => (k === 'claude-s1-main-bbbb' ? { stats: s } : {})).find((o) => o.key === 'claude-s1-main-bbbb')!.sides, undefined)
   // A key with no session has none.
   appendFileSync(path.join(dir, 'claude-ffff.journal.jsonl'), '')
   assert.deepEqual(othersOf(dir, 'claude-ffff', () => ({})), [])
@@ -37,22 +41,25 @@ test("shaver info's costs are the session's, with a note first saying what they 
     { key: 'h', stats: s, cost: cost(2), spent: 0.5 },
     { key: 'a', agent: 'x', stats: s, cost: cost(4), spent: 0 },
     { key: 'a2', agent: 'x', stats: s, cost: cost(8), spent: 0 },
-    // Side requests only: counted, but not a conversation.
-    { key: 'side', cost: cost(16), spent: 0 },
+    // Side requests only, journaled bare or none counted as a request: their
+    // cost counted, and they're side requests, not conversations.
+    { key: 'side', cost: cost(16), spent: 0, sides: 3 },
+    { key: 'search', stats: { ...s, requests: 0 }, cost: { without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 }, spent: 0, sides: 1 },
     // No price for its model: a conversation, but not counted.
     { key: 'u', stats: s, spent: 0 },
   ]
   const out = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }, others)
   const actual = 1 + 2 + 4 + 8 + 16 + 0.25 + 0.5
-  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 2 ancestor convos and 1 subagent \\(1 not counted: no price for its model\\)\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
+  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 2 ancestor convos, 1 subagent, 4 side reqs \\(1 not counted: no price for its model\\)\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
   // The breakdown and speedup are the session's too: the summaries' spend
   // charged to their saving.
   assert.match(out, /\$31\.00 \(50%\) conv:tools/)
   assert.match(out, /-\$0\.75 \(-1%\) conv:summary\+memoir/)
   assert.match(out, /5 minutes saved \(by avoiding 5 \/autocompact\)/)
   // Under the requests line, the rest of the session's requests and turns, a
-  // line for its ancestor conversations and one for its subagents.
-  assert.match(out, /spanning .*\n  \+ 2 requests across 2 turns, in ancestor convos\n  \+ 2 requests across 2 turns, in subagents\n/)
+  // line for its ancestor conversations, one for its subagents and one for its
+  // side requests.
+  assert.match(out, /spanning .*\n  \+ 2 requests across 2 turns, in ancestor convos\n  \+ 2 requests across 2 turns, in subagents\n  \+ 4 side reqs\n/)
   // With nothing else in the session, there's no note.
   assert.doesNotMatch(infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }), /Includes/)
 })
