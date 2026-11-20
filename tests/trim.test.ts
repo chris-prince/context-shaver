@@ -554,6 +554,11 @@ test('a run of tool calls or results is one lookback position', () => {
   assert.equal(readThrough(pos, new Set([pos[0].prefix]), 20), 0)
 })
 
+test('a block is the same size with a breakpoint as without, as its prefix is the same', () => {
+  const b = { type: 'text', text: 'look around' }
+  assert.equal(sizeOf({ ...b, cache_control: { type: 'ephemeral' } }, new Map()), sizeOf(b, new Map()))
+})
+
 test('with automatic caching, a request reads back only 20 user runs from its end', () => {
   const turn = (i: number): ApiMsg[] => [
     { role: 'user', content: [{ type: 'text', text: `q${i}` }] },

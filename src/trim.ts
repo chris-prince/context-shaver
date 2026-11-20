@@ -335,7 +335,8 @@ const SIGNATURE_TOKENS = 0.13
 export type Thinking = ReadonlyMap<string, number>
 
 export function sizeOf(b: Block, thinking: Thinking): number {
-  const n = JSON.stringify(b).length
+  // A breakpoint is no part of the prompt, as it's no part of the prefix.
+  const n = JSON.stringify(b, uncontrolled).length
   if (b.type !== 'thinking' || typeof b.signature !== 'string') return n
   const tokens = thinking.get(hash(b.signature)) ?? SIGNATURE_TOKENS * b.signature.length
   return n + Math.round(tokens / TEXT_TOKENS) - b.signature.length
