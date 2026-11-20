@@ -36,7 +36,7 @@ export function journaled(dir: string, key: string, ttlMs: number): { stats?: St
 }
 
 // The rest of a conversation's session, which `shaver info`'s cost sums: its
-// earlier histories, each a conversation of its own once a compaction or
+// ancestor conversations, each one of its own once a compaction, /clear or
 // rewind gave it a new first message (harness.ts, conversationId), and in
 // a main conversation, its subagents: a Claude Code subagent's session ends in
 // its agent ID where the main's ends in "main", and a Codex subagent's in its
@@ -71,14 +71,15 @@ function plus(a: Cost, b: Cost): Cost {
   return { ...a, without: a.without + b.without, actual: a.actual + b.actual, saved, compactions: a.compactions + b.compactions, waitMs: a.waitMs + b.waitMs }
 }
 
-// What the session's cost covers besides the conversation: its earlier
-// histories and subagents with stats (one of side requests only is counted,
-// but isn't a history), and those whose model has no price, so aren't.
+// What the session's cost covers besides the conversation: its ancestor
+// conversations and subagents with stats (one of side requests only is
+// counted, but isn't a conversation), and those whose model has no price, so
+// aren't.
 function noteOf(others: Other[]): string | undefined {
   const shown = others.filter((o) => o.stats)
   const histories = shown.filter((o) => !o.agent).length
   const agents = new Set(shown.flatMap((o) => o.agent ?? [])).size
-  const parts = [...(histories ? [`${histories} earlier ${histories === 1 ? 'history' : 'histories'}`] : []), ...(agents ? [counted(agents, 'subagent')] : [])]
+  const parts = [...(histories ? [counted(histories, 'ancestor conversation')] : []), ...(agents ? [counted(agents, 'subagent')] : [])]
   const unpriced = shown.filter((o) => !o.cost).length
   if (!parts.length) return undefined
   return `Includes ${parts.join(' and ')}${unpriced ? ` (${unpriced} not counted: no price for its model)` : ''}.`

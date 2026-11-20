@@ -8,7 +8,7 @@
 // checks them against the request asking, and the version is that request's
 // proxy's. A summary fork in flight and requests the journal missed are known
 // only to a running proxy, so neither is shown. The cost is the session's, its
-// earlier histories and subagents included, as the proxy's is (src/info.ts,
+// ancestor conversations and subagents included, as the proxy's is (src/info.ts,
 // othersOf).
 
 import { existsSync, readFileSync } from 'node:fs'
