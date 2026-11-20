@@ -117,6 +117,9 @@ test('a side request is journaled with its own conversation, or failing that its
   touch('codex-t1-eeee')
   assert.equal(sideKey(dir, 'codex-t1-eeee'), 'codex-t1-eeee')
   assert.equal(sideKey(dir, 'claude-s2-main-ffff'), 'claude-s2-main-ffff')
+  // A Codex parent's side request isn't journaled with its subagent's thread.
+  touch('codex-t1-thr1-gggg')
+  assert.equal(sideKey(dir, 'codex-t1-hhhh'), 'codex-t1-eeee')
 })
 
 test('replaying the journal keeps the pinned provider', () => {

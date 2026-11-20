@@ -23,6 +23,14 @@ test("a Claude Code conversation's session is its earlier histories and its suba
   assert.deepEqual(othersOf(dir, 'claude-ffff', () => ({})), [])
 })
 
+test("a Codex conversation's session is its earlier histories and its subagents' threads", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'info-'))
+  for (const k of ['codex-s1-aaaa', 'codex-s1-bbbb', 'codex-s1-thr1-cccc', 'codex-s1-thr1-dddd', 'codex-s1-thr2-eeee', 'codex-s2-ffff']) appendFileSync(path.join(dir, `${k}.journal.jsonl`), '')
+  const others = othersOf(dir, 'codex-s1-aaaa', () => ({}))
+  assert.deepEqual(others.map((o) => [o.key, o.agent]).sort(), [['codex-s1-bbbb', undefined], ['codex-s1-thr1-cccc', 'thr1'], ['codex-s1-thr1-dddd', 'thr1'], ['codex-s1-thr2-eeee', 'thr2']])
+  assert.deepEqual(othersOf(dir, 'codex-s1-thr1-cccc', () => ({})).map((o) => o.key), ['codex-s1-thr1-dddd'])
+})
+
 test("shaver info's costs are the session's, with a note first saying what they include", () => {
   const sums = { chain: [], spent: 0.25, requests: 0 }
   const others = [

@@ -75,6 +75,18 @@ function codexCompaction(headers: IncomingHttpHeaders): boolean | undefined {
   } catch {}
 }
 
+// A Codex subagent is a thread of its own, but it shares its parent's session
+// ID and, forked (spawn_agent's default), its first message, so its session is
+// its parent's and its thread ID, as Claude Code's subagents' are their agent
+// IDs: without that, a parent and its subagents were one conversation, each
+// request diffed against another thread's and one's trims re-cutting the
+// others' cached messages. A subagent's requests carry
+// x-codex-parent-thread-id; its x-codex-window-id is `<thread id>:<window>`.
+function subagentThread(headers: IncomingHttpHeaders): string | undefined {
+  const window = headers['x-codex-window-id']
+  return headers['x-codex-parent-thread-id'] && typeof window === 'string' ? window.split(':')[0] || undefined : undefined
+}
+
 // Codex's tools are run from JavaScript, by one custom exec tool, so no call's
 // input has fields of its own to stub, nor a shell command apart. It loads
 // the tools it defers with a client tool_search. It sends its session's ID as
@@ -91,7 +103,10 @@ const CODEX: Harness = {
   defers: true,
   // exec runs every other tool, and wait resumes its cells.
   alwaysLoaded: ['functions.exec', 'functions.wait'],
-  session: (c, headers) => c.prompt_cache_key ?? headers['session-id'],
+  session: (c, headers) => {
+    const session = c.prompt_cache_key ?? headers['session-id']
+    return session && subagentThread(headers) ? `${session}-${subagentThread(headers)}` : session
+  },
   logged: ['x-codex-', 'x-openai-'],
   // Each request's x-codex-turn-metadata has a request_kind: turn, or
   // compaction (0.166.0's two), its only side request. Its compactions are

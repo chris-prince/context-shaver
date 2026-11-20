@@ -38,10 +38,11 @@ export function journaled(dir: string, key: string, ttlMs: number): { stats?: St
 // The rest of a conversation's session, which `shaver info`'s cost sums: its
 // earlier histories, each a conversation of its own once a compaction or
 // rewind gave it a new first message (harness.ts, conversationId), and in
-// Claude Code's main conversation, its subagents, whose session ends in their
-// agent ID where the main's ends in "main". A key with no session (its first
-// message alone) has none. `agent` is a subagent's ID; `spent`, its summary
-// forks' dollars.
+// a main conversation, its subagents: a Claude Code subagent's session ends in
+// its agent ID where the main's ends in "main", and a Codex subagent's in its
+// thread ID where the parent's is the session alone. A key with no session
+// (its first message alone) has none. `agent` is a subagent's ID; `spent`, its
+// summary forks' dollars.
 export type Other = { key: string; agent?: string; stats?: Stats; cost?: Cost; spent: number }
 export function othersOf(dir: string, key: string, read: (key: string) => { stats?: Stats; cost?: Cost }): Other[] {
   const own = key.slice(0, key.lastIndexOf('-') + 1)
@@ -52,7 +53,12 @@ export function othersOf(dir: string, key: string, read: (key: string) => { stat
     .map((f) => f.slice(0, -'.journal.jsonl'.length))
     // A journal moved aside (`<key>.pre-repair`) isn't a conversation's.
     .filter((k) => k !== key && k.startsWith(session) && !k.includes('.'))
-    .map((k) => ({ key: k, ...(!k.startsWith(own) && { agent: k.slice(session.length, k.lastIndexOf('-')) }), ...read(k), spent: summariesFrom(dir, k).spent }))
+    .map((k) => {
+      // Between the session and the first message's hash: "main", a Claude
+      // Code agent ID, a Codex thread ID, or nothing (a Codex parent's).
+      const between = k.slice(session.length, Math.max(session.length, k.lastIndexOf('-')))
+      return { key: k, ...(between && between !== 'main' && { agent: between }), ...read(k), spent: summariesFrom(dir, k).spent }
+    })
 }
 
 // A cost with its summary forks' spend, which is charged to the summaries'

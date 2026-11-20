@@ -69,6 +69,16 @@ test("each harness's session names its conversations, on any protocol", () => {
   assert.match(conversationId(of('codex'), 'responses', { model: 'm', messages: msgs }, { 'session-id': 'sess-b' }), /^codex-sess-b-/)
 })
 
+test("a Codex subagent forked from its parent is a conversation of its own, by its thread ID", () => {
+  const body = { model: 'm', messages: msgs, prompt_cache_key: 'sess-a' }
+  const parent = conversationId(of('codex'), 'responses', body, { 'x-codex-window-id': 'sess-a:0' })
+  const sub = { 'x-codex-window-id': 'thr-1:0', 'x-codex-parent-thread-id': 'sess-a', 'x-openai-subagent': 'collab_spawn' }
+  assert.match(parent, /^codex-sess-a-[0-9a-f]{8}$/)
+  assert.equal(conversationId(of('codex'), 'responses', body, sub), parent.replace('sess-a-', 'sess-a-thr-1-'))
+  // Its later windows (after a compaction) are the same thread's.
+  assert.match(conversationId(of('codex'), 'responses', body, { ...sub, 'x-codex-window-id': 'thr-1:1' }), /^codex-sess-a-thr-1-/)
+})
+
 // The key comes from the first message as the client sent it, so taking the
 // proxy's commands out of a request, or moving a breakpoint onto the first
 // message, can't change it: only the client can.

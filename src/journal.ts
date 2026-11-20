@@ -173,12 +173,14 @@ export function* forks(file: string): Generator<ForkLine> {
 // The conversation a request sent as it came is journaled with, given its own
 // key: its own, if it has a journal, else its session's latest, since a side
 // request's first message is its own, not the conversation's. A key with no
-// session (only its harness's name and the hash) is its own.
+// session (only its harness's name and the hash) is its own. A Codex
+// subagent's session is its parent's and more (harness.ts), so a key whose
+// rest after the session holds a dash is another session's.
 export function sideKey(dir: string, key: string): string {
   const session = key.slice(0, key.lastIndexOf('-') + 1)
   if (existsSync(path.join(dir, `${key}.journal.jsonl`)) || !session.slice(0, -1).includes('-')) return key
   const theirs = readdirSync(dir)
-    .filter((f) => f.startsWith(session) && f.endsWith('.journal.jsonl'))
+    .filter((f) => f.startsWith(session) && f.endsWith('.journal.jsonl') && !f.slice(session.length).includes('-'))
     .map((f) => ({ f, at: statSync(path.join(dir, f)).mtimeMs }))
     .sort((x, y) => x.at - y.at)
   return theirs.length ? theirs[theirs.length - 1].f.slice(0, -'.journal.jsonl'.length) : key

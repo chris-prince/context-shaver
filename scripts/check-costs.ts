@@ -103,7 +103,10 @@ function ourLines(logs: string, harness: string): Map<string, Ours[]> {
     if (!dir.startsWith(`${harness}-`)) continue
     const file = path.join(logs, dir, 'step_events.jsonl')
     if (!existsSync(file) || statSync(file).mtimeMs < since) continue
-    const session = dir.slice(harness.length + 1, dir.lastIndexOf('-'))
+    // A Codex subagent's session is `<session>-<thread id>` (harness.ts), and
+    // its rollout is named by its thread, as a parent's is by its session.
+    const named = dir.slice(harness.length + 1, dir.lastIndexOf('-'))
+    const session = harness === 'codex' ? named.slice(-36) : named
     const lines = bySession.get(session) ?? []
     // Any line with token counts is a call upstream: a request, a side
     // request, one resent as it came.
