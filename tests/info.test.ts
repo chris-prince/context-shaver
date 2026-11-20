@@ -44,7 +44,7 @@ test("shaver info's costs are the session's, with a note first saying what they 
   ]
   const out = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }, others)
   const actual = 1 + 2 + 4 + 8 + 16 + 0.25 + 0.5
-  assert.match(out, new RegExp(`  Costs \\(session\\)\\n    Includes 2 earlier histories and 1 subagent \\(1 not counted: no price for its model\\)\\.\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
+  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 2 earlier histories and 1 subagent \\(1 not counted: no price for its model\\)\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
   // The breakdown and speedup are the session's too: the summaries' spend
   // charged to their saving.
   assert.match(out, /\$31\.00 \(50%\) conv:tools/)

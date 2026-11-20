@@ -574,9 +574,10 @@ export const money = (v: number) => (v.toFixed(2).startsWith('-') && Number(v.to
 // split by type of trim, each named for the base or the conversation (each a
 // share of the cost without the shaver, as the saving is), with the client's
 // own compactions the shaver kept it from needing. A note, saying what more
-// than the conversation the sums cover, comes first.
+// than the conversation the sums cover, comes first, in « ».
 export const costLines = (c: Cost, heading = 'Costs (session)', note?: string) => [
-  ...difference(heading, c.without, c.actual, money, ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']).flatMap((l, i) => (i === 0 && note ? [l, `    ${note}`] : [l])),
+  ...(note ? [`  « ${note} »`, ''] : []),
+  ...difference(heading, c.without, c.actual, money, ['if no shaver (estimated, if auto-compacted)', 'actual', 'saved']),
   '',
   '  Savings Breakdown',
   ...(split(c).length ? split(c) : ['    none yet']),
@@ -599,7 +600,7 @@ function split(c: Cost): string[] {
 
 // With no price for the session's model there is no cost (cost.ts, add), so
 // the breakdown says why.
-const unpriced = (s: Stats, estimated: boolean) => (estimated || modelOf(s.model, s.provider).price ? [] : ['', 'Shaver Summary', '  Savings Breakdown', `    MISSING: Shaver lacks cost details for model ${s.model}.`])
+const unpriced = (s: Stats, estimated: boolean) => (estimated || modelOf(s.model, s.provider).price ? [] : ['', 'Shaver Summary', '', '  Savings Breakdown', `    MISSING: Shaver lacks cost details for model ${s.model}.`])
 
 export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 
@@ -651,7 +652,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const conversation = total - base - frontier
 
   const window = `Context Window: ${s.window ? `${s.window.toLocaleString('en-US')} tokens${s.windowGuessed ? ' (guessing)' : ''}` : '(unknown)'}`
-  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', ...costLines(cost, undefined, costNote)] : unpriced(s, estimated))]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...(cost ? ['', 'Shaver Summary', '', ...costLines(cost, undefined, costNote)] : unpriced(s, estimated))]
   // The prompt as sent, then as it would be without the shaver, lined up.
   const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
   const { failed, ...counts } = forks
