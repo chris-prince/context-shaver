@@ -44,7 +44,7 @@ test("shaver info's costs are the session's, with a note first saying what they 
   ]
   const out = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }, others)
   const actual = 1 + 2 + 4 + 8 + 16 + 0.25 + 0.5
-  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 2 ancestor conversations and 1 subagent \\(1 not counted: no price for its model\\)\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
+  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 2 ancestor convos and 1 subagent \\(1 not counted: no price for its model\\)\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
   // The breakdown and speedup are the session's too: the summaries' spend
   // charged to their saving.
   assert.match(out, /\$31\.00 \(50%\) conv:tools/)
@@ -52,7 +52,7 @@ test("shaver info's costs are the session's, with a note first saying what they 
   assert.match(out, /5 minutes saved \(by avoiding 5 \/autocompact\)/)
   // Under the requests line, the rest of the session's requests and turns, a
   // line for its ancestor conversations and one for its subagents.
-  assert.match(out, /spanning .*\n  \+ 2 requests across 2 turns, in ancestor conversations\n  \+ 2 requests across 2 turns, in subagents\n/)
+  assert.match(out, /spanning .*\n  \+ 2 requests across 2 turns, in ancestor convos\n  \+ 2 requests across 2 turns, in subagents\n/)
   // With nothing else in the session, there's no note.
   assert.doesNotMatch(infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }), /Includes/)
 })

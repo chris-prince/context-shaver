@@ -79,7 +79,7 @@ function noteOf(others: Other[]): string | undefined {
   const shown = others.filter((o) => o.stats)
   const histories = shown.filter((o) => !o.agent).length
   const agents = new Set(shown.flatMap((o) => o.agent ?? [])).size
-  const parts = [...(histories ? [counted(histories, 'ancestor conversation')] : []), ...(agents ? [counted(agents, 'subagent')] : [])]
+  const parts = [...(histories ? [counted(histories, 'ancestor convo')] : []), ...(agents ? [counted(agents, 'subagent')] : [])]
   const unpriced = shown.filter((o) => !o.cost).length
   if (!parts.length) return undefined
   return `Includes ${parts.join(' and ')}${unpriced ? ` (${unpriced} not counted: no price for its model)` : ''}.`
@@ -94,7 +94,7 @@ function elsewhereOf(others: Other[]): string[] {
     const sum = (f: (s: Stats) => number) => shown.reduce((n, o) => n + f(o.stats!), 0)
     return [`  + ${counted(sum((s) => s.requests), 'request')} across ${counted(sum((s) => s.turns), 'turn')}, in ${where}`]
   }
-  return [...line(others.filter((o) => !o.agent), 'ancestor conversations'), ...line(others.filter((o) => o.agent), 'subagents')]
+  return [...line(others.filter((o) => !o.agent), 'ancestor convos'), ...line(others.filter((o) => o.agent), 'subagents')]
 }
 
 // What the proxy knows that the state files don't: the summary records that
