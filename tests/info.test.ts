@@ -56,3 +56,26 @@ test("shaver info's costs are the session's, with a note first saying what they 
   // With nothing else in the session, there's no note.
   assert.doesNotMatch(infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }), /Includes/)
 })
+
+test("a conversation going on from one in another session brings that session's in", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'info-'))
+  for (const k of ['claude-old-main-aaaa', 'claude-old-main-bbbb', 'claude-old-ag1-cccc', 'claude-new-main-bbbb', 'claude-new-main-dddd', 'claude-other-main-bbbb']) appendFileSync(path.join(dir, `${k}.journal.jsonl`), '')
+  const turns = (n: number, more: object = {}) => ({ stats: { ...s, requests: 5, turns: n, ...more } })
+  const read = (k: string) => (k === 'claude-new-main-bbbb' ? turns(12, { from: 'claude-old-main-bbbb' }) : k === 'claude-old-main-bbbb' ? turns(10) : turns(3))
+  const others = othersOf(dir, 'claude-new-main-dddd', read)
+  assert.deepEqual(others.map((o) => o.key).sort(), ['claude-new-main-bbbb', 'claude-old-ag1-cccc', 'claude-old-main-aaaa', 'claude-old-main-bbbb'])
+  assert.equal(others.find((o) => o.key === 'claude-old-ag1-cccc')!.agent, 'ag1')
+  // Each adds the turns it adds: the one going on from another, those past it.
+  const out = infoText('claude-new-main-dddd', 'v', { ...s, turns: 4 }, false, cost(1), { chain: [], spent: 0, requests: 0 }, 0, { valid: 0 }, others)
+  assert.match(out, /\+ 15 requests across 15 turns, in ancestor convos\n  \+ 5 requests across 3 turns, in subagents/)
+  // The conversation asking going on from one counts that one's turns itself.
+  const asking = othersOf(dir, 'claude-new-main-bbbb', read)
+  assert.match(infoText('claude-new-main-bbbb', 'v', read('claude-new-main-bbbb').stats, false, cost(1), { chain: [], spent: 0, requests: 0 }, 0, { valid: 0 }, asking), /\+ 15 requests across 6 turns, in ancestor convos/)
+})
+
+test("a lone request adds at most its prompt's turn, and none if it's the client's compaction", () => {
+  const lone = (more: object) => ({ key: 'x', stats: { ...s, requests: 1, turns: 42, ...more }, cost: cost(1), spent: 0 })
+  const text = (more: object) => infoText('k', 'v', s, false, cost(1), { chain: [], spent: 0, requests: 0 }, 0, { valid: 0 }, [lone(more)])
+  assert.match(text({}), /\+ 1 request across 1 turn, in ancestor convos/)
+  assert.match(text({ compaction: true }), /\+ 1 request, in ancestor convos\n/)
+})

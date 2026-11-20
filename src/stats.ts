@@ -80,6 +80,13 @@ export type Sent = {
   // What the client's compaction would keep of its own messages, folded
   // (compact-keep.ts); Claude Code's only, none before 2026-11-18.
   keep?: Kept
+  // The ID of the newest tool call in its messages as received; none before
+  // 2026-11-20.
+  lastCall?: string
+  // The conversation in another session that this one goes on from
+  // (journal.ts, LastCalls), found on its first request; none before
+  // 2026-11-20.
+  from?: string
 }
 
 export type Stats = {
@@ -108,6 +115,10 @@ export type Stats = {
   unrecognized?: string[]
   // The latest request's Sent.keep.
   keep?: Kept
+  // The latest request's Sent.lastCall.
+  lastCall?: string
+  // The first request's Sent.from.
+  from?: string
   inputTokens: number
   // What the proxy's trims have taken out of the request, in all.
   removedTokens: number
@@ -419,6 +430,8 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     ...(r.covers && { covers: r.covers }),
     ...(r.unrecognized && { unrecognized: r.unrecognized }),
     ...(r.keep && { keep: r.keep }),
+    ...(r.lastCall && { lastCall: r.lastCall }),
+    ...((prev ? prev.from : r.from) && { from: prev ? prev.from : r.from }),
     inputTokens,
     removedTokens,
     tokens: known,

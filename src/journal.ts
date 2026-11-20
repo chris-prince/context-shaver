@@ -30,11 +30,13 @@
 // billed, the same with and without the shaver, and not as a request. Before
 // 2026-10-24 none of these were journaled.
 
-import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Usage } from './cost.ts'
 import { withWrites } from './responses.ts'
 import type { Stats } from './stats.ts'
+import { callIdsOf } from './items.ts'
+import { messagesOf, objectsOf } from './log.ts'
 
 // Every other field is plain, set whole when it changes: listing them let a
 // new one go unjournaled (Stats.compacted, until 2026-10-24).
@@ -167,6 +169,136 @@ export function* forks(file: string): Generator<ForkLine> {
   for (const d of linesOf(file)) {
     const f = forkOf(d)
     if (f) yield f
+  }
+}
+
+// The prefix of the keys of a conversation's session (harness.ts,
+// conversationId): its key less the first message's hash, and in a Claude Code
+// main conversation, less "main" too, so its subagents' keys share it. A
+// subagent's is its own agent's. A key with no session (only its harness's
+// name and the hash) has none.
+export function sessionOf(key: string): string | undefined {
+  const own = key.slice(0, key.lastIndexOf('-') + 1)
+  if (!own.slice(0, -1).includes('-')) return undefined
+  return key.startsWith('claude-') && own.endsWith('-main-') ? own.slice(0, -'main-'.length) : own
+}
+
+// Each conversation's newest tool call (Stats.lastCall), kept in one file
+// beside the journals, `{ key: call }`, so finding the conversation a new one
+// goes on from opens no journal: a restart reads this file, and lists the
+// journals' names to fill in the conversations it lacks (fill), from before
+// it or a lost one, or a proxy's on another folder. A conversation in which
+// none was found is null, so it isn't looked for again on every restart; it's
+// set as its requests are described, as every conversation is.
+export class LastCalls {
+  private byKey: Record<string, string | null>
+  private byCall = new Map<string, string>()
+  private file: string
+  constructor(file: string) {
+    this.file = file
+    try {
+      this.byKey = JSON.parse(readFileSync(file, 'utf8'))
+    } catch {
+      this.byKey = {}
+    }
+    for (const [k, c] of Object.entries(this.byKey)) if (c) this.byCall.set(c, k)
+  }
+  set(key: string, call: string) {
+    const was = this.byKey[key]
+    if (was === call) return
+    if (was && this.byCall.get(was) === key) this.byCall.delete(was)
+    this.byKey[key] = call
+    this.byCall.set(call, key)
+    this.save()
+  }
+  // Each of the keys not in the table, with its newest call as `find` gives
+  // it, or null; saved once, if any was missing.
+  fill(keys: Iterable<string>, find: (key: string) => string | null): number {
+    let added = 0
+    for (const k of keys) {
+      if (k in this.byKey) continue
+      const c = find(k)
+      this.byKey[k] = c
+      if (c && !this.byCall.has(c)) this.byCall.set(c, k)
+      added++
+    }
+    if (added) this.save()
+    return added
+  }
+  private save() {
+    const tmp = `${this.file}.tmp`
+    writeFileSync(tmp, JSON.stringify(this.byKey))
+    renameSync(tmp, this.file)
+  }
+  // The conversation in another session that a new one goes on from, given
+  // the tool call IDs of its first request: Claude Code goes on with a
+  // conversation moved to the background or forked under a new session ID,
+  // sending its history. So it is one of the same harness whose newest tool
+  // call the request holds; the API gives a call its ID, so no other
+  // conversation's messages hold it. A key in the same session, as a Codex
+  // subagent forked with its parent's history, is none: that is the session's
+  // already. Of more than one, the one whose call is newest in the request.
+  continuedFrom(key: string, calls: readonly string[]): string | undefined {
+    const harness = key.slice(0, key.indexOf('-') + 1)
+    const same = (a: string, b: string) => {
+      const s = sessionOf(a)
+      return !!s && b.startsWith(s)
+    }
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const k = this.byCall.get(calls[i])
+      if (k && k !== key && k.startsWith(harness) && !same(k, key) && !same(key, k)) return k
+    }
+    return undefined
+  }
+}
+
+// The keys of the conversations journaled in a state folder, from their
+// journals' names; not a journal moved aside (`.bad`) or kept from before a
+// repair, whose names have a dot in the key.
+export const journalKeys = (dir: string): string[] =>
+  readdirSync(dir).flatMap((f) => (f.endsWith('.journal.jsonl') && !f.slice(0, -'.journal.jsonl'.length).includes('.') ? [f.slice(0, -'.journal.jsonl'.length)] : []))
+
+// A conversation's newest tool call, for one missing from LastCalls: its
+// journal's last lastCall, or failing that the messages of the last request
+// its log has (log.ts), newest first; null with neither. Only the files'
+// ends are read, more of them only while no whole line is found.
+export function newestCall(stateDir: string, logRoot: string, key: string): string | null {
+  const journal = path.join(stateDir, `${key}.journal.jsonl`)
+  const set = [...tailOf(journal, () => true).matchAll(/"lastCall":"([^"]+)"/g)].at(-1)
+  if (set) return set[1]
+  const dir = path.join(logRoot, key)
+  const isRequest = (l: string) => l.includes('"event":"request"') && !l.includes('"bare":')
+  const line = tailOf(path.join(dir, 'step_events.jsonl'), (t) => t.split('\n').slice(1).some(isRequest))
+    .split('\n').slice(1).filter(isRequest).at(-1)
+  if (!line) return null
+  const objects = objectsOf(dir)
+  for (const m of [...messagesOf(JSON.parse(line))].reverse()) {
+    if (m.role !== 'assistant') continue
+    const file = path.join(objects, `${m.hash}.json`)
+    if (!existsSync(file)) continue
+    const call = callIdsOf([JSON.parse(readFileSync(file, 'utf8'))]).at(-1)
+    if (call) return call
+  }
+  return null
+}
+
+// A file's end, from 64KB back, doubling until `enough` says it holds what's
+// wanted or it's the whole file; '' for none. The first line may be part of
+// one.
+function tailOf(file: string, enough: (tail: string) => boolean): string {
+  if (!existsSync(file)) return ''
+  const size = statSync(file).size
+  const fd = openSync(file, 'r')
+  try {
+    for (let n = 64 * 1024; ; n *= 2) {
+      const len = Math.min(n, size)
+      const buf = Buffer.alloc(len)
+      readSync(fd, buf, 0, len, size - len)
+      const t = (len === size ? '\n' : '') + buf.toString('utf8')
+      if (len === size || enough(t)) return t
+    }
+  } finally {
+    closeSync(fd)
   }
 }
 

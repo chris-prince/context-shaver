@@ -20,7 +20,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
 import { errorShape, hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDefs, writeLine, writeMessages } from './log.ts'
-import { blocks, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
+import { blocks, callIdsOf, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { dropAsked, fetchBound, on as dropUnbound } from './binding.ts'
@@ -34,8 +34,8 @@ import { totals } from './totals.ts'
 import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness } from './harness.ts'
 import { autocompactAt } from './autocompact.ts'
 import { load as loadLaunch, type LaunchVals } from './launch-vals.ts'
-import { bornFrom, bornOf, compactedSince, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, splitShaved, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
-import { record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
+import { bornFrom, bornOf, compactedSince, counted, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, splitShaved, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
+import { journalKeys, LastCalls, newestCall, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
@@ -76,6 +76,14 @@ const ttlMs = Number(a['cache-ttl-seconds']) * 1000
 const stateDir = path.join(a.dir, 'state')
 const logRoot = path.join(a.dir, LOG_DIR)
 mkdirSync(stateDir, { recursive: true })
+const lastCalls = new LastCalls(path.join(stateDir, 'last-calls.json'))
+// The conversations journaled that the table lacks, filled from their journals
+// and logs once; after that, only the folder's names are listed.
+{
+  const t = performance.now()
+  const added = lastCalls.fill(journalKeys(stateDir), (k) => newestCall(stateDir, logRoot, k))
+  if (added) console.error(`shaver: filled in last-calls.json for ${counted(added, 'conversation')}, in ${Math.round(performance.now() - t)}ms`)
+}
 // The commit this proxy started from, for bin/run-proxy to tell whether the
 // checkout has moved on since; empty outside a git checkout.
 const commit = (() => {
@@ -367,6 +375,17 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   if (ac?.guessed) described.windowGuessed = true
   if (covers) described.covers = covers
   const last = latestOf(key)
+  // The newest tool call, by which a conversation going on in another session
+  // is known as this one's (journal.ts, LastCalls); and on the first request,
+  // whether this one goes on from one so, looked up before this one's call is
+  // set, which may be the same.
+  const calls = callIdsOf(msgs)
+  const from = last || !calls.length ? undefined : lastCalls.continuedFrom(key, calls)
+  if (from) described.from = from
+  if (calls.length) {
+    described.lastCall = calls.at(-1)
+    lastCalls.set(key, calls.at(-1)!)
+  }
   // What Claude Code's compaction would keep of its messages, folded on from
   // the last request's, each file's modification time looked up as its call
   // is answered (Claude Code's paths are absolute; the proxy is on its machine).

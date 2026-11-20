@@ -11,6 +11,10 @@ export type ApiMsg = { role: 'user' | 'assistant' | 'system'; content: string | 
 
 export const blocks = (m: ApiMsg): Block[] => (typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content)
 
+// The IDs of the tool calls in the messages, oldest first. The API gives each
+// its ID, so one is in one conversation's messages only.
+export const callIdsOf = (msgs: readonly ApiMsg[]): string[] => msgs.flatMap((m) => (m.role === 'assistant' ? blocks(m).flatMap((b) => (b.type === 'tool_use' ? [String(b.id)] : [])) : []))
+
 // User text that is not a prompt: Claude Code's command rows, its interrupt
 // marker and the context it adds in <system-reminder> tags, and the
 // environment Codex sends again when it changes, as when the date does. Each

@@ -5,7 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { counted, render, SUMMARIES, type Forks, type Stats } from './stats.ts'
-import { bareLines, history, latest } from './journal.ts'
+import { bareLines, history, latest, sessionOf } from './journal.ts'
 import { addBare, cost, type Cost } from './cost.ts'
 import type { Summary } from './summary.ts'
 
@@ -36,29 +36,44 @@ export function journaled(dir: string, key: string, ttlMs: number): { stats?: St
 }
 
 // The rest of a conversation's session, which `shaver info`'s cost sums: its
-// ancestor conversations, each one of its own once a compaction, /clear or
-// rewind gave it a new first message (harness.ts, conversationId), and in
-// a main conversation, its subagents: a Claude Code subagent's session ends in
-// its agent ID where the main's ends in "main", and a Codex subagent's in its
-// thread ID where the parent's is the session alone. A key with no session
-// (its first message alone) has none. `agent` is a subagent's ID; `spent`, its
-// summary forks' dollars.
+// ancestor conversations, each one of its own once a compaction or rewind gave
+// it a new first message (harness.ts, conversationId), and in a main
+// conversation, its subagents: a Claude Code subagent's session ends in its
+// agent ID where the main's ends in "main", and a Codex subagent's in its
+// thread ID where the parent's is the session alone (journal.ts, sessionOf).
+// A conversation going on from one in another session (Stats.from, as Claude
+// Code's moved to the background) brings that session in too, and so on back.
+// A key with no session (its first message alone) has none. `agent` is a
+// subagent's ID; `spent`, its summary forks' dollars.
 export type Other = { key: string; agent?: string; stats?: Stats; cost?: Cost; spent: number }
 export function othersOf(dir: string, key: string, read: (key: string) => { stats?: Stats; cost?: Cost }): Other[] {
-  const own = key.slice(0, key.lastIndexOf('-') + 1)
-  if (!own.slice(0, -1).includes('-')) return []
-  const session = key.startsWith('claude-') && own.endsWith('-main-') ? own.slice(0, -'main-'.length) : own
-  return readdirSync(dir)
+  const first = sessionOf(key)
+  if (!first) return []
+  const keys = readdirSync(dir)
     .filter((f) => f.endsWith('.journal.jsonl'))
     .map((f) => f.slice(0, -'.journal.jsonl'.length))
     // A journal moved aside (`<key>.pre-repair`) isn't a conversation's.
-    .filter((k) => k !== key && k.startsWith(session) && !k.includes('.'))
-    .map((k) => {
+    .filter((k) => !k.includes('.'))
+  const found = new Map<string, Other>()
+  const sessions = [first]
+  const fromOf = (stats?: Stats) => {
+    const s = stats?.from && sessionOf(stats.from)
+    if (s && !sessions.includes(s)) sessions.push(s)
+  }
+  fromOf(read(key).stats)
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i]
+    for (const k of keys) {
+      if (k === key || found.has(k) || !k.startsWith(session)) continue
       // Between the session and the first message's hash: "main", a Claude
       // Code agent ID, a Codex thread ID, or nothing (a Codex parent's).
       const between = k.slice(session.length, Math.max(session.length, k.lastIndexOf('-')))
-      return { key: k, ...(between && between !== 'main' && { agent: between }), ...read(k), spent: summariesFrom(dir, k).spent }
-    })
+      const o: Other = { key: k, ...(between && between !== 'main' && { agent: between }), ...read(k), spent: summariesFrom(dir, k).spent }
+      found.set(k, o)
+      fromOf(o.stats)
+    }
+  }
+  return [...found.values()]
 }
 
 // A cost with its summary forks' spend, which is charged to the summaries'
@@ -87,12 +102,21 @@ function noteOf(others: Other[]): string | undefined {
 
 // The requests and turns of the session's ancestor conversations, and of its
 // subagents, a line each where there are any: those with stats, priced or not.
-function elsewhereOf(others: Other[]): string[] {
+// A conversation's turns are its prompts', so each counts those it adds: a
+// lone request at most its prompt, none if it's the client's compaction (whose
+// turns are the conversation it compacts), and one going on from another
+// (Stats.from) those past the other's; `s`, the conversation asking, already
+// counts those of the one it goes on from.
+function elsewhereOf(others: Other[], s: Stats): string[] {
+  const turnsOf = new Map(others.map((o) => [o.key, o.stats?.turns ?? 0]))
+  const added = (t: Stats) => (t.requests === 1 ? (t.compaction ? 0 : Math.min(t.turns, 1)) : Math.max(0, t.turns - (t.from ? turnsOf.get(t.from) ?? 0 : 0)))
   const line = (os: Other[], where: string) => {
     const shown = os.filter((o) => o.stats)
     if (!shown.length) return []
-    const sum = (f: (s: Stats) => number) => shown.reduce((n, o) => n + f(o.stats!), 0)
-    return [`  + ${counted(sum((s) => s.requests), 'request')} across ${counted(sum((s) => s.turns), 'turn')}, in ${where}`]
+    const requests = shown.reduce((n, o) => n + o.stats!.requests, 0)
+    const counts = shown.some((o) => o.key === s.from) ? turnsOf.get(s.from!)! : 0
+    const turns = Math.max(0, shown.reduce((n, o) => n + added(o.stats!), 0) - counts)
+    return [`  + ${counted(requests, 'request')}${turns ? ` across ${counted(turns, 'turn')}` : ''}, in ${where}`]
   }
   return [...line(others.filter((o) => !o.agent), 'ancestor convos'), ...line(others.filter((o) => o.agent), 'subagents')]
 }
@@ -112,7 +136,7 @@ export function infoText(key: string, version: string, s: Stats, estimated: bool
   const applied = Math.min(summarized, live.valid)
   const pending = live.valid - applied + (live.inFlight ? 1 : 0)
   const forks: Forks = { applied, pending, dropped: sums.requests - applied - pending, ...(sums.failed && { failed: sums.failed }) }
-  const text = render(s, key, estimated, session, forks, noteOf(others), elsewhereOf(others))
+  const text = render(s, key, estimated, session, forks, noteOf(others), elsewhereOf(others, s))
   const warning = live.missed ? `\n\nshaver: since it started, the journal missed ${counted(live.missed, 'request')}; see proxy.log` : ''
   return '```\n' + `Shaver Version: ${version}\n` + text + warning + '\n```'
 }
