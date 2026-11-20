@@ -41,7 +41,7 @@ import { forcedTrimOf, loadPolicy, textRules } from '../src/policy.ts'
 import { isCompaction, keyOf, promptTokens, type Stats } from '../src/stats.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
-import { anchored, apply, decide, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
 
 const args = process.argv.slice(2)
 const opt = (name: string) => {
@@ -252,10 +252,10 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Re
     let records = Math.min(sentRecords, chain.length)
     let keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain.slice(0, records))
     const reads = (m: ApiMsg[]) => {
-      const ps = positionsOf(m, 's', thinking, q.auto)
+      const ps = positionsOf(m, 's', thinking, counting(q.model, q.auto))
       return ps.slice(0, readThrough(ps, live, q.model.lookback) + 1).reduce((x, p) => x + p.size, 0)
     }
-    const cold = (m: ApiMsg[]) => { const ps = positionsOf(m, 's', thinking, q.auto); return ps.some((p) => p.breakpoint) && readThrough(ps, live, q.model.lookback) < 0 }
+    const cold = (m: ApiMsg[]) => { const ps = positionsOf(m, 's', thinking, counting(q.model, q.auto)); return ps.some((p) => p.breakpoint) && readThrough(ps, live, q.model.lookback) < 0 }
     if (records < chain.length && cold(keep.msgs)) {
       records = chain.length
       keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain)
@@ -312,7 +312,7 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Re
       const i = q.sent.findIndex((m, j) => !body[j] || norm(m) !== norm(body[j]))
       if (i >= 0 || body.length !== q.sent.length) console.log('sent differs', n, q.time, 'at', i, 'of', q.sent.length, body.length, '\n  sent ', JSON.stringify(strip(q.sent[i] ?? {} as ApiMsg)).slice(0, 300), '\n  model', JSON.stringify(strip(body[i] ?? {} as ApiMsg)).slice(0, 300))
     }
-    const pos = positionsOf(body, 's', thinking, q.auto)
+    const pos = positionsOf(body, 's', thinking, counting(q.model, q.auto))
     const r = readThrough(pos, live, q.model.lookback)
     const last = pos.findLastIndex((p) => p.breakpoint)
     const { read, write } = rates(q.model, q.auto)
@@ -324,7 +324,7 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Re
       out.costs.push(c)
       out.tokens.push(tokens)
     }
-    for (const [i, p] of pos.entries()) if (p.breakpoint || (q.auto && !p.joined) || i === r) entries.set(p.prefix, t)
+    for (const h of entriesOf(pos, r)) entries.set(h, t)
     // Past the client's limit, it compacts before the next request, unless
     // that one is its own compaction or doesn't go on from this one.
     const c = q.model.compaction

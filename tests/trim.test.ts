@@ -7,7 +7,7 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, decide, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 
 const long = 'x'.repeat(5000)
@@ -562,17 +562,55 @@ test('with automatic caching, a request reads back only 20 user runs from its en
     { role: 'assistant', content: [{ type: 'text', text: `a${i}` }] },
   ]
   const before = Array.from({ length: 30 }, (_, i) => turn(i)).flat()
-  // What prepare records: each user message's end, and the request's own.
-  const ends = (msgs: ApiMsg[]) => positionsOf(msgs, 's', new Map(), true).filter((p) => !p.joined || p.breakpoint)
-  const live = new Set(ends(before).map((p) => p.prefix))
+  // What prepare records: each request's end, a request ending at each user message.
+  const live = new Set(before.flatMap((m, k) => (m.role === 'user' ? [positionsOf(before.slice(0, k + 1), 's', new Map(), true).at(-1)!.prefix] : [])))
   const stubbedAt = (j: number) => before.map((m, k) => (k === j ? { ...m, content: [{ type: 'tool_result', tool_use_id: `t${(j - 2) / 4}`, content: stub(5000) }] } : m))
   const grown = [...before, { role: 'user', content: [{ type: 'text', text: 'next' }] } as ApiMsg]
   const pos = (msgs: ApiMsg[]) => positionsOf(msgs, 's', new Map(), true)
-  // Growing reads up to the end of the last request.
-  assert.equal(readThrough(pos(grown), live, 20), pos(before).length - 1)
+  // Growing reads up to the end of the last request, its tool result: the answer after it was never sent.
+  assert.equal(readThrough(pos(grown), live, 20), pos(before).length - 2)
   // A change within reach reads up to the user run before it; one further back, nothing.
   assert.equal(readThrough(pos(stubbedAt(110)), live, 20), 108)
   assert.equal(readThrough(pos(stubbedAt(2)), live, 20), -1)
+})
+
+test('with automatic caching counted in items, a request reads back only that many blocks', () => {
+  const turn = (i: number): ApiMsg[] => [
+    { role: 'user', content: [{ type: 'text', text: `q${i}` }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: long }] },
+    { role: 'assistant', content: [{ type: 'text', text: `a${i}` }] },
+  ]
+  const before = Array.from({ length: 30 }, (_, i) => turn(i)).flat()
+  const live = new Set(before.flatMap((m, k) => (m.role === 'user' ? [positionsOf(before.slice(0, k + 1), 's', new Map(), 'items').at(-1)!.prefix] : [])))
+  const stubbedAt = (j: number) => before.map((m, k) => (k === j ? { ...m, content: [{ type: 'tool_result', tool_use_id: `t${(j - 2) / 4}`, content: stub(5000) }] } : m))
+  // A change 31 blocks from the end: past 20 items, though only 16 user runs.
+  assert.equal(readThrough(positionsOf(stubbedAt(90), 's', new Map(), 'items'), live, 20), -1)
+  assert.equal(readThrough(positionsOf(stubbedAt(90), 's', new Map(), true), live, 20), 88)
+  assert.equal(readThrough(positionsOf(stubbedAt(110), 's', new Map(), 'items'), live, 20), 108)
+  // Sol's lookback counts items with automatic caching; a model without lookbackCounts, runs.
+  assert.equal(counting(modelOf('gpt-6.1-sol'), true), 'items')
+  assert.equal(counting(modelOf('gpt-6.1-sol'), false), false)
+  assert.equal(counting(modelOf('claude-haiku-5-5'), true), true)
+})
+
+test('with automatic caching, the one entry a request leaves is at its end', () => {
+  // Codex sends a prompt with the instructions beside it, two user messages in one request.
+  const sent: ApiMsg[] = [
+    { role: 'user', content: [{ type: 'text', text: 'instructions' }] },
+    { role: 'user', content: [{ type: 'text', text: 'go' }] },
+  ]
+  for (const counts of [true, 'items'] as const) {
+    const pos = positionsOf(sent, 's', new Map(), counts)
+    // With no entry read, the request leaves one, at its end.
+    const live = new Set(entriesOf(pos, readThrough(pos, new Set(), 78)))
+    assert.deepEqual([...live], [pos[1].prefix])
+    // So a later request that keeps only the first message reads nothing: no request ended there.
+    assert.equal(readThrough(positionsOf([sent[0], { role: 'user', content: [{ type: 'text', text: 'other' }] }], 's', new Map(), counts), live, 78), -1)
+    // One that reads an earlier request's end refreshes it too.
+    const grown = positionsOf([...sent, { role: 'user', content: [{ type: 'text', text: 'more' }] }], 's', new Map(), counts)
+    assert.deepEqual(entriesOf(grown, readThrough(grown, live, 78)), [pos[1].prefix, grown[2].prefix])
+  }
 })
 
 test("a request's breakpoints give its entries' lifetime", () => {

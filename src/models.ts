@@ -15,6 +15,10 @@ export type Model = {
   price?: Price
   // How far back from a breakpoint a request finds an entry (trim.ts, readThrough).
   lookback: number
+  // With automatic caching, what the lookback counts: user or tool-result runs
+  // unless it says input items (trim.ts, positionsOf). A probe whose runs are
+  // all alike can't tell them apart; probe-codex-model-details.ts --pads can.
+  lookbackCounts?: 'items'
   // Seconds an entry lasts unread, where the request's breakpoints don't say.
   ttl?: number
   // Tokens of earlier turns that start a summary fork, in place of the policy's
@@ -71,26 +75,37 @@ const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 800, ms: 34_0
 // OpenAI's long prompts: past 272K input tokens, input, reads and writes
 // double and output is 1.5x (OpenRouter's listings, 2026-11-16).
 const OPENAI_LONG = { over: 272_000, times: 2, output: 1.5 }
-const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long: OPENAI_LONG }, lookback: 50, ttl: 1800, compaction: CODEX_V2 }
+// Luna's lookback counts input items, as sol's does (probed on 2026-11-19):
+// read with 79 items after the cached prefix, nothing with 80, at 16.3K tokens
+// after it unpadded and 7.3K with 3 padding items a run, at 36 and 19 runs.
+const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long: OPENAI_LONG }, lookback: 79, lookbackCounts: 'items' as const, ttl: 1800, compaction: CODEX_V2 }
 // Sol's window is 272K too (`codex debug models`, Codex 0.163.0). Its lookback
-// was probed on 2026-11-17 through Codex (probe-codex-model-details.ts
-// lookback): read 38 runs back, nothing at 39, at about 250 and 1,000 tokens
-// a run, so it counts runs, not tokens.
-const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 38, ttl: 1800, compaction: CODEX_V2 }
+// counts input items: probed on 2026-11-19 through Codex 0.165.0
+// (probe-codex-model-details.ts lookback --pads), with 0, 1 and 3 padding
+// items a run, it read with 78 items after the cached prefix and nothing with
+// 80 or more, at 18 to 39 runs back and 7.9K to 18.3K tokens after it. The 38
+// runs measured on 2026-11-17 were runs of 2 items, a call and its output.
+// These were served by Bedrock (a response's model global.openai.gpt-6.1-sol).
+// Served by OpenAI's own API, reads past the newest entry came and went (read
+// at 36 to 40 items in one session, nothing at 33 to 48 in others) and a miss
+// still read the first 11,435 tokens, where no lookback fits; 78 items stands
+// for it too, about the 38 two-item runs used before.
+const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 78, lookbackCounts: 'items' as const, ttl: 1800, compaction: CODEX_V2 }
 // Prices from OpenRouter's listings (2026-11-16): reads at 0.05x input on
 // terra, 0.1x on astra, writes at 1.25x. The TTL was probed on 2026-11-16
 // through OpenRouter (check-prices.ts --lifetime): entries read after 1, 15
-// and 28 minutes, nothing after 32. The lookback was probed on 2026-11-17
-// through Codex, as sol's was: astra's is sol's, 38 runs (at about 250 tokens
-// a run only); terra's is 20 runs at about 250 and 1,000 tokens a run (read at
-// 20, at 21 and 22 only the session's opening, 21,488 tokens, which terra kept
-// past its lookback, a read this table doesn't model). Terra's window is
+// and 28 minutes, nothing after 32. The lookback counts input items, as sol's
+// does (probed on 2026-11-19, with 0 and 3 padding items a run): astra read
+// with 79 items after the cached prefix, nothing with 86; terra with 38 and
+// 25, nothing with 42 and 38, so about 37 (the two sessions disagree by one).
+// Past its lookback terra still read the session's opening, about 21.5K
+// tokens, a read this table doesn't model. Terra's window is
 // 500K where Codex's model catalog lists it (`codex debug models`, Codex
 // 0.169.0), so Codex compacts it at 450K; a ChatGPT sign-in's catalog doesn't
 // list terra or astra yet. The compaction's summary and time are sol's, not
 // measured on these.
-const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG }, lookback: 20, compaction: { ...CODEX_V2, at: 450_000 } } // at: 90% of 500K
-const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG }, lookback: 38 }
+const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG }, lookback: 37, compaction: { ...CODEX_V2, at: 450_000 } } // at: 90% of 500K
+const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG }, lookback: 79 }
 
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },

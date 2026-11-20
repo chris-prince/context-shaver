@@ -42,7 +42,7 @@ import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textR
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Summaries } from './info.ts'
-import { anchored, apply, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
+import { anchored, apply, counting, entriesOf, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
@@ -273,7 +273,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   const allMerged = Math.min(file?.merged ?? 0, chain.length)
   let covers: string[] | undefined
-  if ((records < chain.length || merged < allMerged) && cold(positionsOf(keep.msgs, seed, thinking, auto))) {
+  if ((records < chain.length || merged < allMerged) && cold(positionsOf(keep.msgs, seed, thinking, counting(model, auto)))) {
     if (records < chain.length) covers = coveredBy(keep, msgs, chain, records, turns).map(keyOf)
     records = chain.length
     merged = allMerged
@@ -310,7 +310,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
   const freed = spare > 0 ? undefined : freedSystem(body.system)
   const reads = (m: ApiMsg[]) => {
-    const ps = positionsOf(m, seed, thinking, auto)
+    const ps = positionsOf(m, seed, thinking, counting(model, auto))
     return ps.slice(0, readThrough(ps, live, model.lookback) + 1).reduce((n, q) => n + q.size, 0)
   }
   const anchor = (m: ApiMsg[]) => {
@@ -346,11 +346,10 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   }
   body.messages = anchor(sent.msgs)
   if (freed && marks(body.messages) > marks(sent.msgs)) body.system = freed
-  // The entries this request writes or reads: one at each breakpoint, or with
-  // automatic caching at each user message's end, and the one it reads through.
-  const pos = positionsOf(body.messages, seed, thinking, auto)
+  // The entries this request writes or reads.
+  const pos = positionsOf(body.messages, seed, thinking, counting(model, auto))
   const r = readThrough(pos, live, model.lookback)
-  const touched = pos.filter((q, i) => q.breakpoint || (auto && !q.joined) || i === r).map((q) => q.prefix)
+  const touched = entriesOf(pos, r)
   // Where trimming ends in the messages as sent, which drops shorten.
   const ends = trimmedEnd(msgs, conversationRules, applied, conv, thinking)
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
@@ -965,8 +964,15 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   const entries = { ...p.entries, ...Object.fromEntries(p.touched.map((h) => [h, now])) }
   const inputTokens = u ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
   // With no usage there are no counts to take the stats on from, so it's
-  // journaled bare, and like one cut off leaves the state as it was.
-  if (!u || !inputTokens) return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), why: 'no usage' }, p.logLine && { dir: p.logDir!, line: p.logLine })
+  // journaled bare, and like one cut off leaves the state as it was, but with
+  // automatic caching for its cache entries: the API answered, so it read the
+  // prompt and cached it (on sol a request after one that failed partway read
+  // it all). Breakpoint caching isn't known to do the same.
+  if (!u || !inputTokens) {
+    const state = p.proto.automatic ? load(p.key) : undefined
+    if (state) save(p.key, { ...state, entries: Object.fromEntries(p.touched.map((h) => [h, now])) })
+    return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), why: 'no usage' }, p.logLine && { dir: p.logDir!, line: p.logLine })
+  }
   const c = attribution !== undefined ? p.counted?.(attribution) : undefined
   const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds }, dropped, u.output_tokens_details?.thinking_tokens)
   const was = currentOf(p.key)

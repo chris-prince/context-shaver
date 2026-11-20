@@ -11,17 +11,22 @@
 //     cache looked back at least k runs; if it reads nothing (or only an
 //     earlier probe's shorter prefix), it didn't. A run is a stretch of
 //     input items between model outputs: a prompt, or a batch of tool results.
-//     Each size's edge is between its largest k read before its smallest k
-//     not read. Whether the limit counts runs or tokens shows across sizes: a
-//     limit in runs keeps its edge at the same k, one in tokens at the same
-//     "tokens after it" (the request's input from the changed item on). A probe
-//     can move a later one's edge by a run (its own prompt is a run that the
-//     cache never saw unchanged), so the edges may differ by one.
+//     Each session's edge is between its largest k read before its smallest k
+//     not read. What the limit counts shows across sessions: one in runs keeps
+//     its edge at the same k, one in tokens at the same "tokens after it" (the
+//     request's input after the prefix cached before the change), one in items
+//     at the same "items after it" (its input items after that prefix's, what
+//     the lookback counts back over). A probe can move a later one's edge by a run (its own
+//     prompt is a run that the cache never saw unchanged), so the edges in k
+//     may differ by one. Sizes tell runs from tokens; --pads tells runs from
+//     items: a session with P padding has P short user items after each tool
+//     result, the same on every request, so each run has P more items but the
+//     runs are as many. There's a session for each size and each padding.
 //   ttl: one short session per gap, all side by side; each is resumed after
 //     its gap, and the read shows whether the entry was still there.
 //
 // Usage: bin/node-wrapper scripts/probe-codex-model-details.ts lookback|ttl --model M [options]
-//   lookback  [--runs 80] [--k 70,55,51,49,45,21,19,10] [--sizes 250,1000]
+//   lookback  [--runs 80] [--k 70,55,51,49,45,21,19,10] [--sizes 250,1000] [--pads 0,3]
 //   ttl       [--gaps 1,20,40,70]       minutes
 //   --upstream URL   default https://chatgpt.com/backend-api/codex (ChatGPT sign-in)
 //   --codex PATH     default codex, as the user's shell has it (alias, function or PATH)
@@ -61,8 +66,13 @@ const nums = (s: string) => s.split(',').map(Number)
 type Item = { type?: string; role?: string; output?: unknown; content?: { type: string; text?: string }[] }
 type Seen = { session: string; items: number; input: number; cached: number; edited?: number }
 const seen: Seen[] = []
-// A probe's edit: the session it's for and k. Used once, on that session's next request.
+// A probe's edit: the session it's for and k. Made on that session's requests
+// until one of them completes, so a retried one is edited too.
 const edits = new Map<string, number>()
+// How many responses each model answered under, as the response names it: one
+// name can be served by more than one backend (sol served by Bedrock answers
+// as global.openai.gpt-6.1-sol), and the cache can differ between them.
+const served = new Map<string, number>()
 
 const isInput = (it: Item) => it.type === 'function_call_output' || it.type === 'custom_tool_call_output' || (it.type === 'message' && it.role !== 'assistant')
 // The last item of each run, oldest first.
@@ -72,6 +82,18 @@ function runEnds(input: Item[]): number[] {
     if (isInput(it) && !(input[i + 1] && isInput(input[i + 1]))) ends.push(i)
   })
   return ends
+}
+// A session's padding, named in its prompt, which every request of it has.
+const padOf = (raw: string) => Number(/\(lookback probe, padding (\d+)\)/.exec(raw)?.[1] ?? 0)
+// Puts `pad` short user items after each tool result, named by its call, so
+// every request has them in the same places.
+function padded(input: Item[], pad: number): Item[] {
+  if (!pad) return input
+  return input.flatMap((it) => {
+    if (it.type !== 'function_call_output' && it.type !== 'custom_tool_call_output') return [it]
+    const call = (it as { call_id?: string }).call_id
+    return [it, ...Array.from({ length: pad }, (_, i) => ({ type: 'message', role: 'user', content: [{ type: 'input_text', text: `(probe padding ${i + 1} of ${pad} after ${call}; ignore it)` }] }))]
+  })
 }
 function mark(it: Item) {
   const note = '\n(changed by the lookback probe)'
@@ -94,15 +116,20 @@ const server = http.createServer(async (req, res) => {
   } catch {}
   let rec: Seen | undefined
   if (body && Array.isArray(body.input)) {
+    const pad = padOf(raw.toString())
+    if (pad) {
+      body.input = padded(body.input, pad)
+      raw = Buffer.from(JSON.stringify(body))
+    }
     rec = { session: body.prompt_cache_key ?? String(req.headers['session_id'] ?? '?'), items: body.input.length, input: 0, cached: 0 }
     const k = edits.get(rec.session)
     if (k !== undefined) {
-      edits.delete(rec.session)
       const ends = runEnds(body.input)
       rec.edited = ends[ends.length - k]
-      if (rec.edited === undefined) throw new Error(`only ${ends.length} runs, can't change the one ${k} back`)
-      mark(body.input[rec.edited])
-      raw = Buffer.from(JSON.stringify(body))
+      if (rec.edited !== undefined) {
+        mark(body.input[rec.edited])
+        raw = Buffer.from(JSON.stringify(body))
+      }
     }
   }
   const headers: Record<string, string> = {}
@@ -113,7 +140,11 @@ const server = http.createServer(async (req, res) => {
   const via = VIA.exec(req.url ?? '')
   if (via && req.headers.host !== `127.0.0.1:${port}`) return void res.writeHead(403).end()
   const target = via ? decodeURIComponent(via[1]).replace(/\/$/, '') + via[2] : upstream + req.url
-  const up = await fetch(target, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : raw })
+  // A connection the upstream drops is answered 502, which Codex retries, rather than ending the probe.
+  const up = await fetch(target, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : raw }).catch((e: Error) => {
+    console.error(`  upstream failed: ${e.cause instanceof Error ? e.cause.message : e.message}`)
+  })
+  if (!up) return void res.writeHead(502).end()
   const out: Record<string, string> = {}
   up.headers.forEach((v, k) => {
     if (!HOP.has(k)) out[k] = v
@@ -133,9 +164,12 @@ const server = http.createServer(async (req, res) => {
       const ev = JSON.parse(line.slice(6))
       const u = ev.type === 'response.completed' ? ev.response?.usage : undefined
       if (u) {
+        const m = String(ev.response?.model ?? '?')
+        served.set(m, (served.get(m) ?? 0) + 1)
         rec.input = u.input_tokens
         rec.cached = u.input_tokens_details?.cached_tokens ?? 0
         seen.push(rec)
+        edits.delete(rec.session)
       }
     } catch {}
   }
@@ -147,12 +181,12 @@ const port = (server.address() as { port: number }).port
 const dir = mkdtempSync(join(tmpdir(), 'probe-codex-'))
 const nonce = randomBytes(6).toString('hex')
 // A directory of sN files: about `tokens` tokens of hex words each (16 hex
-// characters are about 6 tokens), unique to this probe, the size and N.
-function files(tokens: number): string {
-  const d = join(dir, `t${tokens}`)
+// characters are about 6 tokens), unique to this probe, the session and N.
+function files(tokens: number, name = `t${tokens}`): string {
+  const d = join(dir, name)
   mkdirSync(d)
   for (let n = 1; n <= 200; n++) {
-    const words = Array.from({ length: Math.max(1, Math.round(tokens / 6.25)) }, (_, i) => createHash('sha256').update(`${nonce}-${tokens}-${n}-${i}`).digest('hex').slice(0, 16))
+    const words = Array.from({ length: Math.max(1, Math.round(tokens / 6.25)) }, (_, i) => createHash('sha256').update(`${nonce}-${name}-${n}-${i}`).digest('hex').slice(0, 16))
     writeFileSync(join(d, `s${n}`), `step ${n}\n${words.join(' ')}\n`)
   }
   return d
@@ -246,63 +280,86 @@ if (mode === 'lookback') {
   const runs = Number(opt('runs', '80'))
   const ks = nums(opt('k', '70,55,51,49,45,21,19,10')).sort((a, b) => b - a)
   const sizes = nums(opt('sizes', '250,1000'))
+  const pads = nums(opt('pads', '0'))
   const t0 = Date.now()
-  type Row = { k: number; edited: number; prefix: number; after: number; read: number; floor: number; hit: boolean }
-  // One size's session and probes; its lines, printed when all are done, as they run side by side.
-  async function probe(tokens: number) {
-    const cwd = files(tokens)
+  type Row = { k: number; edited: number; items: number; prefix: number; after: number; read: number; floor: number; hit: boolean }
+  // One session's build and probes, at a size and padding; its lines, printed
+  // when all are done, as they run side by side.
+  async function probe(tokens: number, pad: number) {
+    const name = `t${tokens}p${pad}`
+    const cwd = files(tokens, name)
     const lines: string[] = []
-    const id = await codex(`For N from 1 to ${runs}, run \`cat sN\` with the shell: exactly one call per step, in order, waiting for each result before the next. Never combine steps. Then reply DONE.`, undefined, cwd)
+    const id = await codex(`For N from 1 to ${runs}, run \`cat sN\` with the shell: exactly one call per step, in order, waiting for each result before the next. Never combine steps. Then reply DONE. (lookback probe, padding ${pad})`, undefined, cwd)
     const build = of(id)
     lines.push(`session ${id}: ${build.length} requests (wanted ${runs + 1}), built in ${minutes(Date.now() - t0)}`)
     lines.push(`build reads: ${build.map((s) => pct(s.cached, s.input)).join(' ')}`)
-    if (build.length - 1 < Math.max(...ks)) lines.push(`warning: fewer tool results than the largest k`)
+    // A session that stopped short (the model combined or skipped steps) is probed only within its runs.
+    const within = ks.filter((k) => k < build.length)
+    if (within.length < ks.length) lines.push(`warning: only ${build.length - 1} tool results, so k ${ks.filter((k) => k >= build.length).join(', ')} not probed`)
     const rows: Row[] = []
     let floor = 0
-    for (const k of ks) {
+    for (const k of within) {
       edits.set(id, k)
+      const sent = of(id).length
       await codex('Reply OK.', id, cwd)
-      const probe = of(id).filter((s) => s.edited !== undefined).at(-1)!
+      // This k's edited request, never an earlier probe's.
+      const probe = of(id).slice(sent).find((s) => s.edited !== undefined)
+      edits.delete(id)
+      if (!probe) {
+        lines.push(`warning: no request was changed at k ${k} (too few runs, or none completed), so it isn't probed`)
+        continue
+      }
       // The longest prefix cached before the change: the biggest earlier request that ended before it.
-      const prefix = Math.max(0, ...of(id).filter((s) => s !== probe && s.items <= probe.edited!).map((s) => s.input))
+      const entry = of(id)
+        .filter((s) => s !== probe && s.items <= probe.edited!)
+        .reduce<Seen | undefined>((a, s) => (!a || s.input > a.input ? s : a), undefined)
+      const prefix = entry?.input ?? 0
       // Read: all of the prefix but its last part block (cached in blocks of 128 tokens).
-      rows.push({ k, edited: probe.edited!, prefix, after: probe.input - prefix, read: probe.cached, floor, hit: prefix > 0 && prefix - probe.cached < 128 })
+      rows.push({ k, edited: probe.edited!, items: probe.items - (entry?.items ?? 0), prefix, after: probe.input - prefix, read: probe.cached, floor, hit: prefix > 0 && prefix - probe.cached < 128 })
       floor = probe.cached
     }
-    return { tokens, lines, rows }
+    return { tokens, pad, lines, rows }
   }
-  const results = await Promise.all(sizes.map(probe))
-  const edges = results.map(({ tokens, lines, rows }) => {
-    console.log(`\n--- about ${tokens} tokens a run`)
+  const results = await Promise.all(sizes.flatMap((t) => pads.map((p) => probe(t, p))))
+  const edges = results.map(({ tokens, pad, lines, rows }) => {
+    console.log(`\n--- about ${tokens} tokens a run, ${pad} padding items a run`)
     for (const l of lines) console.log(l)
-    console.log('\n  k   changed item   prefix before it   tokens after it   read   share   earlier probe read')
-    for (const r of rows) console.log(`${String(r.k).padStart(3)}   ${String(r.edited).padStart(12)}   ${String(r.prefix).padStart(16)}   ${String(r.after).padStart(15)}   ${String(r.read).padStart(6)}   ${pct(r.read, r.prefix).padStart(5)}   ${String(r.floor).padStart(18)}`)
+    console.log('\n  k   changed item   items after it   prefix before it   tokens after it   read   share   earlier probe read')
+    for (const r of rows) console.log(`${String(r.k).padStart(3)}   ${String(r.edited).padStart(12)}   ${String(r.items).padStart(14)}   ${String(r.prefix).padStart(16)}   ${String(r.after).padStart(15)}   ${String(r.read).padStart(6)}   ${pct(r.read, r.prefix).padStart(5)}   ${String(r.floor).padStart(18)}`)
     const miss = rows.filter((r) => !r.hit).at(-1)
     const hit = rows.find((r) => r.hit && (!miss || r.k < miss.k))
-    return { tokens, hit, miss }
+    return { tokens, pad, hit, miss }
   })
-  const at = (r?: Row) => (r ? `${r.k} (${r.after})` : '-')
-  console.log('\nedges:  size   read at k (tokens after)   not read at k (tokens after)')
-  for (const e of edges) console.log(`${String(e.tokens).padStart(12)}   ${at(e.hit).padEnd(24)}   ${at(e.miss)}`)
-  // Each size's edge as ranges of k and of tokens after, from its read to its
-  // miss; one more run of slack in k, as a probe can move a later one's edge.
+  const at = (r?: Row) => (r ? `${r.k} (${r.after} tokens, ${r.items} items)` : '-')
+  console.log('\nedges:  size   padding   read at k (after it)               not read at k (after it)')
+  for (const e of edges) console.log(`${String(e.tokens).padStart(12)}   ${String(e.pad).padStart(7)}   ${at(e.hit).padEnd(33)}   ${at(e.miss)}`)
+  // Each session's edge as a range in each unit, from its read to just short
+  // of its miss: a limit in that unit is in every session's range. In k, a run
+  // of slack, as a probe can move a later one's edge; tokens and items after
+  // are measured on the request, so earlier probes' prompts are counted in them.
   const bounded = edges.filter((e) => e.hit && e.miss)
-  const overlap = (f: (e: (typeof bounded)[0]) => [number, number]) => Math.max(...bounded.map((e) => f(e)[0])) <= Math.min(...bounded.map((e) => f(e)[1]))
-  if (bounded.length < 2) console.log(`\nCan't tell runs from tokens: an edge between a read and a miss is needed at two sizes or more. Choose --k around it.`)
-  else {
-    const byRuns = overlap((e) => [e.hit!.k, e.miss!.k + 1])
-    const byTokens = overlap((e) => [e.hit!.after, e.miss!.after])
-    const lo = Math.max(...bounded.map((e) => e.hit!.k))
-    console.log(
-      byRuns && !byTokens
-        ? `\nThe limit counts runs: about ${lo} at every size.`
-        : byTokens && !byRuns
-          ? `\nThe limit counts tokens: between ${Math.max(...bounded.map((e) => e.hit!.after))} and ${Math.min(...bounded.map((e) => e.miss!.after))} after the change at every size.`
-          : byRuns
-            ? `\nCan't tell runs from tokens: the edges agree both ways. Choose --sizes further apart, or --k closer to the edge.`
-            : `\nThe limit counts neither runs nor tokens alone: the edges agree neither way.`,
-    )
-  }
+  const units = [
+    { unit: 'runs', range: (e: (typeof bounded)[0]): [number, number] => [e.hit!.k, e.miss!.k] },
+    { unit: 'tokens', range: (e: (typeof bounded)[0]): [number, number] => [e.hit!.after, e.miss!.after - 1] },
+    { unit: 'items', range: (e: (typeof bounded)[0]): [number, number] => [e.hit!.items, e.miss!.items - 1] },
+  ].map(({ unit, range }) => ({ unit, lo: Math.max(...bounded.map((e) => range(e)[0])), hi: Math.min(...bounded.map((e) => range(e)[1])) }))
+  const fits = units.filter((u) => u.lo <= u.hi)
+  const varied = [new Set(bounded.map((e) => e.tokens)).size > 1 && 'sizes', new Set(bounded.map((e) => e.pad)).size > 1 && 'paddings'].filter(Boolean)
+  // Every read and miss, not only the edges: a limit in a unit is above each
+  // read and below each miss, so a miss at or below a read in every unit, in
+  // one session or across them, means the reads come and go (a cache routed
+  // across machines, say) and no limit can be told from more --k.
+  const rows = results.flatMap((r) => r.rows)
+  const values = { runs: (r: Row) => r.k, tokens: (r: Row) => r.after, items: (r: Row) => r.items }
+  const steady = Object.values(values).some((v) => Math.max(...rows.filter((r) => r.hit).map(v)) < Math.min(...rows.filter((r) => !r.hit).map(v)))
+  if (!steady)
+    console.log(`\nThe reads aren't steady: in each of runs, tokens and items, a miss came at or below a read. Probe again to see if it repeats; a limit can't be told from these.`)
+  else if (bounded.length < 2) console.log(`\nCan't tell what the limit counts: an edge between a read and a miss is needed in two sessions or more. Choose --k around it.`)
+  else if (fits.length === 1) console.log(`\nThe limit counts ${fits[0].unit}: ${fits[0].lo === fits[0].hi ? fits[0].lo : `between ${fits[0].lo} and ${fits[0].hi}`} after the change in every session.`)
+  else if (fits.length)
+    console.log(`\nCan't tell ${fits.map((u) => u.unit).join(' from ')}: the edges agree in each. ${varied.length < 2 ? `Vary ${varied.includes('sizes') ? '--pads' : '--sizes'} too, or c` : 'C'}hoose --k closer to the edges.`)
+  else console.log(`\nThe limit counts none of runs, tokens or items alone: the edges agree in none.`)
+  console.log(`Answered as ${[...served].map(([m, n]) => `${m} (${n})`).join(', ') || 'nothing'}.`)
   console.log(`Elapsed ${minutes(Date.now() - t0)}.`)
 } else {
   const gaps = nums(opt('gaps', '1,20,40,70'))

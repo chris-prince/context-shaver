@@ -305,9 +305,11 @@ stream for the usage (`UsageReader.done`).
 
 The cache differs too. Messages marks breakpoints; OpenAI and Chat Completions
 providers cache each request's prefix themselves and read the longest part of it within
-20 user or tool-result runs of the new request's end (measured on GPT-5.6), with
-writes priced as input. `positionsOf` models that as one breakpoint at the end,
-with entries at each user message's end. Summary forks work on both: each
+the model's lookback of the new request's end, with writes priced as input. The
+lookback counts user or tool-result runs (20 on GPT-5.6), or input items where
+the model's `lookbackCounts` says so, as luna's, sol's, terra's and astra's do. `positionsOf` models that
+as one breakpoint at the end, which is the request's one entry: only where a
+request ended, not at each user message's end. Summary forks work on both: each
 protocol builds its own summary fork request and reads its answer. The anchor
 breakpoint is Messages-only. Tool deferral works in Claude Code, whose
 `ToolSearch` loads deferred tools, and in Codex with an API key, where the

@@ -371,17 +371,22 @@ export const seedOf = (model: string, tools: unknown, system: unknown) => hash(J
 
 // With automatic caching (OpenAI's, and most others' behind Chat Completions),
 // a request has no breakpoints of its own: the provider caches its prefix, and
-// a later one reads the longest of it within 20 user or tool-result runs of its
-// own end (measured on GPT-5.6; local/openai-design.md, "CacheModel"). That is
-// modelled as one breakpoint, on the last block, with only each user message's
-// end counted by the lookback (the rest joined); every such end of a request
-// sent is an entry (server.ts, prepare).
-export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking, automatic = false): Position[] {
+// a later one reads the longest of it within the model's lookback of its own
+// end. That is modelled as one breakpoint, on the last block, which is the
+// request's one entry (server.ts, prepare): only where a request ended, not
+// at each user message's end, as Codex sends several user messages together
+// (on sol, entries assumed at each one's end predicted reads after a trim
+// that never came). The lookback counts user or tool-result runs, only each
+// user message's end (the rest joined), as measured on GPT-5.6
+// (local/openai-design.md, "CacheModel"); or with 'items', a model whose
+// lookback counts input items (models.ts, lookbackCounts), every block, each
+// an item but a message's parts after its first, which are few.
+export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking, automatic: boolean | 'items' = false): Position[] {
   let prefix = seed
   const pos = msgs.flatMap((m) =>
     blocks(m).map((b, i, bs) => {
       prefix = hash(prefix + m.role + JSON.stringify(b, uncontrolled))
-      if (automatic) return { prefix, size: sizeOf(b, thinking), breakpoint: false, joined: m.role !== 'user' || i < bs.length - 1 }
+      if (automatic) return { prefix, size: sizeOf(b, thinking), breakpoint: false, joined: automatic !== 'items' && (m.role !== 'user' || i < bs.length - 1) }
       const joined = (b.type === 'tool_use' || b.type === 'tool_result') && bs[i - 1]?.type === b.type
       return { prefix, size: sizeOf(b, thinking), breakpoint: b.cache_control !== undefined, joined }
     }),
@@ -389,6 +394,13 @@ export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thi
   if (automatic && pos.length) pos[pos.length - 1].breakpoint = true
   return pos
 }
+
+// The entries a request writes or reads, by prefix: one at each breakpoint
+// (with automatic caching, its end), and `r`, the one it reads through.
+export const entriesOf = (pos: readonly Position[], r: number) => pos.filter((p, i) => p.breakpoint || i === r).map((p) => p.prefix)
+
+// What positionsOf counts the lookback in, for a model with or without automatic caching.
+export const counting = (model: Model, automatic: boolean): boolean | 'items' => (automatic && model.lookbackCounts === 'items' ? 'items' : automatic)
 
 // The position the request reads through, given the live entries; -1 for none.
 export function readThrough(pos: readonly Position[], live: ReadonlySet<string>, lookback: number): number {
@@ -480,8 +492,8 @@ export type Decision = {
 // the cache: it never advances.
 export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: Model, thinking: Thinking = new Map(), automatic = false, horizon = K): Decision {
   const M = writeCost(model, automatic)
-  const a = positionsOf(before, seed, thinking, automatic)
-  const b = positionsOf(after, seed, thinking, automatic)
+  const a = positionsOf(before, seed, thinking, counting(model, automatic))
+  const b = positionsOf(after, seed, thinking, counting(model, automatic))
   const sum = (ps: Position[]) => ps.reduce((n, p) => n + p.size, 0)
   const savedChars = sum(a) - sum(b)
   const [ra, rb] = [readThrough(a, live, model.lookback), readThrough(b, live, model.lookback)]
