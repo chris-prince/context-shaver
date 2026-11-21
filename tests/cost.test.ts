@@ -279,6 +279,19 @@ test("the client compacts where the request's harness said, or not at all", () =
   assert.deepEqual([run(), run(967_000), run(null), run(150_000)], [1, 0, 0, 1])
 })
 
+test("the client's own compaction is the one the prompt without the shaver makes, priced on that prompt", () => {
+  // A conversation that arrives past the limit, as one moved to the background
+  // does, then compacts: 200K, nothing trimmed, then the compaction request.
+  const big = { ...at(0, 200_000, 0), compactAt: 150_000 } as Stats
+  const ask = { ...at(1, 202_000, 0), compactAt: 150_000, compaction: true } as Stats
+  const lines = [{ stats: big, usage: usage(0, 0, 200_000), compactsNext: true as const }, { stats: ask, usage: usage(0, 200_000, 2_000, 5_000) }]
+  const c = cost(lines, HOUR)!
+  assert.equal(c.compactions, 0)
+  assert.ok(Math.abs(c.without - c.actual) < 1e-9)
+  // Not knowing the next is the compaction, one is modelled after the first.
+  assert.equal(cost([{ ...lines[0], compactsNext: undefined }], HOUR)!.compactions, 1)
+})
+
 test("what Claude Code's compaction keeps doesn't grow with the window", () => {
   const big = (minute: number, inputTokens: number, removedTokens: number) =>
     ({ ...at(minute, inputTokens, removedTokens), compactAt: 900_000, tokens: { d: 10_000 }, messages: [], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats

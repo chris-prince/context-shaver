@@ -158,10 +158,24 @@ export function* linesOf(file: string): Generator<Delta & { fork?: ForkLine; sum
 // gives the same stats object, changed in place, so a caller that keeps a
 // line's stats past the next one copies what it needs. A Codex journal's
 // usage gets the cache writes ChatGPT's backend doesn't report (responses.ts).
-export function* history(file: string): Generator<{ stats: Stats; usage?: Usage; resent?: true }> {
+// A line says too whether the request after it is the client's compaction
+// (Stats.compaction), read from the next line before it's applied, since
+// applying updates the one stats object in place.
+export function* history(file: string): Generator<{ stats: Stats; usage?: Usage; resent?: true; compactsNext?: true }> {
   const codex = path.basename(file).startsWith('codex-')
   let s: Stats | undefined
-  for (const d of linesOf(file)) if (!forkOf(d) && !d.bare) yield { stats: (s = apply(s, d)), usage: d.usage && codex ? withWrites(d.usage) : d.usage, ...(d.resent && { resent: d.resent }) }
+  let held: Delta | undefined
+  const line = (d: Delta, next?: Delta) => {
+    s = apply(s, d)
+    const compactsNext = next && (next.set && 'compaction' in next.set ? next.set.compaction === true : !!s.compaction)
+    return { stats: s, usage: d.usage && codex ? withWrites(d.usage) : d.usage, ...(d.resent && { resent: d.resent }), ...(compactsNext && { compactsNext: true as const }) }
+  }
+  for (const d of linesOf(file)) {
+    if (forkOf(d) || d.bare) continue
+    if (held) yield line(held, d)
+    held = d
+  }
+  if (held) yield line(held)
 }
 
 // The forks a journal records, in order.

@@ -147,8 +147,9 @@ export function spent(model: string, provider: string | undefined, u: Usage): nu
 }
 
 // The cost so far with a request's added, given the stats it leaves, the stats
-// before it, and its usage; none once a request's model has no price.
-export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number): Cost | undefined {
+// before it, its usage, and whether the request after it is the client's
+// compaction; none once a request's model has no price.
+export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: Usage, ttlMs: number, compactsNext = false): Cost | undefined {
   let m = modelOf(s.model, s.provider)
   const p = m.price
   if (!c || !p) return undefined
@@ -158,6 +159,12 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
   const short = (t: Tokens) => (ttl > 300_000 ? 0 : t.writes)
   // Compacting where the request's harness said it would (stats.ts, compactAt).
   if (s.compactAt !== undefined) m = { ...m, compaction: s.compactAt === null || !m.compaction ? undefined : { ...m.compaction, at: s.compactAt } }
+  // The client's own compaction, this request or the next, is the one the
+  // prompt without the shaver makes too: it reads that prompt whole, and the
+  // request after it starts from what it kept (Stats.compacted). So none is
+  // modelled around it, where one modelled before it priced it as a request
+  // on a prompt already compacted.
+  if (s.compaction || compactsNext) m = { ...m, compaction: undefined }
   const wo = without(prev, s, u, ttl, c.context, m.compaction)
   const all = wo.tokens.uncached + wo.tokens.reads + wo.tokens.writes
   const compaction: Tokens = { uncached: 0, reads: all, writes: 0, output: m.compaction?.summary ?? 0 }
@@ -228,11 +235,11 @@ export function add(c: Cost | undefined, prev: Stats | undefined, s: Stats, u: U
 // The cost of the requests each stats line follows, given as each line's stats
 // and the usage it holds. Lines from before the journal held usage count for
 // nothing.
-export function cost(lines: Iterable<{ stats: Stats; usage?: Usage; resent?: true }>, ttlMs: number): Cost | undefined {
+export function cost(lines: Iterable<{ stats: Stats; usage?: Usage; resent?: true; compactsNext?: true }>, ttlMs: number): Cost | undefined {
   let c: Cost | undefined = { without: 0, actual: 0, saved: {}, compactions: 0, waitMs: 0 }
   let prev: Stats | undefined
-  for (const { stats: s, usage: u, resent } of lines) {
-    if (u) c = resent ? addResent(c, s, u) : add(c, prev, s, u, ttlMs)
+  for (const { stats: s, usage: u, resent, compactsNext } of lines) {
+    if (u) c = resent ? addResent(c, s, u) : add(c, prev, s, u, ttlMs, compactsNext)
     prev = before(s)
   }
   return c

@@ -49,8 +49,8 @@ export function totals(stateDir: string, ttlMs: number): string {
     let last: string | undefined
     let forks = 0
     try {
-      for (const { stats: s, usage: u, resent } of history(file)) {
-        const next = u && c ? (resent ? addResent(c, s, u) : add(c, prev, s, u, ttlMs)) : c
+      for (const { stats: s, usage: u, resent, compactsNext } of history(file)) {
+        const next = u && c ? (resent ? addResent(c, s, u) : add(c, prev, s, u, ttlMs, compactsNext)) : c
         if (c && !next) stopped++
         const d = { requests: s.requests - (prev?.requests ?? 0) }
         count(key, s.model, next && c ? { ...d, without: next.without - c.without, actual: next.actual - c.actual, saved: Object.fromEntries(Object.entries(next.saved).map(([t, n]) => [t, n - (c!.saved[t] ?? 0)])), compactions: next.compactions - c.compactions, waitMs: next.waitMs - c.waitMs } : d)
