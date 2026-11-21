@@ -105,7 +105,7 @@ function noteOf(others: Other[]): string | undefined {
   const histories = shown.filter((o) => !o.agent).length
   const agents = new Set(shown.flatMap((o) => o.agent ?? [])).size
   const sides = sidesOf(others)
-  const parts = [...(histories ? [counted(histories, 'ancestor convo')] : []), ...(agents ? [counted(agents, 'subagent')] : []), ...(sides ? [counted(sides, 'side req')] : [])]
+  const parts = [...(histories ? [counted(histories, 'ancestor conv')] : []), ...(agents ? [counted(agents, 'subagent')] : []), ...(sides ? [counted(sides, 'side req')] : [])]
   const unpriced = shown.filter((o) => !o.cost).length
   if (!parts.length) return undefined
   return `Includes ${parts.join(', ')}${unpriced ? ` (${unpriced} not counted: no price for its model)` : ''}.`
@@ -130,7 +130,7 @@ function elsewhereOf(others: Other[], s: Stats): string[] {
     return [`  + ${counted(requests, 'request')}${turns ? ` across ${counted(turns, 'turn')}` : ''}, in ${where}`]
   }
   const sides = sidesOf(others)
-  return [...line(others.filter((o) => !o.agent), 'ancestor convos'), ...line(others.filter((o) => o.agent), 'subagents'), ...(sides ? [`  + ${counted(sides, 'side req')}`] : [])]
+  return [...line(others.filter((o) => !o.agent), 'ancestor convs'), ...line(others.filter((o) => o.agent), 'subagents'), ...(sides ? [`  + ${counted(sides, 'side req')}`] : [])]
 }
 
 // The side requests of the session's journals with only those (sideOnly).

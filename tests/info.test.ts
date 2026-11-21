@@ -50,7 +50,7 @@ test("shaver info's costs are the session's, with a note first saying what they 
   ]
   const out = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }, others)
   const actual = 1 + 2 + 4 + 8 + 16 + 0.25 + 0.5
-  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 2 ancestor convos, 1 subagent, 4 side reqs \\(1 not counted: no price for its model\\)\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
+  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 2 ancestor convs, 1 subagent, 4 side reqs \\(1 not counted: no price for its model\\)\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
   // The breakdown and speedup are the session's too: the summaries' spend
   // charged to their saving.
   assert.match(out, /\$31\.00 \(50%\) conv:tools/)
@@ -59,7 +59,7 @@ test("shaver info's costs are the session's, with a note first saying what they 
   // Under the requests line, the rest of the session's requests and turns, a
   // line for its ancestor conversations, one for its subagents and one for its
   // side requests.
-  assert.match(out, /spanning .*\n  \+ 2 requests across 2 turns, in ancestor convos\n  \+ 2 requests across 2 turns, in subagents\n  \+ 4 side reqs\n/)
+  assert.match(out, /spanning .*\n  \+ 2 requests across 2 turns, in ancestor convs\n  \+ 2 requests across 2 turns, in subagents\n  \+ 4 side reqs\n/)
   // With nothing else in the session, there's no note.
   assert.doesNotMatch(infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }), /Includes/)
 })
@@ -74,15 +74,15 @@ test("a conversation going on from one in another session brings that session's 
   assert.equal(others.find((o) => o.key === 'claude-old-ag1-cccc')!.agent, 'ag1')
   // Each adds the turns it adds: the one going on from another, those past it.
   const out = infoText('claude-new-main-dddd', 'v', { ...s, turns: 4 }, false, cost(1), { chain: [], spent: 0, requests: 0 }, 0, { valid: 0 }, others)
-  assert.match(out, /\+ 15 requests across 15 turns, in ancestor convos\n  \+ 5 requests across 3 turns, in subagents/)
+  assert.match(out, /\+ 15 requests across 15 turns, in ancestor convs\n  \+ 5 requests across 3 turns, in subagents/)
   // The conversation asking going on from one counts that one's turns itself.
   const asking = othersOf(dir, 'claude-new-main-bbbb', read)
-  assert.match(infoText('claude-new-main-bbbb', 'v', read('claude-new-main-bbbb').stats, false, cost(1), { chain: [], spent: 0, requests: 0 }, 0, { valid: 0 }, asking), /\+ 15 requests across 6 turns, in ancestor convos/)
+  assert.match(infoText('claude-new-main-bbbb', 'v', read('claude-new-main-bbbb').stats, false, cost(1), { chain: [], spent: 0, requests: 0 }, 0, { valid: 0 }, asking), /\+ 15 requests across 6 turns, in ancestor convs/)
 })
 
 test("a lone request adds at most its prompt's turn, and none if it's the client's compaction", () => {
   const lone = (more: object) => ({ key: 'x', stats: { ...s, requests: 1, turns: 42, ...more }, cost: cost(1), spent: 0 })
   const text = (more: object) => infoText('k', 'v', s, false, cost(1), { chain: [], spent: 0, requests: 0 }, 0, { valid: 0 }, [lone(more)])
-  assert.match(text({}), /\+ 1 request across 1 turn, in ancestor convos/)
-  assert.match(text({ compaction: true }), /\+ 1 request, in ancestor convos\n/)
+  assert.match(text({}), /\+ 1 request across 1 turn, in ancestor convs/)
+  assert.match(text({ compaction: true }), /\+ 1 request, in ancestor convs\n/)
 })
