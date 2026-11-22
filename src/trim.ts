@@ -368,7 +368,23 @@ export function markedTtl(body: { system?: unknown; tools?: unknown; messages?: 
 }
 
 const uncontrolled = (k: string, v: unknown) => (k === 'cache_control' ? undefined : v)
-export const seedOf = (model: string, tools: unknown, system: unknown) => hash(JSON.stringify([model, tools, system], uncontrolled))
+
+// What a request's cache entries are named from: its model and the base the
+// API caches. With breakpoint caching (Anthropic's) the API leaves deferred
+// tools (defer_loading) and Claude Code's billing-header block out of the
+// cached prefix: in the logs to 2026-11-22, requests that added a deferred
+// tool, or changed the header's cc_version or cc_workload, still read the
+// messages they shared with the request before (30K-43K tokens, 4 of 4 that
+// shared more than the first two), so neither renames the entries.
+export function seedOf(model: string, tools: unknown, system: unknown, breakpoints: boolean): string {
+  if (!breakpoints) return wholeSeedOf(model, tools, system)
+  const cached = Array.isArray(tools) ? tools.filter((t) => !t?.defer_loading) : tools
+  const header = (b: { type?: string; text?: unknown } | undefined) => b?.type === 'text' && typeof b.text === 'string' && b.text.startsWith('x-anthropic-billing-header:')
+  return wholeSeedOf(model, cached, Array.isArray(system) ? system.filter((b) => !header(b)) : system)
+}
+
+// The seed over the whole base, as all entries were named before 2026-11-22.
+export const wholeSeedOf = (model: string, tools: unknown, system: unknown) => hash(JSON.stringify([model, tools, system], uncontrolled))
 
 // With automatic caching (OpenAI's, and most others' behind Chat Completions),
 // a request has no breakpoints of its own: the provider caches its prefix, and

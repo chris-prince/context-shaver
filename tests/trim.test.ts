@@ -7,7 +7,7 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 
 const long = 'x'.repeat(5000)
@@ -648,4 +648,20 @@ test("a policy file's tool rules are set in place, by harness", () => {
   const file = '{\n  "conversation_shaver_rules": {},\n  "tool_shaver_rules": { "claude": [] },\n  "skill_shaver_rules": []\n}\n'
   const out = withList(file, 'tool_shaver_rules', rules)
   assert.deepEqual(Object.entries(JSON.parse(out)), [['conversation_shaver_rules', {}], ['tool_shaver_rules', rules], ['skill_shaver_rules', []]])
+})
+
+test("a request's cache entries are named by the base the API caches", () => {
+  const header = (v: string) => ({ type: 'text', text: `x-anthropic-billing-header: cc_version=${v}; cc_entrypoint=cli;` })
+  const system = [header('2.1.329'), { type: 'text', text: 'You are Claude Code.' }]
+  const tools = [{ name: 'Bash', input_schema: {} }, { name: 'Monitor', input_schema: {}, defer_loading: true }]
+  const seed = seedOf('m', tools, system, true)
+  // Neither a deferred tool nor the billing header is in the cached prefix.
+  assert.equal(seedOf('m', [tools[0]], system, true), seed)
+  assert.equal(seedOf('m', tools, [header('2.1.330'), system[1]], true), seed)
+  // A loaded tool and the rest of the system prompt are.
+  assert.notEqual(seedOf('m', [...tools, { name: 'Read', input_schema: {} }], system, true), seed)
+  assert.notEqual(seedOf('m', tools, [system[0], { type: 'text', text: 'You are Codex.' }], true), seed)
+  // Automatic caching names them by the whole base, as everything was before.
+  assert.equal(seedOf('m', tools, system, false), wholeSeedOf('m', tools, system))
+  assert.notEqual(seedOf('m', [tools[0]], system, false), seedOf('m', tools, system, false))
 })

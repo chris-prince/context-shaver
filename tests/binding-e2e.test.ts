@@ -234,3 +234,34 @@ test("the fold of what Claude Code's compaction keeps is journaled with each req
     up.close()
   }
 })
+
+// A deferred tool added, or Claude Code's billing header changed, between two
+// requests isn't in what the API caches, so the second is still predicted to
+// read the first's messages, not cold (seedOf).
+test('a deferred tool or billing header change keeps the cache warm', async () => {
+  const up = await upstream()
+  const p = await proxy(up.url, false)
+  const post = (tools: object[], version: string, msgs: object[]) =>
+    fetch(`${p.url}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 'seed-test' },
+      body: JSON.stringify({
+        model: 'claude-opus-5-5', max_tokens: 10, stream: true, tools,
+        system: [{ type: 'text', text: `x-anthropic-billing-header: cc_version=${version}; cc_entrypoint=cli;` }, { type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }],
+        messages: msgs,
+      }),
+    }).then((r) => r.text())
+  const read = { name: 'Read', description: 'reads', input_schema: { type: 'object' } }
+  const deferred = { name: 'Monitor', description: 'watches', input_schema: { type: 'object' }, defer_loading: true }
+  const last = (msgs: any[]) => msgs.map((m, i) => (i === msgs.length - 1 ? { ...m, content: m.content.map((c: any) => ({ ...c, cache_control: { type: 'ephemeral' } })) } : m))
+  try {
+    const one = [prompt('one'), thought, result]
+    await post([read], '2.1.329', last(one))
+    await post([read, deferred], '2.1.330', last([...one, prompt('two')]))
+    const [, second] = requests(p.dir)
+    assert.ok(second.predictedCachedChars > 4000, `predicted ${second.predictedCachedChars} cached`)
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})

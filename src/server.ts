@@ -42,7 +42,7 @@ import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textR
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Summaries } from './info.ts'
-import { anchored, apply, counting, entriesOf, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
+import { anchored, apply, counting, entriesOf, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
@@ -263,7 +263,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const deferred = proto.defers && h?.defers && toolRules ? forceDefer(body, toolRules, h.alwaysLoaded, proto.searchTool) : 0
   const skillList = skillListOf(s, live.size > 0, now)
   const { cut: skills, trimmed: skillsTrimmed } = skillList ? shaveSkills(body, skillList.rules) : { cut: 0 }
-  const seed = seedOf(body.model, body.tools, body.system)
+  const seed = seedOf(body.model, body.tools, body.system, !auto)
   const thinking = recordedOf(s)
   // The records it sends, and how many of them as the memoir: as sent before,
   // and on a cold cache, all there are.
@@ -279,6 +279,17 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   // The shape the last request that worked was sent in: what a freeze sends.
   const still = keep
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
+  // BACKCOMPAT(2026-11-22): entries saved before then are named by the whole
+  // base (wholeSeedOf). Where none is in reach by today's names, those along
+  // these messages are taken under today's. Entries last an hour, so this can
+  // go once no proxy from before then has run in the last hour.
+  const named = positionsOf(keep.msgs, seed, thinking, counting(model, auto))
+  if (cold(named)) {
+    const whole = positionsOf(keep.msgs, wholeSeedOf(body.model, body.tools, body.system), thinking, counting(model, auto))
+    whole.forEach((q, i) => {
+      if (q.prefix in entries && !(named[i].prefix in entries)) (entries[named[i].prefix] = entries[q.prefix]), live.add(named[i].prefix)
+    })
+  }
   const allMerged = Math.min(file?.merged ?? 0, chain.length)
   let covers: string[] | undefined
   if ((records < chain.length || merged < allMerged) && cold(positionsOf(keep.msgs, seed, thinking, counting(model, auto)))) {
