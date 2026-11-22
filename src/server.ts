@@ -281,8 +281,11 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
   // BACKCOMPAT(2026-11-22): entries saved before then are named by the whole
   // base (wholeSeedOf). Where none is in reach by today's names, those along
-  // these messages are taken under today's. Entries last an hour, so this can
-  // go once no proxy from before then has run in the last hour.
+  // these messages are taken under today's. It's needed in the first hour after
+  // each install upgrades past then, whenever that is, so keep it until
+  // upgrading from before then is no longer supported. Without it, a
+  // conversation's first request after the upgrade looks cold once: everything
+  // due is trimmed and every summary record sent. It runs only on a cold look.
   const named = positionsOf(keep.msgs, seed, thinking, counting(model, auto))
   if (cold(named)) {
     const whole = positionsOf(keep.msgs, wholeSeedOf(body.model, body.tools, body.system), thinking, counting(model, auto))
