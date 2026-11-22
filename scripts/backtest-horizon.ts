@@ -42,7 +42,7 @@
 // Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--compare] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
+import { blocks, clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
 import { ccVersion, folded, keptTokens, type Keep } from '../src/compact-keep.ts'
 import { harnessOf, NO_CONVENTIONS, type Harness } from '../src/harness.ts'
 import { history } from '../src/journal.ts'
@@ -51,7 +51,7 @@ import { forcedTrimOf, loadPolicy, textRules } from '../src/policy.ts'
 import { isCompaction, keyOf, promptTokens, type Stats } from '../src/stats.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
-import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf } from '../src/trim.ts'
 import { usesOf, wholeIn, type Uses } from './rereads.ts'
 
 // A re-read, as measured on Nov 22, 2026 over 57 re-reads of results the proxy
@@ -135,7 +135,11 @@ type Conv = { reqs: Req[]; broken: number; logged: number; h?: Harness; thinking
 // estimated; `compacted`: the requests a compaction followed; `rereads`:
 // those charged, `credited`: logged ones made needless.
 type Tally = { cost: number; trims: number; costs: number[]; compactions: number; ms: number; tokens: number[]; compacted: number[]; rereads: number; credited: number }
-const chars = (ms: readonly ApiMsg[]) => ms.reduce((n, m) => n + JSON.stringify(strip(m)).length, 0)
+// Messages' size as their positions are priced (trim.ts, sizeOf): a thinking
+// block by its billed tokens, not its signature's chars, which are most of its
+// JSON but bill a fraction of that. Converting at a ratio taken over raw JSON
+// priced every other block ~10% low where thinking was kept.
+const chars = (ms: readonly ApiMsg[], thinking: Thinking) => ms.reduce((n, m) => n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking), 0), 0)
 // Whether one request's messages go on from another's.
 const extend = (next: readonly ApiMsg[], prev: readonly ApiMsg[]) => next.length > prev.length && same(next[prev.length - 1], prev.at(-1)!)
 
@@ -199,9 +203,13 @@ function rebuild(dir: string): Conv {
     return promptTokens({ tokens, defs: { key } } as unknown as Stats, msgs)
   }
   const bytes = (xs?: { bytes?: number; deferred?: boolean }[]) => (xs ?? []).reduce((n, x) => n + (x.deferred ? 0 : x.bytes ?? 0), 0)
+  // What each thinking block and counted tool call billed, as the proxy last
+  // saved it (server.ts, State and recordedOf).
+  const saved = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : {}
+  const thinking: Thinking = new Map([...Object.entries<number>(saved.thinking ?? {}), ...Object.entries<number>(saved.calls ?? {}).map(([id, n]) => [`call:${id}`, n] as const)])
   // The chars each request sent: the messages' size as the backtest measures
   // it, since the log gives no bytes for them.
-  const sentChars = all.map((e, n) => chars(sent[n]) + bytes(e.system) + bytes(e.tools))
+  const sentChars = all.map((e, n) => chars(sent[n], thinking) + bytes(e.system) + bytes(e.tools))
   const counted = all.flatMap((e, n) => (typeof e.inputTokens === 'number' && sentChars[n] ? [n] : []))
   if (all.length && !counted.length) throw new Error(`${path.basename(dir)}: no request reports its input tokens, so its chars can't be converted`)
   const convRatio = counted.reduce((x, n) => x + all[n].inputTokens, 0) / counted.reduce((x, n) => x + sentChars[n], 0)
@@ -209,10 +217,6 @@ function rebuild(dir: string): Conv {
     ...(typeof e.inputTokens === 'number' && { inputTokens: e.inputTokens }), ratio: typeof e.inputTokens === 'number' && sentChars[n] ? e.inputTokens / sentChars[n] : convRatio, base: bytes(e.system) + bytes(e.tools), at: atOf(e.time), forced: forced.has(e.time), estimate: estimateOf(e.time),
     ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }), ...(typeof e.outputTokens === 'number' && { output: e.outputTokens }) }))
   const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= fromTime && e.time < until).length
-  // What each thinking block and counted tool call billed, as the proxy last
-  // saved it (server.ts, State and recordedOf).
-  const saved = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : {}
-  const thinking: Thinking = new Map([...Object.entries<number>(saved.thinking ?? {}), ...Object.entries<number>(saved.calls ?? {}).map(([id, n]) => [`call:${id}`, n] as const)])
   const records = state.replace(/\.json$/, '.summaries.json')
   const chain: Summary[] = summaryAt && existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
   return { reqs, broken, logged, h: h && 'name' in h ? h : undefined, thinking, chain, uses: usesOf(orig) }
@@ -298,7 +302,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     const { ratio } = real
     // The prompt of `msgs` as this horizon would send it: the reported input,
     // less what it leaves out of the messages the proxy sent, converted.
-    const tokensOf = (msgs: ApiMsg[]) => (real.inputTokens !== undefined ? real.inputTokens + ratio * (chars(msgs) - chars(real.sent)) : ratio * (chars(msgs) + real.base))
+    const tokensOf = (msgs: ApiMsg[]) => (real.inputTokens !== undefined ? real.inputTokens + ratio * (chars(msgs, thinking) - chars(real.sent, thinking)) : ratio * (chars(msgs, thinking) + real.base))
     const at = compactAt !== undefined ? Number(compactAt) : real.at !== undefined ? real.at : q.model.compaction?.at
     // The proxy's forced trim (server.ts, prepare): within the policy's
     // proximity of the client's compaction, everything due is sent trimmed and
