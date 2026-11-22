@@ -104,13 +104,24 @@ test('the replay rebuilds a logged conversation and reprices it consistently', a
     assert.doesNotMatch(row('drop wait 2'), /trims 0$/)
     assert.equal(row('POLICY'), row('drop wait 2'))
     assert.ok(cost('drop wait 2') < cost('no trimming'))
-    // The horizon backtest, replaying the log under the same policy, makes
-    // every decision the proxy logged, so it can't silently replay with no
-    // rules (as it did when the policy took sections).
-    const compared = execFileSync(process.execPath, [path.join(ROOT, 'scripts/backtest-horizon.ts'), '--compare', path.join(dir, 'logs', key)], { env: { ...process.env, POLICY: policy }, encoding: 'utf8' })
-    const [, differ, decisions] = compared.match(/: (\d+) of (\d+) decisions differ\n$/)!
-    assert.equal(differ, '0', compared)
+    // The horizon backtest, replaying the log under the policy each request
+    // logged, makes every decision the proxy logged, so it can't silently
+    // replay with no rules (as it did when the policy took sections). POLICY
+    // is empty, so it's the logged policy that validates.
+    const empty = path.join(dir, 'empty-policy.json')
+    writeFileSync(empty, '{}\n')
+    const backtest = (...a: string[]) => execFileSync(process.execPath, [path.join(ROOT, 'scripts/backtest-horizon.ts'), ...a, path.join(dir, 'logs', key)], { env: { ...process.env, POLICY: empty }, encoding: 'utf8' })
+    const validated = backtest('--validate')
+    const [, differ, decisions] = validated.match(/: (\d+) of (\d+) decisions differ\n$/)!
+    assert.equal(differ, '0', validated)
     assert.ok(Number(decisions) > 0)
+    // Pricing, the logged policy is the reference: it trims, and the model's
+    // horizon under the empty POLICY, which never trims, costs more than it.
+    const priced = backtest()
+    const logged = priced.match(/\n {2}logged policy +([\d.]+)M tokens at input price +trims (\d+) /)!
+    assert.ok(Number(logged[2]) > 0, priced)
+    assert.match(priced, /against the logged policy, over the conversation \(11 requests\)/)
+    assert.match(priced.split('against the logged policy')[1], /\n {2}model \(\S+ since\) +[\d.]+M tokens at input price +\+\d/)
     // Each request line has its internal ID, and its prompts' turns by ID,
     // one for each prompt in the messages as the client sent them,
     // `received` where the drops changed them: the second turn's prompt was

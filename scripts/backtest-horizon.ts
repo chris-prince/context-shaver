@@ -27,7 +27,13 @@
 // kept, so it is missed while it stood. The rebuild uses the messages as
 // received where they were logged (server.ts, received), and as sent before
 // that. Each conversation's line is printed as it finishes, the totals at the
-// end; --out writes each request's cost too.
+// end; --out writes each request's cost too. Every horizon is priced under
+// POLICY (else policy.json). Where every request of a conversation names the
+// policy it ran under (log.ts, writePolicy), it is also priced as the proxy
+// ran it, each request under its own policy at its model's horizon, and the
+// horizons' percentages are against that; elsewhere they're against the
+// model's horizon under POLICY. --validate checks the backtest instead: see
+// below.
 // Each horizon's client compacts as it would (cost.ts does the same for the
 // cost without the shaver): once a request's prompt, as that horizon sent it,
 // is past the client's limit, it pays for a compaction request, the prompt
@@ -39,7 +45,7 @@
 // never made just before it; one a horizon would have avoided isn't, so
 // horizons that trim more are still charged the client's own. Summary
 // records aren't applied after a horizon's own compaction.
-// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--compare] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
+// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--validate] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { blocks, clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
@@ -47,7 +53,7 @@ import { ccVersion, folded, keptTokens, type Keep } from '../src/compact-keep.ts
 import { harnessOf, NO_CONVENTIONS, type Harness } from '../src/harness.ts'
 import { history } from '../src/journal.ts'
 import { modelOf, PROMPTS_KEPT, SINCE, type Model } from '../src/models.ts'
-import { forcedTrimOf, loadPolicy, textRules } from '../src/policy.ts'
+import { forcedTrimOf, loadPolicy, textRules, type PartRules, type Policy } from '../src/policy.ts'
 import { isCompaction, keyOf, promptTokens, type Stats } from '../src/stats.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
@@ -65,9 +71,9 @@ const opt = (name: string) => {
   const i = args.indexOf(name)
   return i < 0 ? undefined : args.splice(i, 2)[1]
 }
-const compare = args.includes('--compare') && !!args.splice(args.indexOf('--compare'), 1)
-// Comparing with the decisions logged, only the client's own compactions.
-const compacting = !(args.includes('--no-compaction') && !!args.splice(args.indexOf('--no-compaction'), 1)) && !compare
+const validate = args.includes('--validate') && !!args.splice(args.indexOf('--validate'), 1)
+// Validating against the decisions logged, only the client's own compactions.
+const compacting = !(args.includes('--no-compaction') && !!args.splice(args.indexOf('--no-compaction'), 1)) && !validate
 const rereading = !(args.includes('--no-rereads') && !!args.splice(args.indexOf('--no-rereads'), 1))
 const compactAt = opt('--compact-at')
 const fromTime = opt('--since') ?? ''
@@ -75,10 +81,11 @@ const until = opt('--until') ?? '9999'
 const outFile = opt('--out')
 const first = Number(opt('--first') ?? Infinity)
 const root = path.join(import.meta.dirname, '..')
-const policy = loadPolicy(process.env.POLICY ?? path.join(root, 'policy.json'))!
-const rules = policy.conversation_shaver_rules ?? {}
-const summaryAt = textRules(policy).summary_threshold_tokens
-const forcing = forcedTrimOf(policy)
+// The parts of a policy the backtest replays: the message rules, whether
+// summary records are applied, and the forced trim before compaction.
+type Rules = { rules: PartRules; summaryAt?: number; forcing?: { proximity: number; saves: number } }
+const rulesOf = (p: Policy): Rules => ({ rules: p.conversation_shaver_rules ?? {}, summaryAt: textRules(p).summary_threshold_tokens, forcing: forcedTrimOf(p) })
+const given = rulesOf(loadPolicy(process.env.POLICY ?? path.join(root, 'policy.json'))!)
 const dirs = args.length ? args : readdirSync(path.join(root, 'proxy-data/logs'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(root, 'proxy-data/logs', d.name))
 
 // Each request's model's horizon, as the proxy asks it (server.ts, prepare).
@@ -127,8 +134,9 @@ type Logged = { advanced: boolean; cacheState?: string; savedChars: number; rewr
 // client compacts, null where it doesn't, from the journal; `forced`: whether
 // the proxy forced a trim on it (server.ts, autocompact-trim); `estimate`:
 // a prompt's tokens as the proxy would estimate them before sending it;
-// `version`: Claude Code's (ccVersion); `output`: its output tokens.
-type Req = { time: string; model: Model; auto: boolean; msgs: ApiMsg[]; logged?: Logged; sent: ApiMsg[]; inputTokens?: number; ratio: number; base: number; at?: number | null; forced: boolean; estimate: (msgs: readonly ApiMsg[]) => number | undefined; version?: string; output?: number }
+// `version`: Claude Code's (ccVersion); `output`: its output tokens;
+// `policy`: the one the proxy logged it ran under, where it logged one.
+type Req = { time: string; model: Model; auto: boolean; msgs: ApiMsg[]; logged?: Logged; sent: ApiMsg[]; inputTokens?: number; ratio: number; base: number; at?: number | null; forced: boolean; estimate: (msgs: readonly ApiMsg[]) => number | undefined; version?: string; output?: number; policy?: Rules }
 type Thinking = Map<string, number>
 type Conv = { reqs: Req[]; broken: number; logged: number; h?: Harness; thinking: Thinking; chain: Summary[]; uses: Uses }
 // `cost`: tokens at the input price; `tokens`: each request's prompt as sent,
@@ -213,12 +221,15 @@ function rebuild(dir: string): Conv {
   const counted = all.flatMap((e, n) => (typeof e.inputTokens === 'number' && sentChars[n] ? [n] : []))
   if (all.length && !counted.length) throw new Error(`${path.basename(dir)}: no request reports its input tokens, so its chars can't be converted`)
   const convRatio = counted.reduce((x, n) => x + all[n].inputTokens, 0) / counted.reduce((x, n) => x + sentChars[n], 0)
+  // Each policy logged, as the proxy loaded it (log.ts, writePolicy).
+  const policies = new Map<string, Rules>()
+  const policyOf = (h?: string) => (h === undefined ? undefined : policies.get(h) ?? policies.set(h, rulesOf(JSON.parse(readFileSync(path.join(objects, h + '.json'), 'utf8')))).get(h))
   const reqs = all.map((e, n): Req => ({ time: e.time, model: { ...modelOf(e.model, e.provider), ...(ttlOf(e, n) && { ttl: ttlOf(e, n) }) }, auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n],
     ...(typeof e.inputTokens === 'number' && { inputTokens: e.inputTokens }), ratio: typeof e.inputTokens === 'number' && sentChars[n] ? e.inputTokens / sentChars[n] : convRatio, base: bytes(e.system) + bytes(e.tools), at: atOf(e.time), forced: forced.has(e.time), estimate: estimateOf(e.time),
-    ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }), ...(typeof e.outputTokens === 'number' && { output: e.outputTokens }) }))
+    ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }), ...(typeof e.outputTokens === 'number' && { output: e.outputTokens }), ...(e.policy !== undefined && { policy: policyOf(e.policy) }) }))
   const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= fromTime && e.time < until).length
   const records = state.replace(/\.json$/, '.summaries.json')
-  const chain: Summary[] = summaryAt && existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
+  const chain: Summary[] = existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
   return { reqs, broken, logged, h: h && 'name' in h ? h : undefined, thinking, chain, uses: usesOf(orig) }
 }
 
@@ -249,7 +260,9 @@ function renumbered(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary
 // Read and write prices relative to input (replay.ts and trim.ts, writeCost).
 const rates = (m: Model, auto: boolean) => ({ read: m.price ? m.price.read / m.price.input : 0.1, write: m.price?.write ? m.price.write / m.price.input : auto ? 1 : 2 })
 
-function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number, q: Req, since: number) => number, trace?: (n: number, q: Req, d?: Logged) => void): Tally {
+// `asLogged`: each request under the policy it was logged with (every request
+// has one; see `logged`), not POLICY's.
+function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number, q: Req, since: number) => number, trace?: (n: number, q: Req, d?: Logged) => void, asLogged = false): Tally {
   const conv = h?.conventions ?? NO_CONVENTIONS
   let applied: Clock = { requests: 0, turns: 0 }
   let sentRecords = 0
@@ -279,7 +292,8 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     const live = new Set(entries.keys())
     const held = heldTo(applied, q.msgs)
     const clock = clockOf(q.msgs)
-    const chain = compacted ? [] : validChain(renumbered(all.filter((r) => r.time <= q.time), q.msgs), q.msgs)
+    const { rules, summaryAt, forcing } = asLogged ? real.policy! : given
+    const chain = compacted || !summaryAt ? [] : validChain(renumbered(all.filter((r) => r.time <= q.time), q.msgs), q.msgs)
     let records = Math.min(sentRecords, chain.length)
     let keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain.slice(0, records))
     const reads = (m: ApiMsg[]) => {
@@ -307,7 +321,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     // The proxy's forced trim (server.ts, prepare): within the policy's
     // proximity of the client's compaction, everything due is sent trimmed and
     // every record applied, if that saves at least its least saving. Not on a
-    // compaction, nor for a horizon that never trims. Comparing, the proxy's
+    // compaction, nor for a horizon that never trims. Validating, the proxy's
     // forced trims are applied, and each one it or this makes is traced.
     // Its sizes are the proxy's own estimates, from what it had counted by then.
     let forced = false
@@ -330,7 +344,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
       const next = summarized(apply(q.msgs, rules, clock, conv, thinking), q.msgs, chain.slice(0, records))
       const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', q.model, thinking, q.auto, isCompaction(q.msgs) ? 0 : horizon(n, q, clock.requests - held.requests))
       trace?.(n, q, { ...d, cacheState: d.cold ? 'cold' : 'warm' })
-      // Comparing, the trims applied are those the proxy made, so each decision
+      // Validating, the trims applied are those the proxy made, so each decision
       // is judged on the state the proxy had.
       if (trace ? q.logged?.advanced : d.advanced) {
         body = anchor(next.msgs)
@@ -443,18 +457,28 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
   return out
 }
 
-// With --compare, each request whose decision at its model's horizon and the
-// logged one differ on,
-// side by side, then how many differ.
-if (compare) {
+// Whether every request of a conversation names the policy it ran under. The
+// state a policy leaves carries from request to request, so one missing
+// leaves the whole conversation without a logged policy.
+const policiesLogged = ({ reqs }: Conv) => reqs.length > 0 && reqs.every((q) => q.policy)
+
+// With --validate, a check of the backtest itself, under each request's logged
+// policy (POLICY doesn't apply): each request whose decision at its model's
+// horizon and the logged one differ on, side by side, then how many differ.
+// A conversation without its policies logged is skipped.
+if (validate) {
   const f = (d?: Logged) => (d ? `${d.advanced ? 'TRIM' : 'keep'} ${d.cacheState} saved ${d.savedChars} rewrite ${d.rewriteChars} extra ${d.extraChars}` : '-')
   for (const dir of dirs) {
     const c = rebuild(dir)
     if (isSearch(c)) continue
     const { reqs } = c
+    if (!policiesLogged(c)) {
+      console.log(`${path.basename(dir)}: skipped, ${reqs.filter((q) => !q.policy).length} of ${reqs.length} requests have no logged policy`)
+      continue
+    }
     const sim = new Map<number, Logged>()
     const simForced = new Map<number, Logged>()
-    run(c, modelHorizon, (n, _q, d) => (d!.forced ? simForced : sim).set(n, d!))
+    run(c, modelHorizon, (n, _q, d) => (d!.forced ? simForced : sim).set(n, d!), true)
     let bad = 0, both = 0
     reqs.forEach((q, n) => {
       if (q.time < fromTime || q.time >= until) return
@@ -478,11 +502,19 @@ if (compare) {
   process.exit(0)
 }
 
-// Totals by harness, then over all.
+// Totals by harness, then over all; `vsLogged`, over the conversations with
+// their policies logged, those priced under them (`was`) and every horizon's.
+// Each row's percentage is against the logged policy's where there is one,
+// else against the model's horizon under POLICY.
 type Sum = { cost: number; trims: number; compactions: number; ms: number; rereads: number; credited: number }
-const totals = new Map<string, { convs: number; reqs: number; broken: number; logged: number; by: Sum[] }>()
+const sum = (): Sum => ({ cost: 0, trims: 0, compactions: 0, ms: 0, rereads: 0, credited: 0 })
+const addTo = (s: Sum, b: Sum) => { s.cost += b.cost; s.trims += b.trims; s.compactions += b.compactions; s.ms += b.ms; s.rereads += b.rereads; s.credited += b.credited }
+const totals = new Map<string, { convs: number; reqs: number; broken: number; logged: number; by: Sum[]; vsLogged: { convs: number; reqs: number; was: Sum; by: Sum[] } }>()
 // Compactions and re-reads charged and credited, where a horizon has any.
 const made = (b: Sum) => (b.compactions ? ` +${b.compactions}c` : '') + (b.rereads ? ` +${b.rereads}r` : '') + (b.credited ? ` -${b.credited}r` : '')
+const pctOf = (x: number, base: number) => `${x >= base ? '+' : ''}${(((x - base) / (base || 1)) * 100).toFixed(1)}%`
+const LOGGED = 'logged policy'
+const row = (label: string, b: Sum, base?: number) => `  ${label.padEnd(20)} ${(b.cost / 1e6).toFixed(2)}M tokens at input price  ${base === undefined ? '        ' : pctOf(b.cost, base).padStart(7) + ' '}  trims ${b.trims}  compactions ${b.compactions} (${(b.ms / 60_000).toFixed(1)} min)${rereading ? `  re-reads +${b.rereads} -${b.credited}` : ''}`
 for (const [k, dir] of dirs.entries()) {
   let got
   // A folder with no requests logged isn't a conversation.
@@ -494,19 +526,31 @@ for (const [k, dir] of dirs.entries()) {
   const inWindow = reqs.filter((q) => q.time >= fromTime && q.time < until).length
   if (!inWindow) continue
   const by = HORIZONS.map(([, f]) => run(got, f))
-  const pct = (i: number) => `${by[i].cost >= by[1].cost ? '+' : ''}${(((by[i].cost - by[1].cost) / (by[1].cost || 1)) * 100).toFixed(1)}%`
-  console.log(`${k + 1}/${dirs.length} ${path.basename(dir)} ${h?.name ?? 'unknown'} ${inWindow} req | ${HORIZONS.map(([label], i) => `${label} ${i === 1 ? `${(by[i].cost / 1e6).toFixed(2)}M` : pct(i)} ${by[i].trims}${made(by[i])}`).join(' | ')}`)
-  const each = (f: (b: Tally) => unknown) => Object.fromEntries(HORIZONS.map(([label], i) => [label, f(by[i])]))
+  // As the proxy ran it: each request's logged policy, at its model's horizon.
+  const was = policiesLogged(got) ? run(got, modelHorizon, undefined, true) : undefined
+  const base = was?.cost ?? by[1].cost
+  const head = was ? `${LOGGED} ${(was.cost / 1e6).toFixed(2)}M ${was.trims}${made(was)} | ` : ''
+  console.log(`${k + 1}/${dirs.length} ${path.basename(dir)} ${h?.name ?? 'unknown'} ${inWindow} req | ${head}${HORIZONS.map(([label], i) => `${label} ${i === 1 && !was ? `${(by[i].cost / 1e6).toFixed(2)}M` : pctOf(by[i].cost, base)} ${by[i].trims}${made(by[i])}`).join(' | ')}`)
+  const each = (f: (b: Tally) => unknown) => Object.fromEntries([...(was ? [[LOGGED, f(was)]] : []), ...HORIZONS.map(([label], i) => [label, f(by[i])])])
   if (outFile) appendFileSync(outFile, JSON.stringify({ conv: path.basename(dir), harness: h?.name ?? 'unknown', costs: each((b) => b.costs), tokens: each((b) => b.tokens.map(Math.round)), compacted: each((b) => b.compacted) }) + '\n')
   for (const name of [h?.name ?? 'unknown', 'all']) {
-    const t = totals.get(name) ?? { convs: 0, reqs: 0, broken: 0, logged: 0, by: HORIZONS.map(() => ({ cost: 0, trims: 0, compactions: 0, ms: 0, rereads: 0, credited: 0 })) }
+    const t = totals.get(name) ?? { convs: 0, reqs: 0, broken: 0, logged: 0, by: HORIZONS.map(sum), vsLogged: { convs: 0, reqs: 0, was: sum(), by: HORIZONS.map(sum) } }
     t.convs++; t.reqs += inWindow; t.broken += broken; t.logged += logged
-    by.forEach((b, i) => { t.by[i].cost += b.cost; t.by[i].trims += b.trims; t.by[i].compactions += b.compactions; t.by[i].ms += b.ms; t.by[i].rereads += b.rereads; t.by[i].credited += b.credited })
+    by.forEach((b, i) => addTo(t.by[i], b))
+    if (was) {
+      t.vsLogged.convs++; t.vsLogged.reqs += inWindow
+      addTo(t.vsLogged.was, was)
+      by.forEach((b, i) => addTo(t.vsLogged.by[i], b))
+    }
     totals.set(name, t)
   }
 }
 for (const [name, t] of totals) {
-  const base = t.by[1].cost
   console.log(`\n${name}: ${t.convs} conversations, ${t.reqs} requests (rebuild breaks ${t.broken}), ${t.logged} trims logged`)
-  HORIZONS.forEach(([label], i) => console.log(`  ${label.padEnd(20)} ${(t.by[i].cost / 1e6).toFixed(2)}M tokens at input price  ${i === 1 ? '        ' : `${(((t.by[i].cost - base) / base) * 100).toFixed(1).padStart(6)}%`}  trims ${t.by[i].trims}  compactions ${t.by[i].compactions} (${(t.by[i].ms / 60_000).toFixed(1)} min)${rereading ? `  re-reads +${t.by[i].rereads} -${t.by[i].credited}` : ''}`))
+  HORIZONS.forEach(([label], i) => console.log(row(label, t.by[i], i === 1 ? undefined : t.by[1].cost)))
+  const v = t.vsLogged
+  if (!v.convs) continue
+  console.log(`  against the ${LOGGED}, over the ${v.convs === 1 ? 'conversation' : `${v.convs} conversations`} (${v.reqs} requests) with every request's policy logged:`)
+  console.log(row(LOGGED, v.was))
+  HORIZONS.forEach(([label], i) => console.log(row(label, v.by[i], v.was.cost)))
 }
