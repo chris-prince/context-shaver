@@ -10,8 +10,18 @@
 // input price, its chars converted at its own reported tokens a char. Only
 // the messages are priced: the base is the same under every horizon. The
 // proxy's forced trim before the client compacts is made as the policy has
-// it (server.ts, prepare). The model's actions are held fixed, so a trim never makes it fetch
-// again what was taken. The anchor goes on as in server.ts (prepare),
+// it (server.ts, prepare). The model's actions are held fixed, but a trim
+// that takes a result it uses again is charged a re-read (rereads.ts finds
+// the uses): where the response to a request quotes a result the logged
+// request held whole and this horizon's doesn't, it pays for one more request,
+// reading the prompt as this horizon sent it, writing REREAD_SHARE of the
+// result again and REREAD_OUTPUT tokens of output. The result then stands for
+// as many requests as it first stood here. A logged re-read the horizon makes
+// needless, keeping what the logged request had taken, is credited the same,
+// with the re-read's result and the logged output; only the result where its
+// response made other calls too. None is charged or credited after the
+// horizon's own compaction; --no-rereads leaves them out. The anchor goes on
+// as in server.ts (prepare),
 // assuming a spare breakpoint, and so do summary records: each one from when
 // it was made, applied on a cold cache. A record a later one replaced isn't
 // kept, so it is missed while it stood. The rebuild uses the messages as
@@ -29,7 +39,7 @@
 // never made just before it; one a horizon would have avoided isn't, so
 // horizons that trim more are still charged the client's own. Summary
 // records aren't applied after a horizon's own compaction.
-// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--compare] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
+// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--compare] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
@@ -42,6 +52,13 @@ import { isCompaction, keyOf, promptTokens, type Stats } from '../src/stats.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
 import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd } from '../src/trim.ts'
+import { usesOf, wholeIn, type Uses } from './rereads.ts'
+
+// A re-read, as measured on Nov 22, 2026 over 57 re-reads of results the proxy
+// had removed: its result was 0.49× the earlier one's tokens in total, and its
+// response's output a median 220 tokens.
+const REREAD_SHARE = 0.5
+const REREAD_OUTPUT = 220
 
 const args = process.argv.slice(2)
 const opt = (name: string) => {
@@ -51,6 +68,7 @@ const opt = (name: string) => {
 const compare = args.includes('--compare') && !!args.splice(args.indexOf('--compare'), 1)
 // Comparing with the decisions logged, only the client's own compactions.
 const compacting = !(args.includes('--no-compaction') && !!args.splice(args.indexOf('--no-compaction'), 1)) && !compare
+const rereading = !(args.includes('--no-rereads') && !!args.splice(args.indexOf('--no-rereads'), 1))
 const compactAt = opt('--compact-at')
 const fromTime = opt('--since') ?? ''
 const until = opt('--until') ?? '9999'
@@ -109,13 +127,14 @@ type Logged = { advanced: boolean; cacheState?: string; savedChars: number; rewr
 // client compacts, null where it doesn't, from the journal; `forced`: whether
 // the proxy forced a trim on it (server.ts, autocompact-trim); `estimate`:
 // a prompt's tokens as the proxy would estimate them before sending it;
-// `version`: Claude Code's (ccVersion).
-type Req = { time: string; model: Model; auto: boolean; msgs: ApiMsg[]; logged?: Logged; sent: ApiMsg[]; inputTokens?: number; ratio: number; base: number; at?: number | null; forced: boolean; estimate: (msgs: readonly ApiMsg[]) => number | undefined; version?: string }
+// `version`: Claude Code's (ccVersion); `output`: its output tokens.
+type Req = { time: string; model: Model; auto: boolean; msgs: ApiMsg[]; logged?: Logged; sent: ApiMsg[]; inputTokens?: number; ratio: number; base: number; at?: number | null; forced: boolean; estimate: (msgs: readonly ApiMsg[]) => number | undefined; version?: string; output?: number }
 type Thinking = Map<string, number>
-type Conv = { reqs: Req[]; broken: number; logged: number; h?: Harness; thinking: Thinking; chain: Summary[] }
+type Conv = { reqs: Req[]; broken: number; logged: number; h?: Harness; thinking: Thinking; chain: Summary[]; uses: Uses }
 // `cost`: tokens at the input price; `tokens`: each request's prompt as sent,
-// estimated; `compacted`: the requests a compaction followed.
-type Tally = { cost: number; trims: number; costs: number[]; compactions: number; ms: number; tokens: number[]; compacted: number[] }
+// estimated; `compacted`: the requests a compaction followed; `rereads`:
+// those charged, `credited`: logged ones made needless.
+type Tally = { cost: number; trims: number; costs: number[]; compactions: number; ms: number; tokens: number[]; compacted: number[]; rereads: number; credited: number }
 const chars = (ms: readonly ApiMsg[]) => ms.reduce((n, m) => n + JSON.stringify(strip(m)).length, 0)
 // Whether one request's messages go on from another's.
 const extend = (next: readonly ApiMsg[], prev: readonly ApiMsg[]) => next.length > prev.length && same(next[prev.length - 1], prev.at(-1)!)
@@ -188,7 +207,7 @@ function rebuild(dir: string): Conv {
   const convRatio = counted.reduce((x, n) => x + all[n].inputTokens, 0) / counted.reduce((x, n) => x + sentChars[n], 0)
   const reqs = all.map((e, n): Req => ({ time: e.time, model: { ...modelOf(e.model, e.provider), ...(ttlOf(e, n) && { ttl: ttlOf(e, n) }) }, auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n],
     ...(typeof e.inputTokens === 'number' && { inputTokens: e.inputTokens }), ratio: typeof e.inputTokens === 'number' && sentChars[n] ? e.inputTokens / sentChars[n] : convRatio, base: bytes(e.system) + bytes(e.tools), at: atOf(e.time), forced: forced.has(e.time), estimate: estimateOf(e.time),
-    ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }) }))
+    ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }), ...(typeof e.outputTokens === 'number' && { output: e.outputTokens }) }))
   const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= fromTime && e.time < until).length
   // What each thinking block and counted tool call billed, as the proxy last
   // saved it (server.ts, State and recordedOf).
@@ -196,7 +215,7 @@ function rebuild(dir: string): Conv {
   const thinking: Thinking = new Map([...Object.entries<number>(saved.thinking ?? {}), ...Object.entries<number>(saved.calls ?? {}).map(([id, n]) => [`call:${id}`, n] as const)])
   const records = state.replace(/\.json$/, '.summaries.json')
   const chain: Summary[] = summaryAt && existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
-  return { reqs, broken, logged, h: h && 'name' in h ? h : undefined, thinking, chain }
+  return { reqs, broken, logged, h: h && 'name' in h ? h : undefined, thinking, chain, uses: usesOf(orig) }
 }
 
 // Claude Code runs each WebSearch as its own one-request conversation;
@@ -226,12 +245,20 @@ function renumbered(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary
 // Read and write prices relative to input (replay.ts and trim.ts, writeCost).
 const rates = (m: Model, auto: boolean) => ({ read: m.price ? m.price.read / m.price.input : 0.1, write: m.price?.write ? m.price.write / m.price.input : auto ? 1 : 2 })
 
-function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Req, since: number) => number, trace?: (n: number, q: Req, d?: Logged) => void): Tally {
+function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number, q: Req, since: number) => number, trace?: (n: number, q: Req, d?: Logged) => void): Tally {
   const conv = h?.conventions ?? NO_CONVENTIONS
   let applied: Clock = { requests: 0, turns: 0 }
   let sentRecords = 0
   const entries = new Map<string, number>()
-  const out: Tally = { cost: 0, trims: 0, costs: [], compactions: 0, ms: 0, tokens: [], compacted: [] }
+  const out: Tally = { cost: 0, trims: 0, costs: [], compactions: 0, ms: 0, tokens: [], compacted: [], rereads: 0, credited: 0 }
+  // The uses and logged re-reads by the request they were decided on; each
+  // result's requests standing whole here, once it was first taken; and those
+  // fetched again, to the request they stand to.
+  const usedAt = Map.groupBy(rereading ? uses.uses : [], (u) => u.at)
+  const rereadAt = Map.groupBy(rereading ? uses.rereads : [], (r) => r.at)
+  const stood = new Map<string, number>()
+  const fetched = new Map<string, number>()
+  let whole = new Set<string>()
   // After this horizon's own compaction: what it sends in place of the
   // messages before `from`, while the requests go on from `last`.
   let compacted: { prefix: ApiMsg[]; from: number; last: ApiMsg } | undefined
@@ -323,6 +350,33 @@ function run({ reqs, h, thinking, chain: all }: Conv, horizon: (n: number, q: Re
       out.cost += c
       out.costs.push(c)
       out.tokens.push(tokens)
+    }
+    if (rereading && !compacted) {
+      const now = wholeIn(body)
+      for (const id of whole) if (!now.has(id) && !stood.has(id)) stood.set(id, n - uses.results.get(id)!.at)
+      whole = now
+      const logged = usedAt.has(n) || rereadAt.has(n) ? wholeIn(real.sent) : undefined
+      const output = q.model.price ? q.model.price.output / q.model.price.input : 5
+      // One more request, reading this prompt, writing `chars` of a result
+      // and `out` tokens of output.
+      const request = (chars: number, out: number) => tokens * read + ratio * chars * write + out * output
+      for (const id of usedAt.get(n)?.flatMap((u) => u.ids) ?? []) {
+        if (now.has(id) || !logged!.has(id) || (fetched.get(id) ?? -1) >= n) continue
+        fetched.set(id, n + (stood.get(id) ?? 1))
+        if (!inWindow) continue
+        const c = request(REREAD_SHARE * uses.results.get(id)!.chars, REREAD_OUTPUT)
+        out.cost += c
+        out.costs[out.costs.length - 1] += c
+        out.rereads++
+      }
+      for (const x of rereadAt.get(n) ?? []) {
+        if (!inWindow || logged!.has(x.of) || !now.has(x.of)) continue
+        const chars = uses.results.get(x.id)!.chars
+        const c = x.alone ? request(chars, q.output ?? REREAD_OUTPUT) : ratio * chars * write
+        out.cost -= c
+        out.costs[out.costs.length - 1] -= c
+        out.credited++
+      }
     }
     for (const h of entriesOf(pos, r)) entries.set(h, t)
     // Past the client's limit, it compacts before the next request, unless
@@ -421,10 +475,10 @@ if (compare) {
 }
 
 // Totals by harness, then over all.
-type Sum = { cost: number; trims: number; compactions: number; ms: number }
+type Sum = { cost: number; trims: number; compactions: number; ms: number; rereads: number; credited: number }
 const totals = new Map<string, { convs: number; reqs: number; broken: number; logged: number; by: Sum[] }>()
-// Compactions, where a horizon made any.
-const made = (b: Sum) => (b.compactions ? ` +${b.compactions}c` : '')
+// Compactions and re-reads charged and credited, where a horizon has any.
+const made = (b: Sum) => (b.compactions ? ` +${b.compactions}c` : '') + (b.rereads ? ` +${b.rereads}r` : '') + (b.credited ? ` -${b.credited}r` : '')
 for (const [k, dir] of dirs.entries()) {
   let got
   // A folder with no requests logged isn't a conversation.
@@ -441,14 +495,14 @@ for (const [k, dir] of dirs.entries()) {
   const each = (f: (b: Tally) => unknown) => Object.fromEntries(HORIZONS.map(([label], i) => [label, f(by[i])]))
   if (outFile) appendFileSync(outFile, JSON.stringify({ conv: path.basename(dir), harness: h?.name ?? 'unknown', costs: each((b) => b.costs), tokens: each((b) => b.tokens.map(Math.round)), compacted: each((b) => b.compacted) }) + '\n')
   for (const name of [h?.name ?? 'unknown', 'all']) {
-    const t = totals.get(name) ?? { convs: 0, reqs: 0, broken: 0, logged: 0, by: HORIZONS.map(() => ({ cost: 0, trims: 0, compactions: 0, ms: 0 })) }
+    const t = totals.get(name) ?? { convs: 0, reqs: 0, broken: 0, logged: 0, by: HORIZONS.map(() => ({ cost: 0, trims: 0, compactions: 0, ms: 0, rereads: 0, credited: 0 })) }
     t.convs++; t.reqs += inWindow; t.broken += broken; t.logged += logged
-    by.forEach((b, i) => { t.by[i].cost += b.cost; t.by[i].trims += b.trims; t.by[i].compactions += b.compactions; t.by[i].ms += b.ms })
+    by.forEach((b, i) => { t.by[i].cost += b.cost; t.by[i].trims += b.trims; t.by[i].compactions += b.compactions; t.by[i].ms += b.ms; t.by[i].rereads += b.rereads; t.by[i].credited += b.credited })
     totals.set(name, t)
   }
 }
 for (const [name, t] of totals) {
   const base = t.by[1].cost
   console.log(`\n${name}: ${t.convs} conversations, ${t.reqs} requests (rebuild breaks ${t.broken}), ${t.logged} trims logged`)
-  HORIZONS.forEach(([label], i) => console.log(`  ${label.padEnd(20)} ${(t.by[i].cost / 1e6).toFixed(2)}M tokens at input price  ${i === 1 ? '        ' : `${(((t.by[i].cost - base) / base) * 100).toFixed(1).padStart(6)}%`}  trims ${t.by[i].trims}  compactions ${t.by[i].compactions} (${(t.by[i].ms / 60_000).toFixed(1)} min)`))
+  HORIZONS.forEach(([label], i) => console.log(`  ${label.padEnd(20)} ${(t.by[i].cost / 1e6).toFixed(2)}M tokens at input price  ${i === 1 ? '        ' : `${(((t.by[i].cost - base) / base) * 100).toFixed(1).padStart(6)}%`}  trims ${t.by[i].trims}  compactions ${t.by[i].compactions} (${(t.by[i].ms / 60_000).toFixed(1)} min)${rereading ? `  re-reads +${t.by[i].rereads} -${t.by[i].credited}` : ''}`))
 }
