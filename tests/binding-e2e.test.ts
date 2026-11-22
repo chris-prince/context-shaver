@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { BETA } from '../src/binding.ts'
+import { loadPolicy } from '../src/policy.ts'
 
 const ROOT = path.join(import.meta.dirname, '..')
 const DROPPED = [{ type: 'thinking_dropped', path: 'messages.1.content.0', reason: 'prefix_binding_mismatch' }]
@@ -149,6 +150,24 @@ test('off: requests holding thinking go up without the setting or the beta', asy
     assert.equal(up.seen[0].body.thinking.block_binding, undefined)
     assert.equal(up.seen[0].beta, 'client-beta-1')
     assert.equal(requests(p.dir)[0].dropAsked, undefined)
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})
+
+test('every request line names the policy it ran under, saved once in objects/', async () => {
+  const up = await upstream()
+  const p = await proxy(up.url, false)
+  try {
+    assert.equal(await send(p, 'claude-fable-5-2', [prompt('one')]), 200)
+    assert.equal(await send(p, 'claude-fable-5-2', [prompt('one'), thought, result]), 200)
+    const logged = requests(p.dir)
+    assert.equal(logged.length, 2)
+    assert.ok(logged.every((x) => x.policy === logged[0].policy), 'one policy for both')
+    const dir = readdirSync(path.join(p.dir, 'logs'))[0]
+    const saved = JSON.parse(readFileSync(path.join(p.dir, 'logs', dir, 'objects', `${logged[0].policy}.json`), 'utf8'))
+    assert.deepEqual(saved, loadPolicy(path.join(p.dir, 'policy.json')))
   } finally {
     p.child.kill()
     up.close()

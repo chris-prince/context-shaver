@@ -6,7 +6,9 @@
 // of a message are both on disk, joined by their lineage. The line also lists
 // the top-level `system` blocks and the tool definitions, as sent, each saved
 // once in objects/ beside the messages: a deferred tool is marked, since its
-// definition costs nothing until a tool search loads it. A message is the
+// definition costs nothing until a tool search loads it. Its `policy` is the
+// hash of the policy the proxy ran it under, saved in objects/ too, so a
+// restart with another policy shows from that request on. A message is the
 // core's (items.ts), which for Codex can be several of its items (DESIGN.md).
 //
 // Before 2026-11-07 the folder was parts/, a request line's list `parts` and
@@ -276,6 +278,17 @@ export function writeDefs(dir: string, body: { system?: unknown; tools?: Array<{
     system: system.map(save),
     tools: (body.tools ?? []).map((t) => ({ name: t.name, ...save(t), ...(t.defer_loading ? { deferred: true } : {}) })),
   }
+}
+
+// Saves the policy the proxy runs, if not saved before; returns its hash, for
+// the request line's `policy`. It is the policy as loaded (an older form
+// upgraded), and {} when there is no policy file.
+export function writePolicy(dir: string, policy: unknown): string {
+  const json = JSON.stringify(policy)
+  const h = hash(json)
+  const file = path.join(objectsFor(dir), `${h}.json`)
+  if (!existsSync(file)) writeFileSync(file, json)
+  return h
 }
 
 // What a request asked for besides its content, as the client sent it:
