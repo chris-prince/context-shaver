@@ -18,6 +18,7 @@ import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from
 import path from 'node:path'
 import { isMemoir, isPrompt, isSkillBody, isSummary, type ApiMsg, type Block } from './items.ts'
 import { notesOfBlock } from './notes.ts'
+import { groupOf } from './tool-groups.ts'
 import { isStubbed, STUB } from './trim.ts'
 
 export const LOG_DIR = 'logs'
@@ -60,13 +61,19 @@ export function hash(s: string): string {
 // message's own bytes join its first section.
 // Later ones (environment updates, reminders) are `harness:<category>`, by
 // how notes.ts sorts each note in them (before 2026-11-03, `harness`).
-export function kinds(json: string, m: ApiMsg, preamble = false): { kinds: Record<string, number>; lineage?: string } {
+// Given the request's tool groups by call ID (toolGroups), tool calls and
+// results are `toolCalls:<group>` and the like (tool-groups.ts), a result
+// whose call isn't in the request staying plain. The stats' kinds don't split
+// them.
+export function kinds(json: string, m: ApiMsg, preamble = false, groups?: Map<string, string>): { kinds: Record<string, number>; lineage?: string } {
   const out: Record<string, number> = {}
   const add = (k: string, n: number) => n && (out[k] = (out[k] ?? 0) + n)
   const injected = preamble ? 'system' : 'harness'
   const content = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content
   for (const b of content) {
-    const k = isCompactionItem(b) ? 'harness' : isNote(b, m) ? injected : kindOf(b, m.role)
+    const plain = isCompactionItem(b) ? 'harness' : isNote(b, m) ? injected : kindOf(b, m.role)
+    const group = groups && (b.type === 'tool_use' ? groups.get(String(b.id)) : b.type === 'tool_result' ? groups.get(String(b.tool_use_id)) : undefined)
+    const k = group && plain.startsWith('tool') && plain !== 'toolResultsSkill' ? `${plain}:${group}` : plain
     if (k === 'system' && b.type === 'text') for (const [s, n] of sections(b)) add(s, n)
     else if (k === 'harness') for (const [s, n] of noteBytes(b)) add(s, n)
     else add(k === 'system' && b.type === 'tool_addition' ? 'system:deferred-tools-list' : k, JSON.stringify(b).length)
@@ -254,18 +261,27 @@ function objectsFor(dir: string): string {
   return objects
 }
 
+// Each tool call's group (tool-groups.ts) by its ID, for kinds().
+export function toolGroups(msgs: readonly ApiMsg[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const m of msgs) if (Array.isArray(m.content)) for (const b of m.content) if (b.type === 'tool_use') out.set(String(b.id), groupOf(String(b.name ?? ''), b.input))
+  return out
+}
+
 // Saves each message not saved before, with its kinds; returns the request's
 // message list, each with the wire's names for its items when idsOf gives them.
 export function writeMessages(dir: string, msgs: readonly ApiMsg[], idsOf?: (m: ApiMsg) => string[]): Array<{ role: string; hash: string; bytes: number; ids?: string[] }> {
   const objects = objectsFor(dir)
   const responded = preambleEnd(msgs)
+  let groups: Map<string, string> | undefined
   return msgs.map((m, i) => {
     const json = JSON.stringify(m)
     const h = hash(json)
     const file = path.join(objects, `${h}.json`)
     if (!existsSync(file)) {
       writeFileSync(file, json)
-      writeFileSync(path.join(objects, `${h}.kinds.json`), JSON.stringify(kinds(json, m, responded < 0 || i < responded)))
+      groups ??= toolGroups(msgs)
+      writeFileSync(path.join(objects, `${h}.kinds.json`), JSON.stringify(kinds(json, m, responded < 0 || i < responded, groups)))
     }
     const ids = idsOf?.(m)
     return { role: m.role, hash: h, bytes: json.length, ...(ids?.length && { ids }) }
