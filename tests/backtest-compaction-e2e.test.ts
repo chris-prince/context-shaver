@@ -1,4 +1,4 @@
-// scripts/backtest-horizon.ts's compaction, end to end: the real proxy, in
+// scripts/backtest-shaver.ts's compaction, end to end: the real proxy, in
 // front of a stand-in upstream, logs rounds of file reads with no trimming,
 // and the backtest over that log must compact each horizon as the client
 // would: every prompt past the limit is followed by a compaction, and the
@@ -91,7 +91,7 @@ test('the horizon backtest compacts each horizon past the limit, and not with --
     const [key] = readdirSync(path.join(dir, 'logs'))
     const backtest = (...flags: string[]): Out => {
       const out = path.join(dir, `out${flags.join('')}.jsonl`)
-      execFileSync(process.execPath, [path.join(ROOT, 'scripts/backtest-horizon.ts'), ...flags, '--out', out, path.join(dir, 'logs', key)], { env: { ...process.env, POLICY: policy }, encoding: 'utf8' })
+      execFileSync(process.execPath, [path.join(ROOT, 'scripts/backtest-shaver.ts'), ...flags, '--out', out, path.join(dir, 'logs', key)], { env: { ...process.env, POLICY: policy }, encoding: 'utf8' })
       return JSON.parse(readFileSync(out, 'utf8').trim())
     }
 

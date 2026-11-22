@@ -1,4 +1,4 @@
-// What the backtest (backtest-horizon.ts) needs to charge for re-reads: when
+// What the backtest (backtest-shaver.ts) needs to charge for re-reads: when
 // each tool result is used again, and which logged results were re-reads.
 //
 // A result is used where a later response quotes one of its lines: a line of

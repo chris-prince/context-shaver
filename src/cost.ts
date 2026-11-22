@@ -122,7 +122,7 @@ const keptBy = (c: Compaction, s: Stats): number | 'prompts' => {
 
 // What a compaction keeps of the prompt past the base, the client's user
 // messages being what the shaverless prompt's are: the policy trims none.
-// scripts/backtest-horizon.ts follows the same rules with the messages
+// scripts/backtest-shaver.ts follows the same rules with the messages
 // themselves; there, a `kept` compaction starts at an answer and keeps at
 // least the last round, so it can keep more or less than `kept`.
 const keptOf = (c: Compaction, s: Stats, rest: number) => {

@@ -688,7 +688,7 @@ horizon, is min(20, 0.6n, s/2), given the n requests before this one and the
 s since the messages were last trimmed, for every model (`models.ts`). A trim
 held back is mostly made a little later, once about as much more is due, so
 its savings last only so long. In backtests of logged Claude Code, Codex and
-OpenCode sessions (`scripts/backtest-horizon.ts`) it did as well as or better
+OpenCode sessions (`scripts/backtest-shaver.ts`) it did as well as or better
 than each harness's best before.
 Advancing reads no further than its first change. It reads less when no
 entry ends there, and nothing when every entry is out of the breakpoints'

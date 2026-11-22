@@ -110,7 +110,7 @@ test('the replay rebuilds a logged conversation and reprices it consistently', a
     // is empty, so it's the logged policy that validates.
     const empty = path.join(dir, 'empty-policy.json')
     writeFileSync(empty, '{}\n')
-    const backtest = (...a: string[]) => execFileSync(process.execPath, [path.join(ROOT, 'scripts/backtest-horizon.ts'), ...a, path.join(dir, 'logs', key)], { env: { ...process.env, POLICY: empty }, encoding: 'utf8' })
+    const backtest = (...a: string[]) => execFileSync(process.execPath, [path.join(ROOT, 'scripts/backtest-shaver.ts'), ...a, path.join(dir, 'logs', key)], { env: { ...process.env, POLICY: empty }, encoding: 'utf8' })
     const validated = backtest('--validate')
     const [, differ, decisions] = validated.match(/: (\d+) of (\d+) decisions differ\n$/)!
     assert.equal(differ, '0', validated)

@@ -45,7 +45,7 @@
 // never made just before it; one a horizon would have avoided isn't, so
 // horizons that trim more are still charged the client's own. Summary
 // records aren't applied after a horizon's own compaction.
-// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-horizon.ts [--validate] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
+// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-shaver.ts [--validate] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { blocks, clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
