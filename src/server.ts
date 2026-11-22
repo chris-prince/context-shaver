@@ -279,13 +279,16 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   // The shape the last request that worked was sent in: what a freeze sends.
   const still = keep
   const cold = (ps: ReturnType<typeof positionsOf>) => ps.some((q) => q.breakpoint) && readThrough(ps, live, model.lookback) < 0
-  // BACKCOMPAT(2026-11-22): entries saved before then are named by the whole
-  // base (wholeSeedOf). Where none is in reach by today's names, those along
-  // these messages are taken under today's. It runs only on a cold look.
-  // Remove when upgrading from before then is no longer supported: each
-  // install needs it for its first hour on newer code. Without it, a
-  // conversation's first request after the upgrade looks cold once: everything
-  // due is trimmed and every summary record sent.
+  // BACKCOMPAT(2026-11-22)
+  //   Before: cache entries were named by the model, every tool definition and
+  //   the whole system prompt (wholeSeedOf), so a deferred tool loading or a
+  //   Claude Code update made the proxy lose track of what was cached.
+  //   Shim: when a request looks cold under today's names, its entries are
+  //   looked up under the old names and saved again under today's.
+  //   Remove when: upgrading from before 2026-11-22 is no longer supported.
+  //   Each install needs it for its first hour on newer code. Without it, each
+  //   conversation's first request after the upgrade looks cold once:
+  //   everything due is trimmed and every summary record is sent.
   const named = positionsOf(keep.msgs, seed, thinking, counting(model, auto))
   if (cold(named)) {
     const whole = positionsOf(keep.msgs, wholeSeedOf(body.model, body.tools, body.system), thinking, counting(model, auto))

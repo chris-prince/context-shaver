@@ -83,9 +83,8 @@ test('system blocks and tool definitions are listed with their bytes, deferred t
   assert.equal(readFileSync(path.join(dir, 'objects', `${d.tools[1].hash}.json`), 'utf8'), JSON.stringify(later))
 })
 
-// BACKCOMPAT(2026-11-07): logs from before then have parts/, `parts` and each
-// role as `part`. Remove with the shims in log.ts (messagesOf, objectsOf,
-// objectsFor).
+// BACKCOMPAT(2026-11-07): tests the shims in log.ts (messagesOf, objectsOf,
+// objectsFor). Remove with them.
 test('a log from before the rename is read as one after it, and its folder renamed when next written', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'log-'))
   mkdirSync(path.join(dir, 'parts'))

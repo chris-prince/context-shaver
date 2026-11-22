@@ -77,9 +77,12 @@ export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 
 
 // A record or memoir is found by the fixed start of its heading, so the rest
 // of the heading can be reworded.
-// BACKCOMPAT(2026-11-04): records from before then are found by the headings
-// they had (the second start in isSummary and isMemoir). Remove when
-// conversations from before then are no longer resumed or replayed.
+// BACKCOMPAT(2026-11-04)
+//   Before: summary and memoir records' messages began with other headings.
+//   Shim: isSummary and isMemoir also match the old heading (their second
+//   start), so those records are still found.
+//   Remove when: conversations from before 2026-11-04 are no longer resumed or
+//   replayed. Their old records sit in the messages the client resends.
 const startsWithAny = (b: Block, starts: string[]) => b.type === 'text' && typeof b.text === 'string' && starts.some((s) => (b.text as string).startsWith(s))
 // The heading of the message heavy compaction's records go in (summary.ts).
 const SUMMARY_TAG = '[shaver] Summary records:'

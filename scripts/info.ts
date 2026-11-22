@@ -51,9 +51,11 @@ let valid = 0
 if (last && sums.chain.length) {
   const objects = objectsOf(logDir)
   const msgs: ApiMsg[] = receivedOf(lines).at(-1)!.map((h) => JSON.parse(readFileSync(path.join(objects, `${h}.json`), 'utf8')))
-  // BACKCOMPAT(2026-11-05): a conversation from before internal IDs has no
-  // IDs file; as in the proxy (idsOf, server.ts), none of its turns has an ID
-  // then. Remove with chainBreak's hash check (summary.ts).
+  // BACKCOMPAT(2026-11-05)
+  //   Before: there were no internal IDs, so a conversation has no IDs file.
+  //   Shim: a missing file means no turn has an ID, as in the proxy (idsOf,
+  //   server.ts).
+  //   Remove when: with chainBreak's hash check (summary.ts).
   const idsFile = path.join(stateDir, `${key}.ids.json`)
   const ids = existsSync(idsFile) ? JSON.parse(readFileSync(idsFile, 'utf8')) : { turns: {} }
   valid = validChain(sums.chain, msgs, turnsOf(msgs, ids.turns, () => NaN)).length

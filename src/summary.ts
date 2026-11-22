@@ -68,9 +68,12 @@ export function validChain(chain: readonly Summary[], msgs: readonly ApiMsg[], t
 // The first record that no longer fits the messages, by its index in the
 // chain, and the hash of the prompt now where its own was, or none when its
 // turn is gone; undefined when every record fits.
-// BACKCOMPAT(2026-11-05): the hash is checked too, for records from before
-// internal IDs, which numbered turns by position. Remove when summary records
-// from before then are no longer read.
+// BACKCOMPAT(2026-11-05)
+//   Before: there were no internal IDs; records numbered turns by position,
+//   which shifts when earlier turns change.
+//   Shim: the prompt's hash is checked as well as its turn, so a record whose
+//   position now points at another prompt breaks the chain.
+//   Remove when: summary records from before 2026-11-05 are no longer read.
 export function chainBreak(chain: readonly Summary[], msgs: readonly ApiMsg[], turns = positional(msgs)): { index: number; found?: string } | undefined {
   for (const [index, s] of chain.entries()) {
     const i = indexOf(turns, s.endsBefore)

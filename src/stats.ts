@@ -677,8 +677,10 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.
-  // BACKCOMPAT(2026-10-29): stats saved before then name two sections
-  // differently. Remove when stats from before then are no longer read.
+  // BACKCOMPAT(2026-10-29)
+  //   Before: stats named two sections skills-trimmed and tools-deferred.
+  //   Shim: `renamed` shows them under today's names.
+  //   Remove when: stats from before 2026-10-29 are no longer read.
   const renamed: Record<string, string> = { 'skills-trimmed': 'skills-shaved', 'tools-deferred': 'deferred-tools-list' }
   const baseRows: Array<[string, number]> = [...toolRows.map((k): [string, number] => [k, by[k]]), ...Object.entries(sections).map(([k, v]): [string, number] => [renamed[k] ?? k, v])]
   for (const [name, v] of baseRows.sort(([a], [z]) => (a < z ? -1 : a > z ? 1 : 0))) out.push(row(name, v, total))

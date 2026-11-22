@@ -50,8 +50,10 @@ export type Delta = {
   set?: Partial<Pick<Stats, Plain>>
   records?: Partial<Record<(typeof RECORDS)[number], { set?: Record<string, unknown>; del?: string[] }>>
   messages?: Ops
-  // BACKCOMPAT(2026-11-07): journals from before then call `messages` `parts`.
-  // Remove when journals from before then are no longer read.
+  // BACKCOMPAT(2026-11-07)
+  //   Before: journal lines called `messages` `parts`.
+  //   Shim: the field is still typed, and apply() reads it.
+  //   Remove when: with apply()'s.
   parts?: Ops
   usage?: Usage
   resent?: true
@@ -105,8 +107,10 @@ export function diff(prev: Stats | undefined, next: Stats): Delta {
 // Applies a line to the stats before it, in place: copying the records, which
 // every line changes, would cost a line as much as all the lines before it.
 function apply(s: Stats | undefined, d: Delta): Stats {
-  // BACKCOMPAT(2026-11-07): journals from before then call `messages` `parts`.
-  // Remove when journals from before then are no longer read.
+  // BACKCOMPAT(2026-11-07)
+  //   Before: journal lines called `messages` `parts`.
+  //   Shim: `parts` is read when `messages` is missing.
+  //   Remove when: journals from before 2026-11-07 are no longer read.
   const messages = (d.messages ?? d.parts)?.flatMap((op) => (Array.isArray(op) ? s!.messages.slice(op[0], op[1]) : [op]))
   s = Object.assign(s ?? ({} as Stats), d.set)
   for (const [k, v] of Object.entries(d.set ?? {})) if (v === null) delete s[k as keyof Stats]
@@ -147,8 +151,10 @@ export function recordFork(file: string, f: ForkLine): void {
 }
 
 // A line's fork, if it is one, an older summary fork's line included.
-// BACKCOMPAT(2026-10-23): journals from before then have a summary fork as
-// { summaryFork }. Remove when journals from before then are no longer read.
+// BACKCOMPAT(2026-10-23)
+//   Before: a summary fork's journal line was { summaryFork }, with no kind.
+//   Shim: forkOf reads it as a fork of kind "summary".
+//   Remove when: journals from before 2026-10-23 are no longer read.
 export const forkOf = (d: { fork?: ForkLine; summaryFork?: Omit<ForkLine, 'kind'> }): ForkLine | undefined => d.fork ?? (d.summaryFork && { ...d.summaryFork, kind: 'summary' })
 
 // The journal's lines, parsed; none if there is none.

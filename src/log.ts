@@ -220,21 +220,27 @@ export function receivedOf(lines: ReadonlyArray<Record<string, any>>): string[][
 }
 
 // A request line's messages, each with its role.
-// BACKCOMPAT(2026-11-07): lines from before then call them `parts`, and the
-// role `part`. Remove when logs from before then are no longer read.
+// BACKCOMPAT(2026-11-07)
+//   Before: request lines called messages `parts`, and each one's role `part`.
+//   Shim: `parts` is read when `messages` is missing, `part` as the role.
+//   Remove when: logs from before 2026-11-07 are no longer read.
 export const messagesOf = (line: Record<string, any>): Array<{ role: string; hash: string; bytes: number; ids?: string[] }> =>
   line.messages ?? line.parts?.map(({ part, ...q }: { part: string; hash: string; bytes: number }) => ({ role: part, ...q }))
 
 // A log folder's objects/, where its messages, system blocks and tools are.
-// BACKCOMPAT(2026-11-07): folders from before then have parts/ instead. Remove
-// with messagesOf's: a folder is renamed only when next written (objectsFor),
-// so an inactive one keeps parts/.
+// BACKCOMPAT(2026-11-07)
+//   Before: a log folder kept these in parts/.
+//   Shim: parts/ is used when there is no objects/.
+//   Remove when: with messagesOf's. A folder is renamed only when next
+//   written (objectsFor), so an inactive one keeps parts/.
 export const objectsOf = (dir: string): string => (existsSync(path.join(dir, 'parts')) && !existsSync(path.join(dir, 'objects')) ? path.join(dir, 'parts') : path.join(dir, 'objects'))
 
 // The folder objects are written to, made if need be.
-// BACKCOMPAT(2026-11-07): a conversation's parts/ from before then is renamed
-// to objects/ the first time it is written, so a folder never has both. Remove
-// with objectsOf's.
+// BACKCOMPAT(2026-11-07)
+//   Before: a log folder kept these in parts/.
+//   Shim: parts/ is renamed to objects/ the first time the folder is written,
+//   so a folder never has both.
+//   Remove when: with objectsOf's.
 function objectsFor(dir: string): string {
   const objects = path.join(dir, 'objects')
   if (!existsSync(objects) && existsSync(path.join(dir, 'parts'))) {
