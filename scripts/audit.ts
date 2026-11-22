@@ -40,7 +40,8 @@ function load(): Conversation[] {
       if (e.event !== 'request' || Date.parse(e.time) < since) continue
       const sent = messagesOf(e) ?? []
       const lastFile = sent.length ? path.join(objectsOf(dir), sent[sent.length - 1].hash + '.json') : ''
-      // Lines from before the proxy logged protocols are all Messages.
+      // BACKCOMPAT(2026-10-18): lines from before the proxy logged protocols
+      // are all Messages. Remove when logs from before then are no longer read.
       requests.push({ time: e.time, protocol: e.protocol ?? 'messages', breakpoints: e.breakpoints, count: sent.length, last: lastFile && existsSync(lastFile) ? JSON.parse(readFileSync(lastFile, 'utf8')) : undefined })
       for (const { hash } of sent) {
         if (seen.has(hash)) continue

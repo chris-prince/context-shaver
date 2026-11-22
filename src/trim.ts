@@ -383,7 +383,8 @@ export function seedOf(model: string, tools: unknown, system: unknown, breakpoin
   return wholeSeedOf(model, cached, Array.isArray(system) ? system.filter((b) => !header(b)) : system)
 }
 
-// The seed over the whole base, as all entries were named before 2026-11-22.
+// BACKCOMPAT(2026-11-22): the seed over the whole base, as all entries were
+// named before then. Remove with the takeover in server.ts (prepare).
 export const wholeSeedOf = (model: string, tools: unknown, system: unknown) => hash(JSON.stringify([model, tools, system], uncontrolled))
 
 // With automatic caching (OpenAI's, and most others' behind Chat Completions),

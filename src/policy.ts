@@ -220,6 +220,9 @@ function spanOf(text: string, name: string): { key: number; value: number; end: 
 
 // The policy in a file, or none if there is no file. A file in an older form
 // is rewritten in the current one, the old text kept beside it as `.old`.
+// BACKCOMPAT(2026-10-29): forms from before then are upgraded (upgraded).
+// Remove when upgrading from before then is no longer supported: each file is
+// rewritten the first time newer code loads it.
 export function loadPolicy(file: string): Policy | undefined {
   if (!existsSync(file)) return undefined
   const v = JSON.parse(readFileSync(file, 'utf8'))

@@ -140,7 +140,8 @@ test('a line keeps runs of unchanged messages as ranges', () => {
   assert.equal(d.messages?.length, 3)
 })
 
-// BACKCOMPAT: journals before 2026-11-07 call `messages` `parts`.
+// BACKCOMPAT(2026-11-07): journals from before then call `messages` `parts`.
+// Remove with the shim in journal.ts (apply).
 test('a journal from before the rename is read as one after it', () => {
   const s1 = observe(undefined, describe(body([user('a'), reply('b'), user('c')]), ends, '2026-10-11T10:00:00Z'), 900, 0)
   const s2 = observe(s1, describe(body([user('a'), reply('b'), user('c'), reply('d'), user('e')]), ends, '2026-10-11T10:01:00Z'), 1000, 0)
