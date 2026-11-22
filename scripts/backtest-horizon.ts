@@ -54,7 +54,7 @@ import { harnessOf, NO_CONVENTIONS, type Harness } from '../src/harness.ts'
 import { history } from '../src/journal.ts'
 import { modelOf, PROMPTS_KEPT, SINCE, type Model } from '../src/models.ts'
 import { forcedTrimOf, loadPolicy, textRules, type PartRules, type Policy } from '../src/policy.ts'
-import { isCompaction, keyOf, promptTokens, type Stats } from '../src/stats.ts'
+import { isCompaction, isSideRequest, keyOf, promptTokens, type Stats, withoutSideRequest } from '../src/stats.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
 import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf } from '../src/trim.ts'
@@ -136,7 +136,7 @@ type Logged = { advanced: boolean; cacheState?: string; savedChars: number; rewr
 // a prompt's tokens as the proxy would estimate them before sending it;
 // `version`: Claude Code's (ccVersion); `output`: its output tokens;
 // `policy`: the one the proxy logged it ran under, where it logged one.
-type Req = { time: string; model: Model; auto: boolean; msgs: ApiMsg[]; logged?: Logged; sent: ApiMsg[]; inputTokens?: number; ratio: number; base: number; at?: number | null; forced: boolean; estimate: (msgs: readonly ApiMsg[]) => number | undefined; version?: string; output?: number; policy?: Rules }
+type Req = { time: string; model: Model; auto: boolean; msgs: ApiMsg[]; logged?: Logged; sent: ApiMsg[]; inputTokens?: number; ratio: number; base: number; at?: number | null; forced: boolean; estimate: (msgs: readonly ApiMsg[]) => number | undefined; version?: string; output?: number; policy?: Rules; side?: boolean }
 type Thinking = Map<string, number>
 type Conv = { reqs: Req[]; broken: number; logged: number; h?: Harness; thinking: Thinking; chain: Summary[]; uses: Uses }
 // `cost`: tokens at the input price; `tokens`: each request's prompt as sent,
@@ -226,7 +226,10 @@ function rebuild(dir: string): Conv {
   const policyOf = (h?: string) => (h === undefined ? undefined : policies.get(h) ?? policies.set(h, rulesOf(JSON.parse(readFileSync(path.join(objects, h + '.json'), 'utf8')))).get(h))
   const reqs = all.map((e, n): Req => ({ time: e.time, model: { ...modelOf(e.model, e.provider), ...(ttlOf(e, n) && { ttl: ttlOf(e, n) }) }, auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n],
     ...(typeof e.inputTokens === 'number' && { inputTokens: e.inputTokens }), ratio: typeof e.inputTokens === 'number' && sentChars[n] ? e.inputTokens / sentChars[n] : convRatio, base: bytes(e.system) + bytes(e.tools), at: atOf(e.time), forced: forced.has(e.time), estimate: estimateOf(e.time),
-    ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }), ...(typeof e.outputTokens === 'number' && { output: e.outputTokens }), ...(e.policy !== undefined && { policy: policyOf(e.policy) }) }))
+    ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }), ...(typeof e.outputTokens === 'number' && { output: e.outputTokens }), ...(e.policy !== undefined && { policy: policyOf(e.policy) }),
+    // Whether the harness's logged headers say it's a side request, as the
+    // proxy reads them (server.ts, prepare).
+    ...(e.headers && { side: h?.side?.(e.headers) }) }))
   const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= fromTime && e.time < until).length
   const records = state.replace(/\.json$/, '.summaries.json')
   const chain: Summary[] = existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
@@ -290,8 +293,11 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     const ttl = (q.model.ttl ?? 3600) * 1000
     for (const [p, at] of entries) if (t - at > ttl) entries.delete(p)
     const live = new Set(entries.keys())
-    const held = heldTo(applied, q.msgs)
-    const clock = clockOf(q.msgs)
+    // As the proxy counts them: without a side request's ask, which isn't a
+    // prompt the user typed (stats.ts, withoutSideRequest).
+    const own = withoutSideRequest(q.msgs, q.side)
+    const held = heldTo(applied, own)
+    const clock = clockOf(own)
     const { rules, summaryAt, forcing } = asLogged ? real.policy! : given
     const chain = compacted || !summaryAt ? [] : validChain(renumbered(all.filter((r) => r.time <= q.time), q.msgs), q.msgs)
     let records = Math.min(sentRecords, chain.length)
@@ -321,11 +327,12 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     // The proxy's forced trim (server.ts, prepare): within the policy's
     // proximity of the client's compaction, everything due is sent trimmed and
     // every record applied, if that saves at least its least saving. Not on a
-    // compaction, nor for a horizon that never trims. Validating, the proxy's
-    // forced trims are applied, and each one it or this makes is traced.
+    // side request, the compaction among them, nor for a horizon that never
+    // trims. Validating, the proxy's forced trims are applied, and each one it
+    // or this makes is traced.
     // Its sizes are the proxy's own estimates, from what it had counted by then.
     let forced = false
-    const near = forcing && at != null && horizon(n, q, 0) >= 0 && !isCompaction(q.msgs) ? real.estimate(keep.msgs) : undefined
+    const near = forcing && at != null && horizon(n, q, 0) >= 0 && !isSideRequest(q.msgs, q.side) ? real.estimate(keep.msgs) : undefined
     if (near !== undefined) {
       const full = summarized(apply(q.msgs, rules, clock, conv, thinking), q.msgs, chain)
       const saves = near - real.estimate(full.msgs)!
