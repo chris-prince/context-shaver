@@ -20,7 +20,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { zstdDecompressSync } from 'node:zlib'
 import { errorShape, hash, kinds, LOG_DIR, paramsOf, withReceivedDelta, writeDefs, writeLine, writeMessages, writePolicy } from './log.ts'
-import { blocks, callIdsOf, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock } from './items.ts'
+import { blocks, callIdsOf, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, type Clock, type Conventions } from './items.ts'
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { dropAsked, fetchBound, on as dropUnbound } from './binding.ts'
@@ -460,7 +460,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     // The messages as the client sent them, when they went up changed, so
     // what was taken (a newest answer's thinking, say) can be rebuilt.
     const changed = msgs.length !== body.messages.length || msgs.some((m, i) => JSON.stringify(m) !== JSON.stringify(body.messages[i]))
-    p.logLine = { event: 'request', time, version, policy: writePolicy(p.logDir, policy), model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), messages: writeMessages(p.logDir, body.messages, ids?.of), ...(changed && { received: writeMessages(p.logDir, msgs).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, version, policy: writePolicy(p.logDir, policy), model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), messages: writeMessages(p.logDir, body.messages, conv.kinds, ids?.of), ...(changed && { received: writeMessages(p.logDir, msgs, conv.kinds).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -917,7 +917,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const body = c?.body
       // A request sent as the client sent it, not as the proxy prepared it,
       // is logged with its messages whole.
-      const whole = (event: string): WholeLog | undefined => (a['log-step-events'] && body ? { dir: path.join(logRoot, bareKey()), event, side: body, protocol: proto.name, params, headers: logged, more: asked } : undefined)
+      const whole = (event: string): WholeLog | undefined => (a['log-step-events'] && body ? { dir: path.join(logRoot, bareKey()), event, side: body, named: h?.conventions.kinds, protocol: proto.name, params, headers: logged, more: asked } : undefined)
       if (p && !cut) answered(p, usage, upstream + url, headers)
       else if (resent && !cut) {
         const w = whole('resent')
@@ -1052,10 +1052,10 @@ function answeredResent(p: Prepared, usage: UsageReader, log?: WholeLog): void {
 
 // A request logged with its messages whole, as an event of its own: a side
 // request, or one resent as it came.
-type WholeLog = { dir: string; event: string; side: Canonical; protocol: string; params: Record<string, unknown>; headers?: Record<string, string>; more?: Record<string, unknown> }
+type WholeLog = { dir: string; event: string; side: Canonical; named?: Conventions['kinds']; protocol: string; params: Record<string, unknown>; headers?: Record<string, string>; more?: Record<string, unknown> }
 
 const writeWhole = (log: WholeLog, b: BareLine, counts: Record<string, unknown> | undefined) =>
-  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, ...(log.headers && { headers: log.headers }), messages: writeMessages(log.dir, log.side.messages), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...log.more, ...counts })
+  writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, ...(log.headers && { headers: log.headers }), messages: writeMessages(log.dir, log.side.messages, log.named), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...log.more, ...counts })
 
 // The warning a frozen conversation's turns end with, for the user; taken out
 // of later requests like a command's answer (command.ts).

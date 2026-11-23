@@ -12,7 +12,7 @@ import { clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/ite
 import { hash, messagesOf, objectsOf } from '../src/log.ts'
 import { anchored, apply, decide, fullyTrimmed, positionsOf, readThrough, settledEnd, TEXT_TOKENS, type Position } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
-import { parsePolicy, type PartRules } from '../src/policy.ts'
+import { policyNow, type PartRules } from '../src/policy.ts'
 
 const [dir, from = '', to = '9999'] = process.argv.slice(2)
 const TTL = 3600e3
@@ -198,7 +198,7 @@ const fmt = (name: string, r: Run) => console.log(`${name.padEnd(14)} $${r.cost.
 console.log(`${dir.replace(/\/$/, '').split('/').at(-1)}: ${reqs.length} requests, rebuild breaks ${broken}, rate ${rate.toFixed(3)} tok/char, base ${BASE.toFixed(0)}`)
 console.log(`logged         $${logged.toFixed(2)}`)
 const actualWait = Number(process.env.WAIT)
-const pol = (w: number): PartRules => ({ tool: [{ action: 'drop', after: `${w} requests` }], skill: [{ action: 'drop', after: '0 turns' }], reasoning: [{ action: 'drop', after: '0 turns' }] })
+const pol = (w: number): PartRules => ({ tool: [{ action: 'drop', after: `${w} requests` }], 'tool:skill': [{ action: 'drop', after: '0 turns' }], reasoning: [{ action: 'drop', after: '0 turns' }] })
 const s = run('sent', actualWait ? pol(actualWait) : undefined)
 fmt('sent, repriced', s)
 if (actualWait) console.log(`  rebuilt requests the real policy doesn't reproduce: ${s.mismatch} of ${reqs.length}${s.firstMiss ? `, from ${s.firstMiss}` : ''}`)
@@ -206,6 +206,6 @@ fmt('no trimming', run({}))
 for (const w of [2, 4, 8, 16]) fmt(`drop wait ${w}`, run(pol(w)))
 fmt('8 + 2 turns', run({ ...pol(8), tool: [{ action: 'drop', after: '8 requests' }, { action: 'drop', after: '2 turns' }] }))
 if (process.env.POLICY) {
-  const { user_and_assistant_text, ...rules } = parsePolicy(JSON.parse(readFileSync(process.env.POLICY, 'utf8'))).conversation_shaver_rules ?? {}
+  const { user_and_assistant_text, ...rules } = policyNow(JSON.parse(readFileSync(process.env.POLICY, 'utf8'))).conversation_shaver_rules ?? {}
   fmt('POLICY', run(rules))
 }

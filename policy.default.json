@@ -4,11 +4,11 @@
       { "action": "drop", "after": "4 requests" },
       { "action": "drop", "after": "2 turns" }
     ],
-    "skill": [
+    "tool:skill": [
       { "action": "stub", "after": "10 requests" },
       { "action": "drop", "after": "100 requests" }
     ],
-    "tool_search": [
+    "tool:tool_search": [
       { "action": "drop", "after": "10 turns" }
     ],
     "reasoning": [

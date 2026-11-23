@@ -460,12 +460,19 @@ function keptOf(prev: ReadonlyArray<{ key: string }>, messages: ReadonlyArray<{ 
   return end
 }
 
+// BACKCOMPAT(2026-11-22)
+//   Before: stats named a skill's body `toolResultsSkill` and notes about
+//   files `harness:tool`.
+//   Shim: sharesOf reads them under today's names.
+//   Remove when: stats from before 2026-11-22 are no longer read.
+const OLD_KINDS: Record<string, string> = { toolResultsSkill: 'toolResults:skill', 'harness:tool': 'harness:file_note' }
+
 // A message's tokens by kind: by the API's count of each kind where it counted
 // them, else its count split by bytes.
 function sharesOf(p: Stats['messages'][number], tokens: Record<string, number>): Array<[string, number]> {
   const by = p.counted ?? p.kinds
   const total = Object.values(by).reduce((a, b) => a + b, 0)
-  return Object.entries(by).map(([k, n]) => [k, total ? ((tokens[p.key] ?? 0) * n) / total : 0])
+  return Object.entries(by).map(([k, n]) => [OLD_KINDS[k] ?? k, total ? ((tokens[p.key] ?? 0) * n) / total : 0])
 }
 
 // The types of trim a saving is told by: the base's shaves (cost.ts), its
@@ -475,7 +482,7 @@ function sharesOf(p: Stats['messages'][number], tokens: Record<string, number>):
 // replace (Sent.covers), so its saving is net of what carrying them costs.
 export const BASE = ['tools-shaved', 'skills-shaved']
 export const SUMMARIES = 'summary+memoir'
-const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', toolResultsSkill: 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'messages'])), summary: SUMMARIES, memoir: SUMMARIES }
+const TYPES: Record<string, string> = { toolCalls: 'tools', toolCallsStubbed: 'tools', toolResults: 'tools', toolResultsStubbed: 'tools', 'toolResults:skill': 'tools', toolsLoaded: 'tools', reasoning: 'reasoning', user: 'messages', assistant: 'messages', harness: 'messages', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'messages'])), summary: SUMMARIES, memoir: SUMMARIES }
 
 // What a request took out of the conversation, by type of trim: what
 // removedTokens added, a kind at a time. Given the stats before, as cost.ts
@@ -516,8 +523,8 @@ export function textTokens(s: Sent, tokens: Record<string, number>): number[] {
     return bytes && ((tokens[p.key] ?? 0) * ((p.kinds.user ?? 0) + (p.kinds.assistant ?? 0))) / bytes
   })
 }
-const LABELS: Record<string, string> = { harness: 'system-message', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'sysmsg-' + { latest: 'save-latest', forever: 'save-forever', tool: 'like-tool', conversation: 'like-convo', unrecognized: 'unrecognized' }[c]])) }
-const REST_TYPES = ['toolsLoaded', 'user', 'harness', ...CATEGORIES.map((c) => 'harness:' + c), 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResultsSkill', 'reasoning', 'memoir', 'summary', 'other']
+const LABELS: Record<string, string> = { harness: 'system-message', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'sysmsg-' + { latest: 'save-latest', forever: 'save-forever', file_note: 'file-note', conversation: 'like-convo', unrecognized: 'unrecognized' }[c]])) }
+const REST_TYPES = ['toolsLoaded', 'user', 'harness', ...CATEGORIES.map((c) => 'harness:' + c), 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResults:skill', 'reasoning', 'memoir', 'summary', 'other']
 
 // A kind as the output shows it: renamed, if at all, then hyphen-cased.
 const label = (k: string) => LABELS[k] ?? k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())

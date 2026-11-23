@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { groupOf, shellGroup } from '../src/tool-groups.ts'
 import { kinds, toolGroups } from '../src/log.ts'
+import { HARNESSES } from '../src/harness.ts'
+
+const CLAUDE = HARNESSES.find((h) => h.name === 'claude')!
 
 test('named tools fall in their groups across harnesses', () => {
   assert.equal(groupOf('Read', {}), 'file_read')
@@ -50,4 +53,12 @@ test("kinds splits tool calls and results by their call's group when given them"
   assert.deepEqual(Object.keys(kinds(JSON.stringify(result), result, false, groups).kinds), ['toolResults:file_read', 'user'])
   assert.deepEqual(Object.keys(kinds(JSON.stringify(orphan), orphan, false, groups).kinds), ['toolResults', 'user'])
   assert.deepEqual(Object.keys(kinds(JSON.stringify(result), result).kinds), ['toolResults', 'user'])
+})
+
+test("a skill or tool search is grouped by the harness's name for it, its body and notes with its result", () => {
+  const call = { role: 'assistant', content: [{ type: 'tool_use', id: 's1', name: 'Skill', input: { skill: 'dataviz' } }, { type: 'tool_use', id: 'q1', name: 'ToolSearch', input: { query: 'select:Monitor' } }] }
+  const result = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's1', content: 'Launching skill: dataviz' }, { type: 'text', text: 'Base directory for this skill: /x\nbody' }, { type: 'tool_result', tool_use_id: 'q1', content: [{ type: 'tool_reference', tool_name: 'Monitor' }] }] }
+  const groups = toolGroups([call, result], CLAUDE.conventions.kinds)
+  assert.deepEqual(Object.keys(kinds(JSON.stringify(call), call, false, groups).kinds), ['toolCalls:skill', 'toolCalls:tool_search', 'assistant'])
+  assert.deepEqual(Object.keys(kinds(JSON.stringify(result), result, false, groups).kinds), ['toolResults:skill', 'toolResults:tool_search', 'user'])
 })

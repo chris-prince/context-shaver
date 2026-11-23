@@ -377,7 +377,7 @@ is never trimmed.
       { "action": "stub", "after": "1 request" },
       { "action": "drop", "after": "10 requests" }
     ],
-    "skill": [{ "action": "drop", "after": "0 turns" }],
+    "tool:skill": [{ "action": "drop", "after": "0 turns" }],
     "reasoning": [{ "action": "drop", "after": "0 turns" }],
     "user_and_assistant_text": { "summary_threshold_tokens": 20000 }
   }
@@ -387,9 +387,17 @@ is never trimmed.
 | Kind | Item | Actions |
 | --- | --- | --- |
 | `tool` | A tool call with its results | `stub`, `drop` |
-| `skill` | A `Skill` call, its result and the skill's text beside it | `stub`, `drop` |
-| `tool_search` | A `ToolSearch` call and its result | `drop` |
+| `tool:skill` | A `Skill` call, its result and the skill's body beside it | `stub`, `drop` |
+| `tool:tool_search` | A `ToolSearch` call and its result | `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |
+
+A `tool:` kind without its own key takes the `tool` rules it can be given: a
+skill takes them all, a tool search only the drops. An empty list of its own
+keeps it. The logs name these calls and results the same way, as
+`toolCalls:skill` and `toolResults:tool_search`.
+
+When a skill is invoked again, Claude Code sends a note beside the result in
+place of the body, or before it; the note goes with the skill.
 
 A stubbed skill keeps its call, its result (which only names it) and the first
 line of its body, `Base directory for this skill: <path>`; the rest of the body
@@ -402,7 +410,9 @@ after a compaction it re-attaches the files read before, each as `Called the
 Read tool with the following input: …` with the file's numbered lines after.
 A stub replaces the lines, a drop the whole Read; the rest of the message (the
 skills list, the environment block) stays. In the base, before the first
-response, it is left alone.
+response, it is left alone. Claude Code now sends each such Read in a user
+message instead, as two reminder blocks, the call and then the result; the
+pair is a `tool` item the same way.
 
 `tool_shaver_rules` says which tools each harness sends in full to defer, keyed by the
 harness's name (`claude`, `codex`), since tool names and a `*` rule mean

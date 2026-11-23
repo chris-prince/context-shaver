@@ -28,7 +28,11 @@ export function afterOf(r: Rule): { on: Unit; wait: number } | undefined {
 // `memoir_threshold_tokens` is how many tokens the records can hold before the
 // oldest are merged into the memoir (summary.ts); without it, none are.
 type Text = { summary_threshold_tokens?: number; memoir_threshold_tokens?: number }
-export type PartRules = Partial<Record<Kind, Rule[]>> & { user_and_assistant_text?: Text }
+// Each kind's key: a skill or tool search is a kind of tool call, keyed
+// `tool:<kind>`.
+const KEYS = { tool: 'tool', 'tool:skill': 'skill', 'tool:tool_search': 'tool_search', reasoning: 'reasoning' } as const satisfies Record<string, Kind>
+type Key = keyof typeof KEYS
+export type PartRules = Partial<Record<Key, Rule[]>> & { user_and_assistant_text?: Text }
 // `conversation_shaver_rules` says, by kind, when the proxy stubs or drops a part of
 // the conversation (trim.ts), and when it summarizes the rest.
 // `tool_shaver_rules` says, by harness name, which tools it sends in full the
@@ -65,6 +69,14 @@ export const textRules = (p: Policy): Text => p.conversation_shaver_rules?.user_
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
 
+// The rules a kind is given: its key's, or for a kind of tool call without
+// its own key, the tool rules it can be given (a tool search's drops only).
+export function rulesFor(p: PartRules, kind: Kind): Rule[] | undefined {
+  const key = (Object.keys(KEYS) as Key[]).find((k) => KEYS[k] === kind)!
+  if (p[key] || key === 'tool' || key === 'reasoning') return p[key]
+  return p.tool?.filter((r) => ACTIONS[kind].includes(r.action))
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 
 export function parsePolicy(v: unknown): Policy {
@@ -81,10 +93,10 @@ export function parsePolicy(v: unknown): Policy {
           }
           continue
         }
-        if (!Object.hasOwn(ACTIONS, kind)) throw new Error(`policy: unknown part kind ${kind}`)
+        if (!Object.hasOwn(KEYS, kind)) throw new Error(`policy: unknown part kind ${kind}`)
         if (!Array.isArray(rules)) throw new Error(`policy: ${kind} is not a list of rules`)
         for (const r of rules)
-          if (!afterOf(r) || Object.keys(r).length !== 2 || !ACTIONS[kind as Kind].includes(r.action))
+          if (!afterOf(r) || Object.keys(r).length !== 2 || !ACTIONS[KEYS[kind as Key]].includes(r.action))
             throw new Error(`policy: bad ${kind} rule ${JSON.stringify(r)}`)
       }
     } else if (key === 'tool_shaver_rules') {
@@ -121,14 +133,17 @@ export const skillRulesNow = (rules: (SkillRule & { match?: string })[]): SkillR
 // have `defer` true or false for the action; and `tools_not_deferred`, naming
 // the tools Claude Code keeps, every other deferred; and part rules timed by
 // `on` ("step" or "turn") and `wait`, written as `after`, a step as a request;
-// and the thresholds under `prompt_and_assistant_text`.
+// and the thresholds under `prompt_and_assistant_text`; and skill and tool
+// search rules keyed `skill` and `tool_search`.
 export function upgraded(v: Record<string, unknown>): Record<string, unknown> | undefined {
   const old = ['skill_list', 'tool_list', 'tools_not_deferred', 'summary_threshold_tokens', 'memoir_threshold_tokens']
   const kinds = Object.keys(v).filter((k) => Object.hasOwn(ACTIONS, k))
   const conv = isObject(v.conversation_shaver_rules) ? v.conversation_shaver_rules : {}
   const onWait = (r: unknown) => isObject(r) && 'on' in r
   const timedOlder = [...kinds.map((k) => v[k]), ...Object.values(conv)].some((rs) => Array.isArray(rs) && rs.some(onWait))
-  if (!kinds.length && !timedOlder && !('prompt_and_assistant_text' in conv) && !old.some((k) => k in v)) return undefined
+  const renamed = (k: string) => (k === 'skill' || k === 'tool_search' ? `tool:${k}` : k)
+  const unkeyed = [...kinds, ...Object.keys(conv)].some((k) => renamed(k) !== k)
+  if (!kinds.length && !timedOlder && !unkeyed && !('prompt_and_assistant_text' in conv) && !old.some((k) => k in v)) return undefined
   const after = (wait: number, unit: string) => `${wait} ${unit}${wait === 1 ? '' : 's'}`
   const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { action: r.action, after: after(r.wait, r.on === 'step' ? 'request' : r.on) } : r)) : rs)
   type Older = { name: string; defer?: boolean; action?: string }
@@ -140,7 +155,7 @@ export function upgraded(v: Record<string, unknown>): Record<string, unknown> | 
   const { user_and_assistant_text: had, prompt_and_assistant_text: older, ...convKinds } = conv
   const text = { ...(isObject(older) && older), ...(isObject(had) && had), ...Object.fromEntries(['summary_threshold_tokens', 'memoir_threshold_tokens'].filter((k) => k in v).map((k) => [k, v[k]])) }
   const parts = {
-    ...Object.fromEntries([...Object.entries(convKinds), ...kinds.map((k) => [k, v[k]])].map(([k, rs]) => [k, timed(rs)])),
+    ...Object.fromEntries([...Object.entries(convKinds), ...kinds.map((k) => [k, v[k]])].map(([k, rs]) => [renamed(k), timed(rs)])),
     ...(Object.keys(text).length && { user_and_assistant_text: text }),
   }
   const rest = Object.fromEntries(Object.entries(v).filter(([k]) => !kinds.includes(k) && !old.includes(k) && (k !== 'conversation_shaver_rules' || !isObject(v[k]))))
@@ -229,6 +244,15 @@ function spanOf(text: string, name: string): { key: number; value: number; end: 
 //   old text beside it as .old.
 //   Remove when: upgrading from before 2026-10-29 is no longer supported.
 //   Each file is rewritten the first time newer code loads it.
+// BACKCOMPAT(2026-11-22)
+//   Before: conversation_shaver_rules keyed skill and tool search rules
+//   `skill` and `tool_search`.
+//   Shim: upgraded() renames them `tool:skill` and `tool:tool_search`, the
+//   same way.
+//   Remove when: upgrading from before 2026-11-22 is no longer supported.
+// A policy in the current form, as a policy saved in the logs is read.
+export const policyNow = (v: unknown): Policy => parsePolicy((isObject(v) && upgraded(v)) || v)
+
 export function loadPolicy(file: string): Policy | undefined {
   if (!existsSync(file)) return undefined
   const v = JSON.parse(readFileSync(file, 'utf8'))

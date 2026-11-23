@@ -53,7 +53,7 @@ import { ccVersion, folded, keptTokens, type Keep } from '../src/compact-keep.ts
 import { harnessOf, NO_CONVENTIONS, type Harness } from '../src/harness.ts'
 import { history } from '../src/journal.ts'
 import { modelOf, PROMPTS_KEPT, SINCE, type Model } from '../src/models.ts'
-import { forcedTrimOf, loadPolicy, textRules, type PartRules, type Policy } from '../src/policy.ts'
+import { forcedTrimOf, loadPolicy, policyNow, textRules, type PartRules, type Policy } from '../src/policy.ts'
 import { isCompaction, isSideRequest, keyOf, promptTokens, type Stats, withoutSideRequest } from '../src/stats.ts'
 import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
@@ -223,7 +223,7 @@ function rebuild(dir: string): Conv {
   const convRatio = counted.reduce((x, n) => x + all[n].inputTokens, 0) / counted.reduce((x, n) => x + sentChars[n], 0)
   // Each policy logged, as the proxy loaded it (log.ts, writePolicy).
   const policies = new Map<string, Rules>()
-  const policyOf = (h?: string) => (h === undefined ? undefined : policies.get(h) ?? policies.set(h, rulesOf(JSON.parse(readFileSync(path.join(objects, h + '.json'), 'utf8')))).get(h))
+  const policyOf = (h?: string) => (h === undefined ? undefined : policies.get(h) ?? policies.set(h, rulesOf(policyNow(JSON.parse(readFileSync(path.join(objects, h + '.json'), 'utf8'))))).get(h))
   const reqs = all.map((e, n): Req => ({ time: e.time, model: { ...modelOf(e.model, e.provider), ...(ttlOf(e, n) && { ttl: ttlOf(e, n) }) }, auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n],
     ...(typeof e.inputTokens === 'number' && { inputTokens: e.inputTokens }), ratio: typeof e.inputTokens === 'number' && sentChars[n] ? e.inputTokens / sentChars[n] : convRatio, base: bytes(e.system) + bytes(e.tools), at: atOf(e.time), forced: forced.has(e.time), estimate: estimateOf(e.time),
     ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }), ...(typeof e.outputTokens === 'number' && { output: e.outputTokens }), ...(e.policy !== undefined && { policy: policyOf(e.policy) }),

@@ -16,7 +16,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { isMemoir, isPrompt, isSkillBody, isSummary, type ApiMsg, type Block } from './items.ts'
+import { isMemoir, isPrompt, isSkillBody, isSummary, type ApiMsg, type Block, type Conventions } from './items.ts'
 import { notesOfBlock } from './notes.ts'
 import { groupOf } from './tool-groups.ts'
 import { isStubbed, STUB } from './trim.ts'
@@ -46,7 +46,8 @@ export function hash(s: string): string {
 // and results each split into stubbed and not, what Claude Code injects, and
 // other (content of an unknown type). The role/content wrapper rides with the
 // role, a system message's with its text. A skill's body, which Claude Code
-// sends as a text block beside the Skill call's result, is `toolResultsSkill`.
+// sends as a text block beside the Skill call's result, is `toolResults:skill`
+// (before 2026-11-22, `toolResultsSkill`).
 // `lineage` ties a trimmed message to
 // the full one it replaced: its first tool_use id, or tool_result id, prefixed
 // by role.
@@ -73,7 +74,7 @@ export function kinds(json: string, m: ApiMsg, preamble = false, groups?: Map<st
   for (const b of content) {
     const plain = isCompactionItem(b) ? 'harness' : isNote(b, m) ? injected : kindOf(b, m.role)
     const group = groups && (b.type === 'tool_use' ? groups.get(String(b.id)) : b.type === 'tool_result' ? groups.get(String(b.tool_use_id)) : undefined)
-    const k = group && plain.startsWith('tool') && plain !== 'toolResultsSkill' ? `${plain}:${group}` : plain
+    const k = group && plain.startsWith('tool') && !plain.includes(':') ? `${plain}:${group}` : plain
     if (k === 'system' && b.type === 'text') for (const [s, n] of sections(b)) add(s, n)
     else if (k === 'harness') for (const [s, n] of noteBytes(b)) add(s, n)
     else add(k === 'system' && b.type === 'tool_addition' ? 'system:deferred-tools-list' : k, JSON.stringify(b).length)
@@ -179,7 +180,7 @@ export const isNote = (b: Block, m: ApiMsg) => isCompactionItem(b) || m.role ===
 function kindOf(b: Block, role: string): string {
   switch (b.type) {
     case 'text':
-      return role === 'user' && isSkillBody(b) ? 'toolResultsSkill' : role === 'assistant' && isSummary(b) ? 'summary' : role === 'assistant' && isMemoir(b) ? 'memoir' : role
+      return role === 'user' && isSkillBody(b) ? 'toolResults:skill' : role === 'assistant' && isSummary(b) ? 'summary' : role === 'assistant' && isMemoir(b) ? 'memoir' : role
     case 'thinking':
     case 'redacted_thinking':
       return 'reasoning'
@@ -261,16 +262,19 @@ function objectsFor(dir: string): string {
   return objects
 }
 
-// Each tool call's group (tool-groups.ts) by its ID, for kinds().
-export function toolGroups(msgs: readonly ApiMsg[]): Map<string, string> {
+// Each tool call's group (tool-groups.ts) by its ID, for kinds(). A call
+// the harness's conventions make a skill or tool search is grouped as that.
+export function toolGroups(msgs: readonly ApiMsg[], named: Conventions['kinds'] = {}): Map<string, string> {
   const out = new Map<string, string>()
-  for (const m of msgs) if (Array.isArray(m.content)) for (const b of m.content) if (b.type === 'tool_use') out.set(String(b.id), groupOf(String(b.name ?? ''), b.input))
+  for (const m of msgs)
+    if (Array.isArray(m.content))
+      for (const b of m.content) if (b.type === 'tool_use') out.set(String(b.id), named[String(b.name)] ?? groupOf(String(b.name ?? ''), b.input))
   return out
 }
 
 // Saves each message not saved before, with its kinds; returns the request's
 // message list, each with the wire's names for its items when idsOf gives them.
-export function writeMessages(dir: string, msgs: readonly ApiMsg[], idsOf?: (m: ApiMsg) => string[]): Array<{ role: string; hash: string; bytes: number; ids?: string[] }> {
+export function writeMessages(dir: string, msgs: readonly ApiMsg[], named?: Conventions['kinds'], idsOf?: (m: ApiMsg) => string[]): Array<{ role: string; hash: string; bytes: number; ids?: string[] }> {
   const objects = objectsFor(dir)
   const responded = preambleEnd(msgs)
   let groups: Map<string, string> | undefined
@@ -280,7 +284,7 @@ export function writeMessages(dir: string, msgs: readonly ApiMsg[], idsOf?: (m: 
     const file = path.join(objects, `${h}.json`)
     if (!existsSync(file)) {
       writeFileSync(file, json)
-      groups ??= toolGroups(msgs)
+      groups ??= toolGroups(msgs, named)
       writeFileSync(path.join(objects, `${h}.kinds.json`), JSON.stringify(kinds(json, m, responded < 0 || i < responded, groups)))
     }
     const ids = idsOf?.(m)

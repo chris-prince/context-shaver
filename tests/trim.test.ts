@@ -94,7 +94,7 @@ test('a rule is due once its unit is completed, past the wait', () => {
 
 test('a policy file is checked', () => {
   assert.deepEqual(Object.keys(policy), ['conversation_shaver_rules', 'tool_shaver_rules', 'skill_shaver_rules'])
-  assert.deepEqual(Object.keys(committed), ['tool', 'skill', 'tool_search', 'reasoning', 'user_and_assistant_text'])
+  assert.deepEqual(Object.keys(committed), ['tool', 'tool:skill', 'tool:tool_search', 'reasoning', 'user_and_assistant_text'])
   const parts = (v: object) => ({ conversation_shaver_rules: v })
   const tools = (v: unknown) => ({ tool_shaver_rules: v })
   const skills = (v: unknown) => ({ skill_shaver_rules: v })
@@ -127,7 +127,7 @@ test('a policy in an older form is put in the current one, and one in the curren
   assert.equal(upgraded(policy), undefined)
   assert.equal(upgraded({}), undefined)
   const timed = { conversation_shaver_rules: { skill: [{ on: 'turn', wait: 2, action: 'stub' }, { action: 'drop', after: '9 requests' }], user_and_assistant_text: { summary_threshold_tokens: 5 } }, tool_shaver_rules: {} }
-  assert.deepEqual(upgraded(timed), { conversation_shaver_rules: { skill: [{ action: 'stub', after: '2 turns' }, { action: 'drop', after: '9 requests' }], user_and_assistant_text: { summary_threshold_tokens: 5 } }, tool_shaver_rules: {} })
+  assert.deepEqual(upgraded(timed), { conversation_shaver_rules: { 'tool:skill': [{ action: 'stub', after: '2 turns' }, { action: 'drop', after: '9 requests' }], user_and_assistant_text: { summary_threshold_tokens: 5 } }, tool_shaver_rules: {} })
   const named = { conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 requests' }], prompt_and_assistant_text: { summary_threshold_tokens: 5 } } }
   assert.deepEqual(upgraded(named), { conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 requests' }], user_and_assistant_text: { summary_threshold_tokens: 5 } } })
 })
@@ -286,11 +286,27 @@ test('of two pairs before a system message, one is kept so that it follows a use
 
 test('a tool search is its own kind, dropped by its own rules', () => {
   const convo = [1, 2, 3].flatMap((n) => turn(n, n === 1 ? 'ToolSearch' : 'Bash', { query: 'select:CronList' }))
-  const p: PartRules = { tool: [{ action: 'drop', after: '0 requests' }], tool_search: [{ action: 'drop', after: '1 turn' }] }
+  const p: PartRules = { tool: [{ action: 'drop', after: '0 requests' }], 'tool:tool_search': [{ action: 'drop', after: '1 turn' }] }
   const kept = apply(convo, p, { requests: 5, turns: 1 })
   assert.deepEqual(counts(kept), { 'tool:drop': 2 })
   assert.ok(kept.msgs.some((m) => typeof m.content !== 'string' && m.content.some((b) => b.tool_use_id === 'toolu_1')))
   assert.deepEqual(counts(apply(convo, p, { requests: 5, turns: 2 })), { 'tool:drop': 2, 'tool_search:drop': 1 })
+})
+
+test('a kind of tool call without its own key takes the tool rules it can be given', () => {
+  const convo = [1, 2, 3].flatMap((n) => turn(n, n === 1 ? 'ToolSearch' : 'Bash', { query: 'select:CronList' }))
+  // A tool search has no stub, so a stub rule passes it by; a drop doesn't.
+  assert.deepEqual(counts(apply(convo, { tool: [{ action: 'stub', after: '0 requests' }] }, { requests: 5, turns: 2 })), { 'tool:stub': 2 })
+  assert.deepEqual(counts(apply(convo, { tool: [{ action: 'drop', after: '0 requests' }] }, { requests: 5, turns: 2 })), { 'tool:drop': 2, 'tool_search:drop': 1 })
+  // An empty list of its own keeps it.
+  assert.deepEqual(counts(apply(convo, { tool: [{ action: 'drop', after: '0 requests' }], 'tool:tool_search': [] }, { requests: 5, turns: 2 })), { 'tool:drop': 2 })
+  assert.throws(() => parsePolicy({ conversation_shaver_rules: { 'tool:tool_search': [{ action: 'stub', after: '1 turn' }] } }), /bad tool:tool_search rule/)
+})
+
+test('a policy keying skill and tool search rules `skill` and `tool_search` is put under `tool:`', () => {
+  const old = { conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 requests' }], skill: [{ action: 'stub', after: '10 requests' }], tool_search: [{ action: 'drop', after: '10 turns' }] } }
+  assert.deepEqual(upgraded(old), { conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 requests' }], 'tool:skill': [{ action: 'stub', after: '10 requests' }], 'tool:tool_search': [{ action: 'drop', after: '10 turns' }] } })
+  assert.equal(upgraded(upgraded(old)!), undefined)
 })
 
 test('a Read sent as system text is a tool call; the rest of its message stays', () => {
@@ -314,6 +330,24 @@ test('a Read sent as system text is a tool call; the rest of its message stays',
   // Before the first response, it is the base.
   const base = [msgs[0], { role: 'system', content: read('a.ts') } as ApiMsg, ...msgs.slice(1)]
   assert.equal(apply(base, dropAll, clockOf(base)).msgs[1], base[1])
+})
+
+test('a Read sent as a pair of reminders in a user message is a tool call; the rest of its message stays', () => {
+  const lines = Array.from({ length: 40 }, (_, i) => `${i + 1}\tline ${i + 1}\n`).join('')
+  const call = (f: string) => ({ type: 'text', text: `<system-reminder>\nCalled the Read tool with the following input: {"file_path":"${f}"}\n</system-reminder>\n` })
+  const result = (body = lines) => ({ type: 'text', text: `<system-reminder>\nResult of calling the Read tool:\n${body}</system-reminder>\n` })
+  const prompt = { type: 'text', text: 'go on' }
+  const attached: ApiMsg = { role: 'user', content: [call('a.ts'), result(), call('b.ts'), result(), prompt] }
+  const convo = [...msgs.slice(0, 3), { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } as ApiMsg, attached, ...msgs.slice(3)]
+  const at = (a: Applied) => a.msgs[a.origin.indexOf(4)]
+
+  const stubbed = apply(convo, stubAll, clockOf(convo))
+  assert.deepEqual(stubbed.treated.get('read:4:1'), { kind: 'tool', action: 'stub' })
+  const s = `${stub(Buffer.byteLength(lines))}\n`
+  assert.deepEqual(at(stubbed).content, [call('a.ts'), result(s), call('b.ts'), result(s), prompt])
+
+  const dropped = apply(convo, dropAll, clockOf(convo))
+  assert.deepEqual(at(dropped).content, [prompt])
 })
 
 test('a tool call is stubbed, then dropped, as the conversation goes on', () => {
@@ -367,14 +401,30 @@ test('a skill goes whole, with its body, once its turn is completed', () => {
     { role: 'user', content: 'prompt 2' },
     { role: 'assistant', content: [{ type: 'text', text: 'answer 2' }] },
   ]
-  const p: PartRules = { skill: [{ action: 'drop', after: '0 turns' }] }
+  const p: PartRules = { 'tool:skill': [{ action: 'drop', after: '0 turns' }] }
   const within = skill.slice(0, 4)
   assert.deepEqual(apply(within, p, clockOf(within)).msgs, within)
   const after = apply(skill, p, clockOf(skill))
   assert.deepEqual(counts(after), { 'skill:drop': 1 })
   assert.deepEqual(after.origin, [0, 3, 4, 5])
-  // Tool rules leave a skill alone.
-  assert.deepEqual(apply(skill, { tool: dropAll.tool }, clockOf(skill)).msgs, skill)
+  // Without rules of its own, a skill takes the tool rules; an empty list
+  // keeps it.
+  assert.deepEqual(counts(apply(skill, { tool: [{ action: 'drop', after: '0 turns' }] }, clockOf(skill))), { 'skill:drop': 1 })
+  assert.deepEqual(apply(skill, { tool: [{ action: 'drop', after: '0 turns' }], 'tool:skill': [] }, clockOf(skill)).msgs, skill)
+})
+
+test("a skill invoked again goes with Claude Code's note beside its result", () => {
+  const skill: ApiMsg[] = [
+    { role: 'user', content: 'prompt 1' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_s', name: 'Skill', input: { skill: 'claude-api' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_s', content: 'Launching skill: claude-api' }, { type: 'text', text: '(Re-invocation of /claude-api — the skill instructions were previously loaded.)' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'answer 1' }] },
+    { role: 'user', content: 'prompt 2' },
+    { role: 'assistant', content: [{ type: 'text', text: 'answer 2' }] },
+  ]
+  const after = apply(skill, { 'tool:skill': [{ action: 'drop', after: '0 turns' }] }, clockOf(skill))
+  assert.deepEqual(counts(after), { 'skill:drop': 1 })
+  assert.deepEqual(after.origin, [0, 3, 4, 5])
 })
 
 test('a stubbed skill keeps its call, result and base directory', () => {
@@ -386,7 +436,7 @@ test('a stubbed skill keeps its call, result and base directory', () => {
     ...turn(2, 'Bash', { command: 'ls' }),
     ...turn(3, 'Bash', { command: 'ls' }),
   ]
-  const p: PartRules = { skill: [{ action: 'stub', after: '1 request' }, { action: 'drop', after: '3 requests' }] }
+  const p: PartRules = { 'tool:skill': [{ action: 'stub', after: '1 request' }, { action: 'drop', after: '3 requests' }] }
   const stubbed = apply(skill, p, { requests: 2, turns: 0 })
   assert.deepEqual(counts(stubbed), { 'skill:stub': 1 })
   assert.deepEqual(stubbed.msgs[2].content, [skill[2].content[0], { type: 'text', text: `Base directory for this skill: /x\n${stub(long.length)}` }])

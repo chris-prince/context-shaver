@@ -40,7 +40,7 @@ async function upstream(): Promise<{ url: string; close(): void }> {
 const POLICY = {
   conversation_shaver_rules: {
     tool: [{ action: 'drop', after: '2 requests' }],
-    skill: [{ action: 'drop', after: '0 turns' }],
+    'tool:skill': [{ action: 'drop', after: '0 turns' }],
     reasoning: [{ action: 'drop', after: '0 turns' }],
     user_and_assistant_text: { summary_threshold_tokens: 1e9, memoir_threshold_tokens: 1e9 },
   },

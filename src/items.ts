@@ -73,7 +73,10 @@ export type Kind = 'tool' | 'skill' | 'tool_search' | 'reasoning'
 export type Item = { kind: Kind; id: string; request: number; turn: number }
 
 export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'redacted_thinking'
-export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('Base directory for this skill:')
+// A skill's body: its SKILL.md, or what Claude Code sends beside the result
+// of a skill invoked again, a note before the body or one in its place.
+const SKILL_BODY = /^(Base directory for this skill:|\(Re-invocation of \/|Skill \/\S+ (is already loaded above|was loaded earlier))/
+export const isSkillBody = (b: Block) => b.type === 'text' && typeof b.text === 'string' && SKILL_BODY.test(b.text)
 
 // A record or memoir is found by the fixed start of its heading, so the rest
 // of the heading can be reworded.
@@ -117,7 +120,16 @@ export const CLAUDE_CODE: Conventions = {
 // result, the file's numbered lines, then the blank lines before what follows.
 // Each is a tool call, `read:<message>:<n>`, the message's nth.
 export const READ = /^(Called the Read tool with the following input: [^\n]*\nResult of calling the Read tool:\n)((?:\d+\t[^\n]*\n?)*)(\n*)/gm
-export const readsOf = (m: ApiMsg): number => blocks(m).reduce((n, b) => n + (b.type === 'text' ? String(b.text).match(READ)?.length ?? 0 : 0), 0)
+// Claude Code now sends one in a user message, as two reminder blocks: the
+// call's input, then the result. Each pair is a tool call, as above.
+const READ_CALL = /^<system-reminder>\nCalled the Read tool with the following input: [^\n]*\n<\/system-reminder>\n?$/
+export const READ_RESULT = /^(<system-reminder>\nResult of calling the Read tool:\n)((?:\d+\t[^\n]*\n?)*)(<\/system-reminder>\n?)$/
+const textOf = (b: Block | undefined) => (b?.type === 'text' && typeof b.text === 'string' ? b.text : '')
+// The index of each pair's call block in a user message.
+export const readPairs = (m: ApiMsg): number[] =>
+  m.role !== 'user' ? [] : blocks(m).flatMap((b, j, bs) => (READ_CALL.test(textOf(b)) && READ_RESULT.test(textOf(bs[j + 1])) ? [j] : []))
+export const readsOf = (m: ApiMsg): number =>
+  m.role === 'user' ? readPairs(m).length : blocks(m).reduce((n, b) => n + (b.type === 'text' ? String(b.text).match(READ)?.length ?? 0 : 0), 0)
 
 export function itemsOf(msgs: readonly ApiMsg[], conv: Conventions = CLAUDE_CODE): Item[] {
   const { requestOf } = requestsOf(msgs)
@@ -126,7 +138,7 @@ export function itemsOf(msgs: readonly ApiMsg[], conv: Conventions = CLAUDE_CODE
   msgs.forEach((m, i) => {
     const at = { request: requestOf[i], turn: turnOf[i] }
     // Before the first response, a system message is the base.
-    if (m.role === 'system' && at.request > 0) for (let n = 0; n < readsOf(m); n++) out.push({ kind: 'tool', id: `read:${i}:${n}`, ...at })
+    if (m.role !== 'assistant' && at.request > 0) for (let n = 0; n < readsOf(m); n++) out.push({ kind: 'tool', id: `read:${i}:${n}`, ...at })
     if (m.role !== 'assistant' || typeof m.content === 'string') return
     if (m.content.some(isThinking)) out.push({ kind: 'reasoning', id: String(i), ...at })
     for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: conv.kinds[String(b.name)] ?? 'tool', id: String(b.id), ...at })

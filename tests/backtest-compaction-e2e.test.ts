@@ -41,7 +41,7 @@ async function upstream(): Promise<{ url: string; close(): void }> {
 const POLICY = {
   conversation_shaver_rules: {
     tool: [],
-    skill: [],
+    'tool:skill': [],
     reasoning: [],
     user_and_assistant_text: { summary_threshold_tokens: 1e9, memoir_threshold_tokens: 1e9 },
   },

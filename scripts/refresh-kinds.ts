@@ -2,6 +2,8 @@
 // so messages logged before a rule changed are attributed as new ones are.
 // Usage: bin/node-wrapper scripts/refresh-kinds.ts proxy-data/logs/<conversation>
 import { readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { HARNESSES } from '../src/harness.ts'
 import { kinds, messagesOf, objectsOf, toolGroups } from '../src/log.ts'
 
 const dir = process.argv[2]
@@ -22,7 +24,9 @@ for (const r of requests) {
 // result's group comes from its call wherever that was logged.
 const hashes = [...new Set(requests.flatMap((r) => messagesOf(r).map((p) => p.hash)))]
 const texts = new Map(hashes.map((h) => [h, readFileSync(`${objects}/${h}.json`, 'utf8')]))
-const groups = toolGroups([...texts.values()].map((t) => JSON.parse(t)))
+// The harness is the folder name's first part, as conversationId names it.
+const harness = HARNESSES.find((h) => path.basename(dir).startsWith(`${h.name}-`))
+const groups = toolGroups([...texts.values()].map((t) => JSON.parse(t)), harness?.conventions.kinds)
 
 let n = 0
 for (const [h, json] of texts) {

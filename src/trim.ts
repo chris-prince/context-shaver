@@ -8,9 +8,9 @@
 // it pays. The latest request and the current turn are never touched.
 
 import type { Model } from './models.ts'
-import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, readsOf, requestsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
+import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, READ_RESULT, readPairs, readsOf, requestsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
-import { afterOf, treatment, type Action, type PartRules } from './policy.ts'
+import { afterOf, rulesFor, treatment, type Action, type PartRules } from './policy.ts'
 
 // Where trimming ends in the messages: the index of the first message past
 // the requests (or turns) the furthest-reaching rule covers, for tool calls and
@@ -142,6 +142,7 @@ function tokensOf(msgs: readonly ApiMsg[], items: ReadonlyMap<string, Item>, thi
       for (const b of bs) if (b.type === 'text') for (const [read] of String(b.text).matchAll(READ)) add(`read:${i}:${n++}`, read.length)
       return
     }
+    readPairs(m).forEach((j, n) => add(`read:${i}:${n}`, sizeOf(bs[j], thinking) + sizeOf(bs[j + 1], thinking)))
     const skill = bs.find((b) => b.type === 'tool_result' && items.get(String(b.tool_use_id))?.kind === 'skill')?.tool_use_id
     for (const b of bs)
       if (isThinking(b)) add(i, sizeOf(b, thinking))
@@ -196,7 +197,7 @@ function pairsOf(m: ApiMsg | undefined, to: Set<unknown>) {
 function applyKeeping(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, items: Map<string, Item>, newer: ReadonlyMap<string, number>, undroppable: ReadonlySet<unknown>, conv: Conventions): Applied {
   const due = new Map<unknown, Action>()
   for (const it of items.values()) {
-    const rules = policy[it.kind]
+    const rules = rulesFor(policy, it.kind)
     let a = treatment(rules, it, c, newer.get(it.id))
     // A stub leaves every message where it was, so it is allowed where the drop
     // was refused.
@@ -213,7 +214,7 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, item
       return r && push(r)
     }
     if (typeof m.content === 'string') return push(m)
-    let content = m.content
+    let content = readPairs(m).length ? withReadPairs(m.content, i, due, mark) : m.content
     if (m.role === 'assistant' && due.get(String(i)) === 'drop') {
       const kept = content.filter((b) => !isThinking(b))
       if (kept.length && kept.length < content.length) {
@@ -275,6 +276,33 @@ function withReads(m: ApiMsg, i: number, due: ReadonlyMap<unknown, Action>, mark
   return typeof m.content === 'string' ? { ...m, content: String(content[0].text) } : { ...m, content }
 }
 
+// A user message's blocks with each Read sent as a pair of reminders
+// (readPairs) given what is due to it: a dropped one goes with both blocks, a
+// stubbed one has its result's lines stubbed.
+function withReadPairs(content: Block[], i: number, due: ReadonlyMap<unknown, Action>, mark: (id: unknown, a: Action) => void): Block[] {
+  const pairs = readPairs({ role: 'user', content })
+  if (!pairs.some((_, n) => due.has(`read:${i}:${n}`))) return content
+  const out: Block[] = []
+  for (let j = 0; j < content.length; j++) {
+    const n = pairs.indexOf(j)
+    const id = `read:${i}:${n}`
+    const a = n < 0 ? undefined : due.get(id)
+    if (a === 'drop') {
+      mark(id, a)
+      j++
+      continue
+    }
+    out.push(content[j])
+    if (a !== 'stub') continue
+    const result = content[++j]
+    const [, head, lines, tail] = String(result.text).match(READ_RESULT)!
+    const k = bytes(lines)
+    if (k <= stub(k).length) out.push(result)
+    else out.push((mark(id, a), { ...result, text: `${head}${stub(k)}\n${tail}` }))
+  }
+  return out
+}
+
 // The items whose treatment differs between two applications, counted by
 // kind and what they now get, as `tool:stub`.
 export function transitions(before: Applied, after: Applied): Record<string, number> {
@@ -296,7 +324,7 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: PartRules, clock: Cl
   const end = (kind: Kind) =>
     Math.max(
       0,
-      ...(policy[kind] ?? []).map((r) => {
+      ...(rulesFor(policy, kind) ?? []).map((r) => {
         const { on, wait } = afterOf(r)!
         const latest = () => [...items.values()].findLast((it) => it.kind === kind && it.request && it.request <= c.requests && newer.get(it.id)! >= wait)?.request ?? 0
         const [of, n] = on === 'token' ? [requestOf, latest()] : on === 'request' ? [requestOf, c.requests - wait] : [turnOf, c.turns - wait]

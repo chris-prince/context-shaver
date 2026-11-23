@@ -147,7 +147,7 @@ const OPENCODE: Harness = {
   logged: ['x-opencode-'],
 }
 
-const HARNESSES = [CLAUDE, CODEX, OPENCODE]
+export const HARNESSES = [CLAUDE, CODEX, OPENCODE]
 
 export const NO_CONVENTIONS: Conventions = { kinds: {}, stubbedInputs: {}, shell: '', promptHeadings: [] }
 

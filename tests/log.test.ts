@@ -66,7 +66,7 @@ test('a skill body beside the Skill result counts as a tool result', () => {
     { type: 'text', text: 'Base directory for this skill: /x\n\n# X' },
   ] }
   const k = kinds(JSON.stringify(m), m).kinds
-  assert.equal(k.toolResultsSkill, JSON.stringify(m.content[1]).length)
+  assert.equal(k['toolResults:skill'], JSON.stringify(m.content[1]).length)
   assert.equal(k.toolResults, JSON.stringify(m.content[0]).length)
 })
 

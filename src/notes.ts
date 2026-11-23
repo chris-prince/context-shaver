@@ -5,8 +5,9 @@
 //   keys replaces it (the working directory, the date).
 // - forever: changes what the model can do or is told to do (tools added or
 //   removed, skills, instructions), so it is never trimmed or summarized away.
-// - tool: content the model can fetch again (a file attached or changed), like
-//   a tool's result.
+// - file_note: about a file the model can read again (a file attached or
+//   changed, or too large to restore), like a tool's result (before
+//   2026-11-22, `tool`).
 // - conversation: an event in the conversation (a background task done, a turn
 //   aborted, a reminder), never trimmed and summarized with its turn.
 // - unrecognized: under no heading below, treated as conversation, and shown
@@ -21,7 +22,7 @@
 
 import type { Block } from './items.ts'
 
-export const CATEGORIES = ['latest', 'forever', 'tool', 'conversation', 'unrecognized'] as const
+export const CATEGORIES = ['latest', 'forever', 'file_note', 'conversation', 'unrecognized'] as const
 export type Category = (typeof CATEGORIES)[number]
 export type Note = { kind: string; category: Category; text: string; keys: string[] }
 
@@ -60,9 +61,9 @@ export const NOTES: Array<[string, string, Category]> = [
   ['# Environment\\n', 'environment', 'latest'],
   ['You are powered by the model', 'model', 'latest'],
   ["Today's date is", 'date', 'latest'],
-  ['Called the \\w+ tool with the following input', 'attached-file', 'tool'],
-  ['Note: .* changed on disk since you last read it', 'file-changed', 'tool'],
-  ['Note: .* was read before the last conversation was summarized', 'file-pointer', 'tool'],
+  ['Called the \\w+ tool with the following input', 'attached-file', 'file_note'],
+  ['Note: .* changed on disk since you last read it', 'file-changed', 'file_note'],
+  ['Note: .* was read before the last conversation was summarized', 'file-pointer', 'file_note'],
   ['\\[SYSTEM NOTIFICATION - NOT USER INPUT\\]', 'task-notification', 'conversation'],
   ['This is a side question from the user', 'side-question', 'conversation'],
   // Codex
