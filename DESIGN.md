@@ -358,8 +358,8 @@ when the proxy starts, the old text kept beside it as `policy.json.old`.
 
 `conversation_shaver_rules` gives each kind of part a list of rules. A rule is
 due once its item's request or turn is among the completed ones, leaving out
-the latest few: `"after": "4 requests"` or `"after": "1 turn"`, the unit read
-singular or plural whatever the count. `"after": "20000 tokens"` keeps the
+the latest few: `"eligible_after": "4 requests"` or `"eligible_after": "1 turn"`, the unit read
+singular or plural whatever the count. `"eligible_after": "20000 tokens"` keeps the
 latest 20000 tokens of the kind: a rule is due to an item of a completed
 request once the items of its kind after it in completed requests hold that
 many tokens. Thinking counts at the tokens it billed, as the proxy recorded
@@ -374,11 +374,11 @@ is never trimmed.
 {
   "conversation_shaver_rules": {
     "tool": [
-      { "action": "stub", "after": "1 request" },
-      { "action": "drop", "after": "10 requests" }
+      { "action": "stub", "eligible_after": "1 request" },
+      { "action": "drop", "eligible_after": "10 requests" }
     ],
-    "tool:skill": [{ "action": "drop", "after": "0 turns" }],
-    "reasoning": [{ "action": "drop", "after": "0 turns" }],
+    "tool:skill": [{ "action": "drop", "eligible_after": "0 turns" }],
+    "reasoning": [{ "action": "drop", "eligible_after": "0 turns" }],
     "user_and_assistant_text": { "summary_threshold_tokens": 20000 }
   }
 }

@@ -61,7 +61,7 @@ async function proxy(up: string, on: boolean): Promise<Proxy> {
   writeFileSync(
     policy,
     JSON.stringify({
-      conversation_shaver_rules: { tool: [{ action: 'drop', after: '1 request' }], user_and_assistant_text: { summary_threshold_tokens: 10_000_000, memoir_threshold_tokens: 10_000_000 } },
+      conversation_shaver_rules: { tool: [{ action: 'drop', eligible_after: '1 request' }], user_and_assistant_text: { summary_threshold_tokens: 10_000_000, memoir_threshold_tokens: 10_000_000 } },
       tool_shaver_rules: { claude: [] },
       skill_shaver_rules: [],
     }),

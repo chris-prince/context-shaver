@@ -9,17 +9,18 @@ import type { SkillRule } from './skills.ts'
 
 export type Action = 'stub' | 'drop'
 // Due once the item's request (or turn) is among the completed ones, leaving
-// out the latest few: `after` is "4 requests" or "1 turn"; or, with "15000
-// tokens", once its kind's parts after it hold that many tokens, so the latest
-// 15000 tokens of them are kept (trim.ts, newerTokens). The unit is taken
-// singular or plural whatever the count.
-type Rule = { action: Action; after: string }
+// out the latest few: `eligible_after` is "4 requests" or "1 turn"; or, with
+// "15000 tokens", once its kind's parts after it hold that many tokens, so the
+// latest 15000 tokens of them are kept (trim.ts, newerTokens). The unit is
+// taken singular or plural whatever the count. Eligible, as a trim waits for
+// one worth its rewrite (trim.ts, decide).
+type Rule = { action: Action; eligible_after: string }
 type Unit = 'request' | 'turn' | 'token'
 const AFTER = /^(\d+) (request|turn|token)s?$/
 
-// A rule's `after` as its unit and count; none if it is neither.
+// A rule's `eligible_after` as its unit and count; none if it is neither.
 export function afterOf(r: Rule): { on: Unit; wait: number } | undefined {
-  const m = typeof r?.after === 'string' ? AFTER.exec(r.after) : null
+  const m = typeof r?.eligible_after === 'string' ? AFTER.exec(r.eligible_after) : null
   return m ? { on: m[2] as Unit, wait: Number(m[1]) } : undefined
 }
 // Of the user's and the assistant's text: `summary_threshold_tokens` is how
@@ -132,20 +133,22 @@ export const skillRulesNow = (rules: (SkillRule & { match?: string })[]): SkillR
 // `tool_list`, one list for Claude Code or lists by harness, whose rules may
 // have `defer` true or false for the action; and `tools_not_deferred`, naming
 // the tools Claude Code keeps, every other deferred; and part rules timed by
-// `on` ("step" or "turn") and `wait`, written as `after`, a step as a request;
-// and the thresholds under `prompt_and_assistant_text`; and skill and tool
-// search rules keyed `skill` and `tool_search`.
+// `on` ("step" or "turn") and `wait`, a step as a request, or by `after`, both
+// written as `eligible_after`; and the thresholds under
+// `prompt_and_assistant_text`; and skill and tool search rules keyed `skill`
+// and `tool_search`.
 export function upgraded(v: Record<string, unknown>): Record<string, unknown> | undefined {
   const old = ['skill_list', 'tool_list', 'tools_not_deferred', 'summary_threshold_tokens', 'memoir_threshold_tokens']
   const kinds = Object.keys(v).filter((k) => Object.hasOwn(ACTIONS, k))
   const conv = isObject(v.conversation_shaver_rules) ? v.conversation_shaver_rules : {}
-  const onWait = (r: unknown) => isObject(r) && 'on' in r
+  const onWait = (r: unknown) => isObject(r) && ('on' in r || 'after' in r)
   const timedOlder = [...kinds.map((k) => v[k]), ...Object.values(conv)].some((rs) => Array.isArray(rs) && rs.some(onWait))
   const renamed = (k: string) => (k === 'skill' || k === 'tool_search' ? `tool:${k}` : k)
   const unkeyed = [...kinds, ...Object.keys(conv)].some((k) => renamed(k) !== k)
   if (!kinds.length && !timedOlder && !unkeyed && !('prompt_and_assistant_text' in conv) && !old.some((k) => k in v)) return undefined
   const after = (wait: number, unit: string) => `${wait} ${unit}${wait === 1 ? '' : 's'}`
-  const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { action: r.action, after: after(r.wait, r.on === 'step' ? 'request' : r.on) } : r)) : rs)
+  const eligible = (r: Record<string, unknown>) => ('after' in r ? r.after : after(r.wait as number, r.on === 'step' ? 'request' : (r.on as string)))
+  const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { action: r.action, eligible_after: eligible(r) } : r)) : rs)
   type Older = { name: string; defer?: boolean; action?: string }
   const now = (rs: Older[]) => rs.map((r) => (r.defer === undefined ? r : { name: r.name, action: r.defer ? 'defer' : 'keep' }))
   const tools = v.tool_list
@@ -251,6 +254,11 @@ function spanOf(text: string, name: string): { key: number; value: number; end: 
 //   Shim: upgraded() renames them `tool:skill` and `tool:tool_search`, the
 //   same way.
 //   Remove when: upgrading from before 2026-11-22 is no longer supported.
+// BACKCOMPAT(2026-11-23)
+//   Before: part rules were timed by `after`.
+//   Shim: upgraded() writes it as `eligible_after`, the same way.
+//   Remove when: upgrading from before 2026-11-23 is no longer supported, and
+//   policies saved in logs from before then are no longer read.
 // A policy in the current form, as a policy saved in the logs is read.
 export const policyNow = (v: unknown): Policy => parsePolicy((isObject(v) && upgraded(v)) || v)
 

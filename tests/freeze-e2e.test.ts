@@ -58,7 +58,7 @@ async function proxy(up: string, dir = mkdtempSync(path.join(tmpdir(), 'freeze-e
     policy,
     JSON.stringify({
       force_trim_before_autocompact: { on_proximity_to_autocompact: '20000 tokens' },
-      conversation_shaver_rules: { tool: [{ action: 'drop', after: '1 request' }], user_and_assistant_text: { summary_threshold_tokens: 10_000_000, memoir_threshold_tokens: 10_000_000 } },
+      conversation_shaver_rules: { tool: [{ action: 'drop', eligible_after: '1 request' }], user_and_assistant_text: { summary_threshold_tokens: 10_000_000, memoir_threshold_tokens: 10_000_000 } },
       tool_shaver_rules: { claude: [] },
       skill_shaver_rules: [],
     }),

@@ -39,9 +39,9 @@ async function upstream(): Promise<{ url: string; close(): void }> {
 // The replay's own drop policy at wait 2, so WAIT=2 checks the rebuild.
 const POLICY = {
   conversation_shaver_rules: {
-    tool: [{ action: 'drop', after: '2 requests' }],
-    'tool:skill': [{ action: 'drop', after: '0 turns' }],
-    reasoning: [{ action: 'drop', after: '0 turns' }],
+    tool: [{ action: 'drop', eligible_after: '2 requests' }],
+    'tool:skill': [{ action: 'drop', eligible_after: '0 turns' }],
+    reasoning: [{ action: 'drop', eligible_after: '0 turns' }],
     user_and_assistant_text: { summary_threshold_tokens: 1e9, memoir_threshold_tokens: 1e9 },
   },
   tool_shaver_rules: { claude: [] },

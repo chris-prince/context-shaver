@@ -28,7 +28,7 @@ test("a Codex compaction is passed through unchanged and journaled bare with its
 
   const dir = mkdtempSync(path.join(tmpdir(), 'compact-e2e-'))
   const policy = path.join(dir, 'policy.json')
-  writeFileSync(policy, JSON.stringify({ conversation_shaver_rules: { tool: [{ action: 'drop', after: '1 request' }] }, tool_shaver_rules: { codex: [] }, skill_shaver_rules: [] }))
+  writeFileSync(policy, JSON.stringify({ conversation_shaver_rules: { tool: [{ action: 'drop', eligible_after: '1 request' }] }, tool_shaver_rules: { codex: [] }, skill_shaver_rules: [] }))
   const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', `http://127.0.0.1:${port}`, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, HOME: dir } })
   try {
     const url = await new Promise<string>((ok, fail) => {

@@ -67,7 +67,7 @@ async function run(ft: { proximity: number; saves?: number } | undefined, compac
   const up = await upstream()
   const policy = path.join(dir, 'policy.json')
   writeFileSync(policy, JSON.stringify({
-    conversation_shaver_rules: { tool: [{ action: 'drop', after: '0 requests' }] },
+    conversation_shaver_rules: { tool: [{ action: 'drop', eligible_after: '0 requests' }] },
     tool_shaver_rules: { claude: [] },
     skill_shaver_rules: [],
     ...(ft && { force_trim_before_autocompact: { on_proximity_to_autocompact: `${ft.proximity} tokens`, ...(ft.saves && { if_trim_saves_at_least: `${ft.saves} tokens` }) } }),
