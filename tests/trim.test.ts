@@ -55,7 +55,7 @@ const byKind = (a: Applied) => transitions({ msgs: [], origin: [], treated: new 
 const counts = (a: Applied) => {
   const out: Record<string, number> = {}
   for (const [k, n] of Object.entries(byKind(a))) {
-    const key = k.replace(/^(file_read|command|file_search):/, 'tool:')
+    const key = k.replace(/^(file_read|file_edit|command|web):/, 'tool:')
     out[key] = (out[key] ?? 0) + n
   }
   return out
@@ -327,13 +327,13 @@ test('a kind of tool call without its own key takes the tool rules it can be giv
   assert.throws(() => parsePolicy({ conversation_shaver_rules: { 'tool:tool_search': [{ action: 'stub', eligible_after: '1 turn' }] } }), /bad tool:tool_search rule/)
 })
 
-test('a call in the file_read, command or file_search group is that kind, trimmed by its own rules or else the tool rules', () => {
-  const calls: [string, object][] = [['Read', { file_path: 'a.ts' }], ['Bash', { command: 'sed -n 1,9p a.ts' }], ['Bash', { command: 'npm test' }], ['Bash', { command: 'grep -n x a.ts' }], ['WebFetch', { url: 'u' }]]
+test('a call in the file_read, file_edit, command or web group is that kind, trimmed by its own rules or else the tool rules', () => {
+  const calls: [string, object][] = [['Read', { file_path: 'a.ts' }], ['Bash', { command: 'sed -n 1,9p a.ts' }], ['Bash', { command: 'npm test' }], ['Bash', { command: 'grep -n x a.ts' }], ['WebFetch', { url: 'u' }], ['Edit', { file_path: 'a.ts', old_string: 'a', new_string: 'b' }], ['CronList', {}]]
   const convo = calls.flatMap(([name, input], i) => turn(i + 1, name, input))
-  const p: PartRules = { tool: [{ action: 'drop', eligible_after: '0 requests' }], 'tool:file_read': [{ action: 'drop', eligible_after: '1 turn' }], 'tool:command': [{ action: 'drop', eligible_after: '1 turn' }] }
-  assert.deepEqual(byKind(apply(convo, p, { requests: 9, turns: 1 })), { 'file_search:drop': 1, 'tool:drop': 1 })
-  assert.deepEqual(byKind(apply(convo, p, { requests: 9, turns: 5 })), { 'file_read:drop': 2, 'command:drop': 1, 'file_search:drop': 1, 'tool:drop': 1 })
-  assert.deepEqual(byKind(apply(convo, { tool: [{ action: 'stub', eligible_after: '0 requests' }] }, { requests: 9, turns: 4 })), { 'file_read:stub': 2, 'command:stub': 1, 'file_search:stub': 1, 'tool:stub': 1 })
+  const p: PartRules = { tool: [{ action: 'drop', eligible_after: '0 requests' }], 'tool:file_read': [{ action: 'drop', eligible_after: '1 turn' }], 'tool:command': [{ action: 'drop', eligible_after: '1 turn' }], 'tool:web': [{ action: 'drop', eligible_after: '1 turn' }] }
+  assert.deepEqual(byKind(apply(convo, p, { requests: 20, turns: 1 })), { 'file_edit:drop': 1, 'tool:drop': 1 })
+  assert.deepEqual(byKind(apply(convo, p, { requests: 20, turns: 6 })), { 'file_read:drop': 2, 'command:drop': 2, 'file_edit:drop': 1, 'web:drop': 1, 'tool:drop': 1 })
+  assert.deepEqual(byKind(apply(convo, { tool: [{ action: 'stub', eligible_after: '0 requests' }] }, { requests: 20, turns: 6 })), { 'file_read:stub': 2, 'command:stub': 2, 'file_edit:stub': 1, 'web:stub': 1, 'tool:stub': 1 })
 })
 
 test('a policy keying skill and tool search rules `skill` and `tool_search` is put under `tool:`', () => {
@@ -423,12 +423,12 @@ test('a tool call is stubbed, then dropped, as the conversation goes on', () => 
 test('the gate applies every due transition at once', () => {
   const stubLater: PartRules = { ...committed, tool: [{ action: 'stub', eligible_after: '1 request' }] }
   const at = (c: Clock) => apply(msgs, stubLater, c)
-  assert.deepEqual(transitions(at({ requests: 0, turns: 0 }), at({ requests: 5, turns: 2 })), { 'tool:stub': 1, 'command:stub': 1, 'reasoning:drop': 4 })
+  assert.deepEqual(transitions(at({ requests: 0, turns: 0 }), at({ requests: 5, turns: 2 })), { 'file_edit:stub': 1, 'command:stub': 1, 'reasoning:drop': 4 })
   // A clock the gate held back catches up in one batch: a call never sent
   // stubbed goes straight to dropped. One sent stubbed moves on to dropped.
   const p: PartRules = { tool: [{ action: 'stub', eligible_after: '3 requests' }, { action: 'drop', eligible_after: '4 requests' }] }
-  assert.deepEqual(transitions(apply(msgs, p, { requests: 0, turns: 0 }), apply(msgs, p, { requests: 5, turns: 2 })), { 'tool:drop': 1 })
-  assert.deepEqual(transitions(apply(msgs, p, { requests: 4, turns: 2 }), apply(msgs, p, { requests: 5, turns: 2 })), { 'tool:drop': 1 })
+  assert.deepEqual(transitions(apply(msgs, p, { requests: 0, turns: 0 }), apply(msgs, p, { requests: 5, turns: 2 })), { 'file_edit:drop': 1 })
+  assert.deepEqual(transitions(apply(msgs, p, { requests: 4, turns: 2 }), apply(msgs, p, { requests: 5, turns: 2 })), { 'file_edit:drop': 1 })
 })
 
 test('a skill goes whole, with its body, once its turn is completed', () => {

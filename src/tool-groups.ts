@@ -2,14 +2,14 @@
 // tool made it: a file read through Read or through `sed -n` is file_read
 // either way. Logged with each message's kinds (log.ts), as
 // `toolCalls:<group>` and `toolResults:<group>`.
-export type ToolGroup = 'file_read' | 'file_edit' | 'file_search' | 'command' | 'web' | 'agent' | 'other'
+export type ToolGroup = 'file_read' | 'file_edit' | 'command' | 'web' | 'agent' | 'other'
 
 // Tool names, lowercased, across Claude Code, Codex and OpenCode. A shell
 // tool's group comes from its command (shellGroup).
 const NAMED: Record<string, ToolGroup> = {
   read: 'file_read',
   edit: 'file_edit', multiedit: 'file_edit', write: 'file_edit', notebookedit: 'file_edit', patch: 'file_edit', apply_patch: 'file_edit',
-  grep: 'file_search', glob: 'file_search', list: 'file_search',
+  grep: 'command', glob: 'command', list: 'command',
   webfetch: 'web', websearch: 'web', web_search: 'web',
   agent: 'agent', task: 'agent', sendmessage: 'agent', spawn_agent: 'agent', wait_agent: 'agent', send_message: 'agent',
   list_agents: 'agent', followup_task: 'agent', close_agent: 'agent', resume_agent: 'agent',
@@ -60,8 +60,8 @@ const WRITERS = new Set(['cat', 'echo', 'printf'])
 // A shell command's group. Every part (split at &&, ||, ; and |) has to be a
 // read, a search, a filter or a write for it to be anything but command. A
 // write (cat, echo or printf into a file, sed -i, tee) makes it file_edit;
-// else the first command of each pipeline decides, a read winning over a
-// search. Any other command sending its output to a file is command, as is
+// else a read starting any pipeline makes it file_read, and searches alone
+// are command. Any other command sending its output to a file is command, as is
 // one fed a heredoc other than cat's or one with $( ) or backticks. Heredoc
 // bodies and quoted text are set aside first, so a | or > in them counts for
 // nothing.
@@ -70,7 +70,7 @@ export function shellGroup(text: string): ToolGroup {
     .replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[^]*?\n\2(?=\n|$)/g, (m) => m.slice(0, m.indexOf('\n')))
     .replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''")
   if (!command.trim() || /\$\(|`/.test(command)) return 'command'
-  let read = false, search = false, edit = false
+  let read = false, edit = false
   for (const pipeline of command.split(/&&|\|\||;|\n/)) {
     const stages = pipeline.split('|').map((s) => s.trim().replace(/^(\w+=\S*(\s+|$))+/, '')).filter(Boolean)
     if (stages.length === 1 && /^cd\b/.test(stages[0])) continue
@@ -80,9 +80,8 @@ export function shellGroup(text: string): ToolGroup {
       if ((word === 'sed' && /\s-i\b/.test(s)) || word === 'tee' || (into && WRITERS.has(word))) edit = true
       else if (into || s.includes('<<')) return 'command'
       else if (i === 0 && READS.has(word)) read = true
-      else if (i === 0 && SEARCHES.has(word)) search = true
       else if (!READS.has(word) && !SEARCHES.has(word) && !FILTERS.has(word)) return 'command'
     }
   }
-  return edit ? 'file_edit' : read ? 'file_read' : search ? 'file_search' : 'command'
+  return edit ? 'file_edit' : read ? 'file_read' : 'command'
 }

@@ -388,8 +388,9 @@ is never trimmed.
 | --- | --- | --- |
 | `tool` | A tool call with its results | `stub`, `drop` |
 | `tool:file_read` | A call that shows a file (`Read`; shell `cat`, `sed -n`, `head`, …), or a file Claude Code restores | `stub`, `drop` |
-| `tool:command` | Any other shell command | `stub`, `drop` |
-| `tool:file_search` | A search or listing (`Grep`, `Glob`; shell `grep`, `rg`, `find`, `ls`, …) | `stub`, `drop` |
+| `tool:file_edit` | A call that changes a file (`Edit`, `Write`, `apply_patch`; shell `sed -i`, `tee`, a write into a file) | `stub`, `drop` |
+| `tool:command` | Any other shell command, and a search or listing (`Grep`, `Glob`) | `stub`, `drop` |
+| `tool:web` | A web fetch or search (`WebFetch`, `WebSearch`, `web_search`) | `stub`, `drop` |
 | `tool:skill` | A `Skill` call, its result and the skill's body beside it | `stub`, `drop` |
 | `tool:tool_search` | A `ToolSearch` call and its result | `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |

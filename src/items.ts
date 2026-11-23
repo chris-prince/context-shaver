@@ -10,7 +10,7 @@ import { groupOf } from './tool-groups.ts'
 
 // The tool groups (tool-groups.ts) that are kinds of their own; a call in
 // any other group is a `tool`.
-export const GROUP_KINDS = ['file_read', 'command', 'file_search'] as const
+export const GROUP_KINDS = ['file_read', 'file_edit', 'command', 'web'] as const
 export const isGroupKind = (k: string): k is (typeof GROUP_KINDS)[number] => (GROUP_KINDS as readonly string[]).includes(k)
 const kindOfGroup = (g: string): Kind => (isGroupKind(g) ? g : 'tool')
 
@@ -75,11 +75,11 @@ export function heldTo(c: Clock, msgs: readonly ApiMsg[]): Clock {
 //   sends as a text block beside the result;
 // - tool_search: a ToolSearch call with its result, which loads the tools it found
 //   (their definitions go with it);
-// - file_read, command, file_search: a tool call in that group (tool-groups.ts,
+// - file_read, file_edit, command, web: a tool call in that group (tool-groups.ts,
 //   groupOf), with its results; a Read sent as system text (READ) is a
 //   file_read. Each takes the tool rules where it has none of its own.
 // - reasoning: an assistant message's thinking, by the message's index.
-export type Kind = 'tool' | 'file_read' | 'command' | 'file_search' | 'skill' | 'tool_search' | 'reasoning'
+export type Kind = 'tool' | 'file_read' | 'file_edit' | 'command' | 'web' | 'skill' | 'tool_search' | 'reasoning'
 export type Item = { kind: Kind; id: string; request: number; turn: number }
 
 export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'redacted_thinking'
