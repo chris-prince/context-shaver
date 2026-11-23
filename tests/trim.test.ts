@@ -104,7 +104,7 @@ test('a rule is due once its unit is completed, past the wait', () => {
 
 test('a policy file is checked', () => {
   assert.deepEqual(Object.keys(policy), ['conversation_shaver_rules', 'tool_shaver_rules', 'skill_shaver_rules'])
-  assert.deepEqual(Object.keys(committed), ['tool', 'tool:skill', 'tool:tool_search', 'reasoning', 'user_and_assistant_text'])
+  assert.deepEqual(Object.keys(committed), ['tool', 'tool:file_read', 'tool:file_edit', 'tool:command', 'tool:web', 'tool:skill', 'tool:tool_search', 'reasoning', 'user_and_assistant_text'])
   const parts = (v: object) => ({ conversation_shaver_rules: v })
   const tools = (v: unknown) => ({ tool_shaver_rules: v })
   const skills = (v: unknown) => ({ skill_shaver_rules: v })
@@ -421,7 +421,7 @@ test('a tool call is stubbed, then dropped, as the conversation goes on', () => 
 })
 
 test('the gate applies every due transition at once', () => {
-  const stubLater: PartRules = { ...committed, tool: [{ action: 'stub', eligible_after: '1 request' }] }
+  const stubLater: PartRules = { tool: [{ action: 'stub', eligible_after: '1 request' }], reasoning: committed.reasoning }
   const at = (c: Clock) => apply(msgs, stubLater, c)
   assert.deepEqual(transitions(at({ requests: 0, turns: 0 }), at({ requests: 5, turns: 2 })), { 'file_edit:stub': 1, 'command:stub': 1, 'reasoning:drop': 4 })
   // A clock the gate held back catches up in one batch: a call never sent

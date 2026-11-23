@@ -4,6 +4,22 @@
       { "action": "drop", "eligible_after": "4 requests" },
       { "action": "drop", "eligible_after": "2 turns" }
     ],
+    "tool:file_read": [
+      { "action": "drop", "eligible_after": "4 requests" },
+      { "action": "drop", "eligible_after": "2 turns" }
+    ],
+    "tool:file_edit": [
+      { "action": "stub", "eligible_after": "4 requests" },
+      { "action": "drop", "eligible_after": "2 turns" }
+    ],
+    "tool:command": [
+      { "action": "stub", "eligible_after": "0 requests" },
+      { "action": "drop", "eligible_after": "0 turns" }
+    ],
+    "tool:web": [
+      { "action": "stub", "eligible_after": "0 requests" },
+      { "action": "drop", "eligible_after": "0 turns" }
+    ],
     "tool:skill": [
       { "action": "stub", "eligible_after": "10 requests" },
       { "action": "drop", "eligible_after": "100 requests" }
