@@ -8,7 +8,7 @@
 // it pays. The latest request and the current turn are never touched.
 
 import type { Model } from './models.ts'
-import { blocks, CLAUDE_CODE, heldTo, isSkillBody, isThinking, itemsOf, READ, READ_RESULT, readPairs, readsOf, requestsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
+import { blocks, CLAUDE_CODE, GROUP_KINDS, heldTo, isGroupKind, isSkillBody, isThinking, itemsOf, READ, READ_RESULT, readPairs, readsOf, requestsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash } from './log.ts'
 import { afterOf, rulesFor, treatment, type Action, type PartRules } from './policy.ts'
 
@@ -160,12 +160,14 @@ function tokensOf(msgs: readonly ApiMsg[], items: ReadonlyMap<string, Item>, thi
 // on, and more is due as the clock moves.
 function newerTokens(msgs: readonly ApiMsg[], items: ReadonlyMap<string, Item>, c: Clock, thinking: Thinking): Map<string, number> {
   const tokens = tokensOf(msgs, items, thinking)
+  // The tool groups' kinds count as one kind, tool.
+  const family = (k: Kind): Kind => (isGroupKind(k) ? 'tool' : k)
   const sums = new Map<Kind, number>()
   const out = new Map<string, number>()
   for (const it of [...items.values()].reverse()) {
-    const n = sums.get(it.kind) ?? 0
+    const n = sums.get(family(it.kind)) ?? 0
     out.set(it.id, n)
-    if (it.request && it.request <= c.requests) sums.set(it.kind, n + (tokens.get(it.id) ?? 0))
+    if (it.request && it.request <= c.requests) sums.set(family(it.kind), n + (tokens.get(it.id) ?? 0))
   }
   return out
 }
@@ -331,7 +333,7 @@ export function trimmedEnd(msgs: readonly ApiMsg[], policy: PartRules, clock: Cl
         return n > 0 ? of.findIndex((x) => x > n) : 0
       }),
     )
-  return { tools: end('tool'), reasoning: end('reasoning') }
+  return { tools: Math.max(end('tool'), ...GROUP_KINDS.map(end)), reasoning: end('reasoning') }
 }
 
 // --- When to move the applied clock. ---

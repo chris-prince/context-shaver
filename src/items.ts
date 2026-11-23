@@ -6,6 +6,14 @@
 // counted from 1; every request but the latest is completed. A turn runs from a prompt,
 // counted from 1; every turn but the current one is completed.
 
+import { groupOf } from './tool-groups.ts'
+
+// The tool groups (tool-groups.ts) that are kinds of their own; a call in
+// any other group is a `tool`.
+export const GROUP_KINDS = ['file_read', 'command', 'file_search'] as const
+export const isGroupKind = (k: string): k is (typeof GROUP_KINDS)[number] => (GROUP_KINDS as readonly string[]).includes(k)
+const kindOfGroup = (g: string): Kind => (isGroupKind(g) ? g : 'tool')
+
 export type Block = { type: string; [k: string]: unknown }
 export type ApiMsg = { role: 'user' | 'assistant' | 'system'; content: string | Block[] }
 
@@ -62,14 +70,16 @@ export function heldTo(c: Clock, msgs: readonly ApiMsg[]): Clock {
 }
 
 // What a policy decides about:
-// - tool: a tool call with its results, by the call's id, or a Read sent as
-//   system text (READ);
+// - tool: a tool call with its results, by the call's id;
 // - skill: a Skill call with its result and the skill's body, which Claude Code
 //   sends as a text block beside the result;
 // - tool_search: a ToolSearch call with its result, which loads the tools it found
 //   (their definitions go with it);
+// - file_read, command, file_search: a tool call in that group (tool-groups.ts,
+//   groupOf), with its results; a Read sent as system text (READ) is a
+//   file_read. Each takes the tool rules where it has none of its own.
 // - reasoning: an assistant message's thinking, by the message's index.
-export type Kind = 'tool' | 'skill' | 'tool_search' | 'reasoning'
+export type Kind = 'tool' | 'file_read' | 'command' | 'file_search' | 'skill' | 'tool_search' | 'reasoning'
 export type Item = { kind: Kind; id: string; request: number; turn: number }
 
 export const isThinking = (b: Block) => b.type === 'thinking' || b.type === 'redacted_thinking'
@@ -138,10 +148,10 @@ export function itemsOf(msgs: readonly ApiMsg[], conv: Conventions = CLAUDE_CODE
   msgs.forEach((m, i) => {
     const at = { request: requestOf[i], turn: turnOf[i] }
     // Before the first response, a system message is the base.
-    if (m.role !== 'assistant' && at.request > 0) for (let n = 0; n < readsOf(m); n++) out.push({ kind: 'tool', id: `read:${i}:${n}`, ...at })
+    if (m.role !== 'assistant' && at.request > 0) for (let n = 0; n < readsOf(m); n++) out.push({ kind: 'file_read', id: `read:${i}:${n}`, ...at })
     if (m.role !== 'assistant' || typeof m.content === 'string') return
     if (m.content.some(isThinking)) out.push({ kind: 'reasoning', id: String(i), ...at })
-    for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: conv.kinds[String(b.name)] ?? 'tool', id: String(b.id), ...at })
+    for (const b of m.content) if (b.type === 'tool_use') out.push({ kind: conv.kinds[String(b.name)] ?? kindOfGroup(groupOf(String(b.name ?? ''), b.input)), id: String(b.id), ...at })
   })
   return out
 }

@@ -29,9 +29,9 @@ export function afterOf(r: Rule): { on: Unit; wait: number } | undefined {
 // `memoir_threshold_tokens` is how many tokens the records can hold before the
 // oldest are merged into the memoir (summary.ts); without it, none are.
 type Text = { summary_threshold_tokens?: number; memoir_threshold_tokens?: number }
-// Each kind's key: a skill or tool search is a kind of tool call, keyed
-// `tool:<kind>`.
-const KEYS = { tool: 'tool', 'tool:skill': 'skill', 'tool:tool_search': 'tool_search', reasoning: 'reasoning' } as const satisfies Record<string, Kind>
+// Each kind's key: a tool group, skill or tool search is a kind of tool call,
+// keyed `tool:<kind>`.
+const KEYS = { tool: 'tool', 'tool:file_read': 'file_read', 'tool:command': 'command', 'tool:file_search': 'file_search', 'tool:skill': 'skill', 'tool:tool_search': 'tool_search', reasoning: 'reasoning' } as const satisfies Record<string, Kind>
 type Key = keyof typeof KEYS
 export type PartRules = Partial<Record<Key, Rule[]>> & { user_and_assistant_text?: Text }
 // `conversation_shaver_rules` says, by kind, when the proxy stubs or drops a part of
@@ -68,7 +68,7 @@ export function forcedTrimOf(p: Policy): { proximity: number; saves: number } | 
 export const textRules = (p: Policy): Text => p.conversation_shaver_rules?.user_and_assistant_text ?? {}
 
 // What each kind can be given. Only tool calls and skills have a stub.
-const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
+const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], file_read: ['stub', 'drop'], command: ['stub', 'drop'], file_search: ['stub', 'drop'], skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
 
 // The rules a kind is given: its key's, or for a kind of tool call without
 // its own key, the tool rules it can be given (a tool search's drops only).

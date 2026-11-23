@@ -49,7 +49,17 @@ test('with no later request to share its savings (horizon 0, a compaction), a tr
 })
 
 // The items an application changed, counted by kind and treatment.
-const counts = (a: Applied) => transitions({ msgs: [], origin: [], treated: new Map() }, a)
+const byKind = (a: Applied) => transitions({ msgs: [], origin: [], treated: new Map() }, a)
+// The transitions with the tool groups' kinds counted as tool, for tests of
+// the tool rules in general; byKind keeps them apart.
+const counts = (a: Applied) => {
+  const out: Record<string, number> = {}
+  for (const [k, n] of Object.entries(byKind(a))) {
+    const key = k.replace(/^(file_read|command|file_search):/, 'tool:')
+    out[key] = (out[key] ?? 0) + n
+  }
+  return out
+}
 
 // A turn as Claude Code sends it: prompt, a response with thinking and a tool
 // call, its result, a response with thinking and an answer, and a
@@ -317,6 +327,15 @@ test('a kind of tool call without its own key takes the tool rules it can be giv
   assert.throws(() => parsePolicy({ conversation_shaver_rules: { 'tool:tool_search': [{ action: 'stub', eligible_after: '1 turn' }] } }), /bad tool:tool_search rule/)
 })
 
+test('a call in the file_read, command or file_search group is that kind, trimmed by its own rules or else the tool rules', () => {
+  const calls: [string, object][] = [['Read', { file_path: 'a.ts' }], ['Bash', { command: 'sed -n 1,9p a.ts' }], ['Bash', { command: 'npm test' }], ['Bash', { command: 'grep -n x a.ts' }], ['WebFetch', { url: 'u' }]]
+  const convo = calls.flatMap(([name, input], i) => turn(i + 1, name, input))
+  const p: PartRules = { tool: [{ action: 'drop', eligible_after: '0 requests' }], 'tool:file_read': [{ action: 'drop', eligible_after: '1 turn' }], 'tool:command': [{ action: 'drop', eligible_after: '1 turn' }] }
+  assert.deepEqual(byKind(apply(convo, p, { requests: 9, turns: 1 })), { 'file_search:drop': 1, 'tool:drop': 1 })
+  assert.deepEqual(byKind(apply(convo, p, { requests: 9, turns: 5 })), { 'file_read:drop': 2, 'command:drop': 1, 'file_search:drop': 1, 'tool:drop': 1 })
+  assert.deepEqual(byKind(apply(convo, { tool: [{ action: 'stub', eligible_after: '0 requests' }] }, { requests: 9, turns: 4 })), { 'file_read:stub': 2, 'command:stub': 1, 'file_search:stub': 1, 'tool:stub': 1 })
+})
+
 test('a policy keying skill and tool search rules `skill` and `tool_search` is put under `tool:`', () => {
   const old = { conversation_shaver_rules: { tool: [{ action: 'drop', after: '4 requests' }], skill: [{ action: 'stub', after: '10 requests' }], tool_search: [{ action: 'drop', after: '10 turns' }] } }
   assert.deepEqual(upgraded(old), { conversation_shaver_rules: { tool: [{ action: 'drop', eligible_after: '4 requests' }], 'tool:skill': [{ action: 'stub', eligible_after: '10 requests' }], 'tool:tool_search': [{ action: 'drop', eligible_after: '10 turns' }] } })
@@ -338,7 +357,7 @@ test('a Read sent as system text is a tool call; the rest of its message stays',
   const at = (a: Applied) => a.msgs[a.origin.indexOf(3)]
 
   const stubbed = apply(convo, stubAll, clockOf(convo))
-  assert.deepEqual(stubbed.treated.get('read:3:1'), { kind: 'tool', action: 'stub' })
+  assert.deepEqual(stubbed.treated.get('read:3:1'), { kind: 'file_read', action: 'stub' })
   const s = `${stub(Buffer.byteLength(lines))}\n`
   assert.deepEqual(at(stubbed).content, [{ type: 'text', text: read('a.ts', s) + read('b.ts', s) + env, cache_control: { type: 'ephemeral' } }])
 
@@ -362,7 +381,7 @@ test('a Read sent as a pair of reminders in a user message is a tool call; the r
   const at = (a: Applied) => a.msgs[a.origin.indexOf(4)]
 
   const stubbed = apply(convo, stubAll, clockOf(convo))
-  assert.deepEqual(stubbed.treated.get('read:4:1'), { kind: 'tool', action: 'stub' })
+  assert.deepEqual(stubbed.treated.get('read:4:1'), { kind: 'file_read', action: 'stub' })
   const s = `${stub(Buffer.byteLength(lines))}\n`
   assert.deepEqual(at(stubbed).content, [call('a.ts'), result(s), call('b.ts'), result(s), prompt])
 
@@ -404,7 +423,7 @@ test('a tool call is stubbed, then dropped, as the conversation goes on', () => 
 test('the gate applies every due transition at once', () => {
   const stubLater: PartRules = { ...committed, tool: [{ action: 'stub', eligible_after: '1 request' }] }
   const at = (c: Clock) => apply(msgs, stubLater, c)
-  assert.deepEqual(transitions(at({ requests: 0, turns: 0 }), at({ requests: 5, turns: 2 })), { 'tool:stub': 2, 'reasoning:drop': 4 })
+  assert.deepEqual(transitions(at({ requests: 0, turns: 0 }), at({ requests: 5, turns: 2 })), { 'tool:stub': 1, 'command:stub': 1, 'reasoning:drop': 4 })
   // A clock the gate held back catches up in one batch: a call never sent
   // stubbed goes straight to dropped. One sent stubbed moves on to dropped.
   const p: PartRules = { tool: [{ action: 'stub', eligible_after: '3 requests' }, { action: 'drop', eligible_after: '4 requests' }] }

@@ -387,6 +387,9 @@ is never trimmed.
 | Kind | Item | Actions |
 | --- | --- | --- |
 | `tool` | A tool call with its results | `stub`, `drop` |
+| `tool:file_read` | A call that shows a file (`Read`; shell `cat`, `sed -n`, `head`, …), or a file Claude Code restores | `stub`, `drop` |
+| `tool:command` | Any other shell command | `stub`, `drop` |
+| `tool:file_search` | A search or listing (`Grep`, `Glob`; shell `grep`, `rg`, `find`, `ls`, …) | `stub`, `drop` |
 | `tool:skill` | A `Skill` call, its result and the skill's body beside it | `stub`, `drop` |
 | `tool:tool_search` | A `ToolSearch` call and its result | `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |
@@ -394,7 +397,9 @@ is never trimmed.
 A `tool:` kind without its own key takes the `tool` rules it can be given: a
 skill takes them all, a tool search only the drops. An empty list of its own
 keeps it. The logs name these calls and results the same way, as
-`toolCalls:skill` and `toolResults:tool_search`.
+`toolCalls:skill` and `toolResults:tool_search`. The groups are sorted as the
+logs sort them (`src/tool-groups.ts`); a token rule counts all tool calls'
+tokens, whatever their group.
 
 When a skill is invoked again, Claude Code sends a note beside the result in
 place of the body, or before it; the note goes with the skill.
