@@ -160,6 +160,20 @@ test('loading a policy in an older form rewrites the file in the current one, ke
   assert.deepEqual(loadPolicy(file), loaded)
 })
 
+test('a rewritten policy reads back every setting as it was, plain values included', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'shaver-'))
+  const file = path.join(dir, 'policy.json')
+  const now = {
+    ...JSON.parse(readFileSync(path.join(import.meta.dirname, '..', 'policy.default.json'), 'utf8')),
+    force_trim_before_autocompact: { on_proximity_to_autocompact: '20000 tokens', if_trim_saves_at_least: '20000 tokens' },
+  }
+  const { 'tool:skill': skill, ...rest } = now.conversation_shaver_rules
+  writeFileSync(file, JSON.stringify({ ...now, conversation_shaver_rules: { ...rest, skill } }))
+  loadPolicy(file)
+  assert.notEqual(readFileSync(file, 'utf8'), readFileSync(`${file}.old`, 'utf8'))
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), now)
+})
+
 test('a missing policy file is made from the default, and an edited one is kept', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'shaver-'))
   const [file, from] = [path.join(dir, 'policy.json'), path.join(dir, 'policy.default.json')]

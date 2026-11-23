@@ -184,7 +184,8 @@ function valueText(v: unknown): string {
   if (Array.isArray(v)) return listOf(v, '  ')
   if (!isObject(v)) return JSON.stringify(v)
   const lists = Object.entries(v as Record<string, object>)
-  return lists.length ? `{\n${lists.map(([k, rs]) => `    ${JSON.stringify(k)}: ${Array.isArray(rs) ? listOf(rs, '    ') : one(rs)}`).join(',\n')}\n  }` : '{}'
+  const field = (x: unknown) => (Array.isArray(x) ? listOf(x, '    ') : isObject(x) ? one(x) : JSON.stringify(x))
+  return lists.length ? `{\n${lists.map(([k, x]) => `    ${JSON.stringify(k)}: ${field(x)}`).join(',\n')}\n  }` : '{}'
 }
 
 // A policy file's text with its top-level `name` set to `rules`, the rest of
