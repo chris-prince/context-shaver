@@ -41,7 +41,7 @@ import { localHost, route } from './via.ts'
 import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
-import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Summaries } from './info.ts'
+import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
 import { anchored, apply, counting, entriesOf, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
@@ -1169,9 +1169,13 @@ function bare(err: unknown): string {
 }
 
 // Saves the last summary fork of a conversation that gave no record.
-function failedFork(key: string, failed: NonNullable<Forks['failed']>): void {
-  writeFileSync(summariesOf(key), JSON.stringify({ ...loadSummaries(key), failed }))
+// A summary request's end, in the records file: what `change` makes of it,
+// and its outcome counted.
+function ended(key: string, outcome: Outcome, change: (s: Summaries) => Partial<Summaries> = () => ({})): void {
+  const s = loadSummaries(key)
+  writeFileSync(summariesOf(key), JSON.stringify({ ...s, ...change(s), outcomes: { ...s.outcomes, [outcome]: (s.outcomes?.[outcome] ?? 0) + 1 } }))
 }
+const failedFork = (key: string, failed: NonNullable<Forks['failed']> & { outcome: 'rejected' | 'failed' }) => ended(key, failed.outcome, () => ({ failed }))
 
 // Saves a summary fork's response body that gave no record, beside the
 // conversation's log, to read or parse again; gives its path there.
@@ -1234,23 +1238,26 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     // Nothing complete yet is the answer the instructions ask for then.
     const none = !record && nothingComplete(out.content, f)
     const rejected = record || none ? undefined : rejectionOf(out.content, f)
+    const outcome: Outcome = salvaged ? 'salvaged' : record ? 'recorded' : none ? 'nothing-complete' : 'rejected'
     stage = 'write'
     let merged: number | undefined
-    if (record) {
-      const s = loadSummaries(key)
-      const chain = [...s.chain.filter((r) => r.endsBefore <= f.start), record]
-      merged = memoirAt ? mergedOf(chain, s.merged ?? 0, memoirAt) : 0
-      // A salvage is shown as the last failure (shaver info), by its stop reason.
-      const failed = salvaged ? { failed: { time, outcome: 'salvaged', reason: stop ?? 'unknown' } } : {}
-      writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain, merged, recordedAt: f.current, ...failed }))
-    } else if (!none) failedFork(key, { time, outcome: 'rejected', reason: rejected?.reason ?? 'unknown' })
+    if (record)
+      ended(key, outcome, (s) => {
+        const chain = [...s.chain.filter((r) => r.endsBefore <= f.start), record]
+        merged = memoirAt ? mergedOf(chain, s.merged ?? 0, memoirAt) : 0
+        // A salvage is shown as the last failure (shaver info), by its stop reason.
+        const failed = salvaged ? { failed: { time, outcome: 'salvaged', reason: stop ?? 'unknown' } } : {}
+        return { chain, merged, recordedAt: f.current, ...failed }
+      })
+    else if (none) ended(key, outcome)
+    else failedFork(key, { time, outcome: 'rejected', reason: rejected?.reason ?? 'unknown' })
     const tokens = usage ? `, ${usage.output_tokens} output tokens` : ''
     // proxy.log has problems only: a fork that recorded is in the step events.
     if (rejected) console.error(`${what} rejected, ${rejected?.reason}${tokens}, stopped: ${stop ?? 'unknown'}`)
     if (salvaged) console.error(`${what} cut off (${stop})${tokens}; kept its whole arcs, ending before [${record!.endsBefore}]`)
     if (logDir) {
       const why = rejected ? { reason: rejected.reason, ...(rejected.endsBefore !== undefined && { foundEndsBefore: rejected.endsBefore }), answer: savedAnswer(logDir, time, text) } : salvaged ? { answer: savedAnswer(logDir, time, text) } : undefined
-      writeLine(logDir, { event: 'summary', time, outcome: salvaged ? 'salvaged' : record ? 'recorded' : none ? 'nothing-complete' : 'rejected', ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record && (record.arcs?.length ?? 'unparsed'), merged, usage, stop, ...why })
+      writeLine(logDir, { event: 'summary', time, outcome, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record && (record.arcs?.length ?? 'unparsed'), merged, usage, stop, ...why })
     }
   } catch (err) {
     const time = new Date().toISOString()

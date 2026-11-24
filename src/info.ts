@@ -15,7 +15,10 @@ import type { Summary } from './summary.ts'
 // before it ended, would save over. `failed` is the last summary fork that gave
 // no record (Forks, stats.ts); `recordedAt`, the turn the fork that made the
 // last record was offered at (summary.ts, summaryForkOf).
-export type Summaries = { chain: Summary[]; merged?: number; spent: number; requests: number; failed?: Forks['failed']; recordedAt?: number }
+// How each summary request ended (server.ts, the summary fork), as its step
+// event's `outcome` says, counted from 2026-11-24 on.
+export type Outcome = 'recorded' | 'salvaged' | 'nothing-complete' | 'rejected' | 'failed'
+export type Summaries = { chain: Summary[]; merged?: number; spent: number; requests: number; failed?: Forks['failed']; recordedAt?: number; outcomes?: Partial<Record<Outcome, number>> }
 export const summariesIn = (dir: string, key: string) => path.join(dir, `${key}.summaries.json`)
 export function summariesFrom(dir: string, key: string): Summaries {
   try {
@@ -145,13 +148,22 @@ export type Live = { valid: number; inFlight?: boolean; missed?: number }
 // `shaver info`'s text: the stats, or with none journaled yet, `estimated`
 // ones; the cost with the summary forks' spend, summed over the session
 // (othersOf); and the summary requests, each of which is running, or left a
-// record or none. A record no longer fitting the messages is dropped, like
-// one replaced or none at all.
+// record or none. One that failed or whose answer was rejected is an error;
+// one answering that nothing was complete, empty; and the rest dropped: a
+// record replaced or no longer fitting the messages, or one from before
+// outcomes were counted.
 export function infoText(key: string, version: string, s: Stats, estimated: boolean, c: Cost | undefined, sums: Summaries, summarized: number, live: Live, others: Other[] = []): string {
   const session = c && others.reduce((t, o) => (o.cost ? plus(t, withForks(o.cost, o.spent)) : t), withForks(c, sums.spent))
   const applied = Math.min(summarized, live.valid)
   const pending = live.valid - applied + (live.inFlight ? 1 : 0)
-  const forks: Forks = { applied, pending, dropped: sums.requests - applied - pending, ...(sums.failed && { failed: sums.failed }) }
+  // BACKCOMPAT(2026-11-24)
+  //   Before: the records file counted summary requests, not their outcomes.
+  //   Shim: a request from before then that gave no record shows as dropped.
+  //   Remove when: records files from before 2026-11-24 are no longer read.
+  const o = sums.outcomes ?? {}
+  const errors = (o.failed ?? 0) + (o.rejected ?? 0)
+  const empty = o['nothing-complete'] ?? 0
+  const forks: Forks = { applied, pending, errors, empty, dropped: sums.requests - applied - pending - errors - empty, ...(sums.failed && { failed: sums.failed }) }
   const text = render(s, key, estimated, session, forks, noteOf(others), elsewhereOf(others, s))
   const warning = live.missed ? `\n\nshaver: since it started, the journal missed ${counted(live.missed, 'request')}; see proxy.log` : ''
   return '```\n' + `Shaver Version: ${version}\n` + text + warning + '\n```'

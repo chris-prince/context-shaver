@@ -190,6 +190,8 @@ test('each summary fork logs how it went, and each request why it sent none', as
     const state = JSON.parse(readFileSync(path.join(dir, 'state', `${key}.json`), 'utf8'))
     assert.equal(typeof forks[3].current, 'number')
     assert.deepEqual([file.recordedAt, state.offered], [forks[3].current, forks[3].current])
+    // Each request's outcome counted once, as its step event names it.
+    assert.deepEqual(file.outcomes, { failed: 1, rejected: 1, salvaged: 1, recorded: 1 })
   } finally {
     child.kill()
     up.close()

@@ -86,3 +86,12 @@ test("a lone request adds at most its prompt's turn, and none if it's the client
   assert.match(text({}), /\+ 1 request across 1 turn, in ancestor convs/)
   assert.match(text({ compaction: true }), /\+ 1 request, in ancestor convs\n/)
 })
+
+test("the summary requests' outcomes are shown as errors (failed and rejected), empty (nothing complete), and the rest dropped", () => {
+  const fates = (sums: object, summarized: number, live: { valid: number; inFlight?: boolean }) => infoText('k', 'v', s, false, cost(1), { chain: [], spent: 0, ...sums } as never, summarized, live).match(/summary creation requests?\n {6}(.*)/)![1]
+  // 7 requests: 2 applied, 1 in flight, 1 failed, 1 rejected, 1 empty, and 1 recorded but since replaced.
+  const outcomes = { recorded: 2, salvaged: 1, failed: 1, rejected: 1, 'nothing-complete': 1 }
+  assert.equal(fates({ requests: 7, outcomes }, 2, { valid: 2, inFlight: true }), '2 applied, 1 pending, 2 errors, 1 empty, 1 dropped')
+  // A file from before outcomes were counted: all that gave no record, dropped.
+  assert.equal(fates({ requests: 4 }, 2, { valid: 2 }), '2 applied, 0 pending, 2 dropped')
+})

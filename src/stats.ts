@@ -626,13 +626,14 @@ export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')
 
 // What became of a session's summary requests (summary.ts): their records the
 // prompt sends now (applied), those still to answer or waiting for a cold cache
-// (pending), and the rest (dropped); and the last that gave no record, how and
-// when.
-export type Forks = { applied: number; pending: number; dropped: number; failed?: { time: string; outcome: string; reason: string } }
+// (pending), those that failed or were rejected (errors), those that found
+// nothing complete (empty), and the rest (dropped); and the last that gave no
+// record, how and when.
+export type Forks = { applied: number; pending: number; errors: number; empty: number; dropped: number; failed?: { time: string; outcome: string; reason: string } }
 
 // `elsewhere` are lines under the requests line for the rest of the session
 // (info.ts): its ancestor conversations' and subagents' requests.
-export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, dropped: 0 }, costNote?: string, elsewhere: string[] = []): string {
+export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, errors: 0, empty: 0, dropped: 0 }, costNote?: string, elsewhere: string[] = []): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
@@ -675,10 +676,12 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
 
   const window = `Context Window: ${s.window ? `${s.window.toLocaleString('en-US')} tokens${s.windowGuessed ? ' (guessing)' : ''}` : '(unknown)'}`
   const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...elsewhere, ...(cost ? ['', 'Shaver Summary', '', ...costLines(cost, undefined, costNote)] : unpriced(s, estimated))]
-  const { failed, ...counts } = forks
-  const requests = counts.applied + counts.pending + counts.dropped
+  const { failed, applied, pending, errors, empty, dropped } = forks
+  const requests = applied + pending + errors + empty + dropped
   const last = failed ? [`      last failed: ${failed.outcome}, ${failed.reason}, ${localTime(failed.time)}`] : []
-  const fates = requests ? [`      ${Object.entries(counts).map(([fate, n]) => `${n} ${fate}`).join(', ')}`, ...last] : []
+  // Applied and pending always; the rest only where there are some.
+  const fates = [`${applied} applied`, `${pending} pending`, ...(errors ? [counted(errors, 'error')] : []), ...(empty ? [`${empty} empty`] : []), ...(dropped ? [`${dropped} dropped`] : [])]
+  const fateLines = requests ? [`      ${fates.join(', ')}`, ...last] : []
   out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${Math.round(total).toLocaleString('en-US')} total tokens`, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.
@@ -703,7 +706,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   out.push('    by age:')
   if (byDay[0]) out.push(row('today', byDay[0], total, 2))
   for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => a - b)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))
-  out.push('', `    ${counted(requests, 'summary creation request')}`, ...fates)
+  out.push('', `    ${counted(requests, 'summary creation request')}`, ...fateLines)
   out.push('', head('Frontier', frontier, total), '  Recent turns, not yet eligible to trim. Okay if large.')
   return out.join('\n')
 }
