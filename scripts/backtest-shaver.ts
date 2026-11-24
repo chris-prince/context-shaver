@@ -55,7 +55,7 @@ import { history } from '../src/journal.ts'
 import { modelOf, PROMPTS_KEPT, SINCE, type Model } from '../src/models.ts'
 import { forcedTrimOf, loadPolicy, policyNow, textRules, type PartRules, type Policy } from '../src/policy.ts'
 import { isCompaction, isSideRequest, keyOf, promptTokens, type Stats, withoutSideRequest } from '../src/stats.ts'
-import { promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
+import { mergedOf, promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
 import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf } from '../src/trim.ts'
 import { usesOf, wholeIn, type Uses } from './rereads.ts'
@@ -82,9 +82,13 @@ const outFile = opt('--out')
 const first = Number(opt('--first') ?? Infinity)
 const root = path.join(import.meta.dirname, '..')
 // The parts of a policy the backtest replays: the message rules, whether
-// summary records are applied, and the forced trim before compaction.
-type Rules = { rules: PartRules; summaryAt?: number; forcing?: { proximity: number; saves: number } }
-const rulesOf = (p: Policy): Rules => ({ rules: p.conversation_shaver_rules ?? {}, summaryAt: textRules(p).summary_threshold_tokens, forcing: forcedTrimOf(p) })
+// summary records are applied, when the oldest are merged into the memoir,
+// and the forced trim before compaction.
+type Rules = { rules: PartRules; summaryAt?: number; memoirAt?: number; forcing?: { proximity: number; saves: number } }
+const rulesOf = (p: Policy): Rules => ({ rules: p.conversation_shaver_rules ?? {}, summaryAt: textRules(p).summary_threshold_tokens, memoirAt: textRules(p).memoir_threshold_tokens, forcing: forcedTrimOf(p) })
+// How many of `chain`'s oldest records the memoir holds, as the proxy works
+// it out on each record's arrival (server.ts, after a summary).
+const mergedIn = (chain: readonly Summary[], memoirAt?: number) => (memoirAt ? chain.reduce((m, _, k) => mergedOf(chain.slice(0, k + 1), m, memoirAt), 0) : 0)
 const given = rulesOf(loadPolicy(process.env.POLICY ?? path.join(root, 'policy.json'))!)
 const dirs = args.length ? args : readdirSync(path.join(root, 'proxy-data/logs'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(root, 'proxy-data/logs', d.name))
 
@@ -269,6 +273,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
   const conv = h?.conventions ?? NO_CONVENTIONS
   let applied: Clock = { requests: 0, turns: 0 }
   let sentRecords = 0
+  let sentMerged = 0
   const entries = new Map<string, number>()
   const out: Tally = { cost: 0, trims: 0, costs: [], compactions: 0, ms: 0, tokens: [], compacted: [], rereads: 0, credited: 0 }
   // The uses and logged re-reads by the request they were decided on; each
@@ -298,21 +303,25 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     const own = withoutSideRequest(q.msgs, q.side)
     const held = heldTo(applied, own)
     const clock = clockOf(own)
-    const { rules, summaryAt, forcing } = asLogged ? real.policy! : given
+    const { rules, summaryAt, memoirAt, forcing } = asLogged ? real.policy! : given
     const chain = compacted || !summaryAt ? [] : validChain(renumbered(all.filter((r) => r.time <= q.time), q.msgs), q.msgs)
     let records = Math.min(sentRecords, chain.length)
-    let keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain.slice(0, records))
+    let merged = Math.min(sentMerged, records)
+    const allMerged = mergedIn(chain, memoirAt)
+    let keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain.slice(0, records), merged)
     const reads = (m: ApiMsg[]) => {
       const ps = positionsOf(m, 's', thinking, counting(q.model, q.auto))
       return ps.slice(0, readThrough(ps, live, q.model.lookback) + 1).reduce((x, p) => x + p.size, 0)
     }
     const cold = (m: ApiMsg[]) => { const ps = positionsOf(m, 's', thinking, counting(q.model, q.auto)); return ps.some((p) => p.breakpoint) && readThrough(ps, live, q.model.lookback) < 0 }
-    if (records < chain.length && cold(keep.msgs)) {
+    if ((records < chain.length || merged < allMerged) && cold(keep.msgs)) {
       records = chain.length
-      keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain)
+      merged = allMerged
+      keep = summarized(apply(q.msgs, rules, held, conv, thinking), q.msgs, chain, merged)
     }
     sentRecords = records
-    const end = q.auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(q.msgs, rules, conv, thinking), q.msgs, chain.slice(0, records)).msgs, 's', thinking)
+    sentMerged = merged
+    const end = q.auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(q.msgs, rules, conv, thinking), q.msgs, chain.slice(0, records), merged).msgs, 's', thinking)
     const anchor = (m: ApiMsg[]) => {
       if (q.auto) return m
       const x = anchored(m, end, 's', thinking)
@@ -334,7 +343,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     let forced = false
     const near = forcing && at != null && horizon(n, q, 0) >= 0 && !isSideRequest(q.msgs, q.side) ? real.estimate(keep.msgs) : undefined
     if (near !== undefined) {
-      const full = summarized(apply(q.msgs, rules, clock, conv, thinking), q.msgs, chain)
+      const full = summarized(apply(q.msgs, rules, clock, conv, thinking), q.msgs, chain, allMerged)
       const saves = near - real.estimate(full.msgs)!
       const would = near >= at! - forcing!.proximity && saves >= forcing!.saves
       forced = trace ? real.forced : would
@@ -343,12 +352,13 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
         body = anchor(full.msgs)
         applied = clock
         sentRecords = records = chain.length
+        sentMerged = merged = allMerged
         if (q.time >= fromTime && q.time < until) out.trims++
       }
     }
     // A horizon below 0 never trims; any other is 0 on a compaction.
     if (!forced && horizon(n, q, 0) >= 0 && (clock.requests > held.requests || clock.turns > held.turns)) {
-      const next = summarized(apply(q.msgs, rules, clock, conv, thinking), q.msgs, chain.slice(0, records))
+      const next = summarized(apply(q.msgs, rules, clock, conv, thinking), q.msgs, chain.slice(0, records), merged)
       const d = decide(anchor(keep.msgs), anchor(next.msgs), live, 's', q.model, thinking, q.auto, isCompaction(q.msgs) ? 0 : horizon(n, q, clock.requests - held.requests))
       trace?.(n, q, { ...d, cacheState: d.cold ? 'cold' : 'warm' })
       // Validating, the trims applied are those the proxy made, so each decision
@@ -460,6 +470,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     compacted = { prefix, from: real.msgs.length, last: real.msgs.at(-1)! }
     applied = { requests: 0, turns: 0 }
     sentRecords = 0
+    sentMerged = 0
   })
   return out
 }
