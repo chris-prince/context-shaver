@@ -21,7 +21,7 @@
 #                      BENCH_SETUP <run dir> <projects dir> <session id>.
 #                      The checkout is <run dir>/repo; a transcript written to
 #                      <projects dir>/<session id>.jsonl is resumed.
-#   BENCH_PROXY_CONVO_KEY
+#   BENCH_PROXY_CONV_KEY
 #                      the conversation key the setup's proxy-data holds the
 #                      transcript's records under, for live runs (optional)
 #   BENCH_RESULTS      where results/<name> go (default
@@ -162,7 +162,7 @@ fresh() { # <policy>
   [[ -z ${BENCH_PROXY_PATCH:-} ]] || git -C "$PCODE" am -q "$BENCH_PROXY_PATCH"
   homes
   [[ -z ${BENCH_SETUP:-} ]] || "$BENCH_SETUP" "$W" "$PROJ" "$SID"
-  [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${BENCH_PROXY_CONVO_KEY:-} && -f $PROJ/$SID.jsonl ]] && adopt "$1"
+  [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${BENCH_PROXY_CONV_KEY:-} && -f $PROJ/$SID.jsonl ]] && adopt "$1"
   return 0
 }
 
@@ -171,7 +171,7 @@ fresh() { # <policy>
 # through the dummy upstream gets: everything the proxy keeps per conversation
 # is named for its key, wherever it is. The resume's turn is undone.
 adopt() { # <policy>
-  local old=$BENCH_PROXY_CONVO_KEY probing=1
+  local old=$BENCH_PROXY_CONV_KEY probing=1
   cp "$PROJ/$SID.jsonl" "$W/transcript.tmp"
   node "$B/dummy.mjs" $DUMMY_PORT & echo $! >"$W/dummy.pid"
   proxy "$W/probe" "$1" http://127.0.0.1:$DUMMY_PORT
