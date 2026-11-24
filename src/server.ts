@@ -64,11 +64,23 @@ const { values: a } = parseArgs({
   },
 })
 
+// SHAVER_MODE=passthrough sends every request on as it came and its answer
+// back as it came (relay): to measure the unshaved path, such as a benchmark's
+// baseline, with exact counts. The policy file and the proxy's state are
+// neither read nor written; with --log-step-events each request is logged.
+// Any other value is refused, so a typo can't shave a run meant not to be.
+const mode = process.env.SHAVER_MODE ?? ''
+if (mode && mode !== 'passthrough') {
+  console.error(`shaver: SHAVER_MODE is "${mode}"; it can only be "passthrough", or unset to shave`)
+  process.exit(1)
+}
+const passthrough = mode === 'passthrough'
+
 // The repo's policy.json is made from policy.default.json the first time; a
 // --policy file given is taken as it is.
-if (a.policy === repoPolicy) seedPolicy(repoPolicy, path.resolve(import.meta.dirname, '..', 'policy.default.json'))
-const loaded = loadPolicy(a.policy)
-if (!loaded) console.error(`shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
+if (!passthrough && a.policy === repoPolicy) seedPolicy(repoPolicy, path.resolve(import.meta.dirname, '..', 'policy.default.json'))
+const loaded = passthrough ? undefined : loadPolicy(a.policy)
+if (!loaded && !passthrough) console.error(`shaver: no policy at ${a.policy}, so requests pass through untrimmed`)
 const policy = loaded ?? {}
 const conversationRules = policy.conversation_shaver_rules ?? {}
 const { summary_threshold_tokens: summaryAt, memoir_threshold_tokens: memoirAt } = textRules(policy)
@@ -79,7 +91,7 @@ mkdirSync(stateDir, { recursive: true })
 const lastCalls = new LastCalls(path.join(stateDir, 'last-calls.json'))
 // The conversations journaled that the table lacks, filled from their journals
 // and logs once; after that, only the folder's names are listed.
-{
+if (!passthrough) {
   const t = performance.now()
   const added = lastCalls.fill(journalKeys(stateDir), (k) => newestCall(stateDir, logRoot, k))
   if (added) console.error(`shaver: filled in last-calls.json for ${counted(added, 'conversation')}, in ${Math.round(performance.now() - t)}ms`)
@@ -715,7 +727,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // Codex's OpenAI provider compresses what it sends with zstd; it's read here
   // and sent on as it reads.
   const zstd = req.headers['content-encoding'] === 'zstd'
-  const original = zstd ? zstdDecompressSync(await readBody(req)) : await readBody(req)
+  const received = await readBody(req)
+  const original = zstd ? zstdDecompressSync(received) : received
   let raw = original
   const r = route(req.url ?? '/', a.upstream)
   const proto = 'error' in r ? protocolOf('/') : protocolOf(r.url, r.upstream)
@@ -740,6 +753,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // is refused with 426, which sends it straight to HTTP: Codex retried a
   // refused one for ~8s first. Codex over WebSockets sends only what's new.
   if (req.headers.upgrade) return void res.writeHead(426).end()
+  if (passthrough) return relay(req, res, received, original, upstream, url, proto, h)
   let p: Prepared | undefined
   // The request prepared again, shaped as the last that worked (Frozen).
   let again: (() => Prepared | undefined) | undefined
@@ -885,10 +899,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   const freezeLog = (q: Prepared | undefined) => q && (q.freeze.mode || q.freeze.unfrozen || attempts.length > 1) && { freeze: { ...(q.freeze.mode && { mode: q.freeze.mode }), gap: q.freeze.gap, ...(q.freeze.unfrozen && { unfrozen: q.freeze.unfrozen }), ...(q.freeze.frozen && { frozenSince: q.freeze.frozen.since }), attempts } }
   if (p?.logLine) Object.assign(p.logLine, freezeLog(p))
-  const out: Record<string, string> = {}
-  up.headers.forEach((v, k) => {
-    if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v
-  })
+  const out = answerHeaders(up)
   const re = proto.limits
   if (re && up.status === 200 && Object.keys(out).some((k) => re.test(k))) limits.set(proto, Object.fromEntries(Object.entries(out).filter(([k]) => re.test(k))))
   // An error answer goes to proxy.log whether or not requests are logged, by
@@ -970,6 +981,77 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // An answer that isn't streamed is complete only here; it is journaled
   // before its end goes out, as a stream's is above.
   finish(false)
+  res.end()
+}
+
+// The headers an answer goes back with: the API's, but for those of its
+// encoding and length, which fetch has undone.
+function answerHeaders(up: Response): Record<string, string> {
+  const out: Record<string, string> = {}
+  up.headers.forEach((v, k) => {
+    if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v
+  })
+  return out
+}
+
+// A request in passthrough mode (SHAVER_MODE): sent on byte for byte as it
+// came, still compressed if it was, with the client's headers but hop-by-hop
+// ones, and its answer passed back as it comes. Nothing of shaving is done:
+// no trim, breakpoint, resend, fork, freeze or warning, and no `shaver`
+// command is answered, so the API gets those as typed. No state is kept.
+// With logging, a request the API answers or refuses gets a `passthrough`
+// line in its conversation's log, its messages whole, with its usage or the
+// API's error; `cut` marks one the client left before its answer was done.
+// Kept apart from handle so shaving changes there can't reach it.
+async function relay(req: IncomingMessage, res: ServerResponse, received: Buffer, read: Buffer, upstream: string, url: string, proto: Protocol, h: Harness | undefined): Promise<void> {
+  const abort = new AbortController()
+  const usage = proto.usageReader()
+  res.on('close', () => res.writableFinished || usage.done || abort.abort())
+  const time = new Date().toISOString()
+  const up = await fetch(upstream + url, { method: req.method, headers: forwarded(req.headers, false), body: req.method === 'GET' || req.method === 'HEAD' ? undefined : received, signal: abort.signal })
+  // Logged once: when the answer is complete, cut off or refused.
+  const served = req.method === 'POST' && (compacts(url) || proto.serves(url.split('?')[0])) && read.length > 0
+  let logged = false
+  const log = (fields: () => Record<string, unknown>) => {
+    if (logged || !served || !a['log-step-events']) return
+    logged = true
+    try {
+      const more = fields()
+      const wire = JSON.parse(read.toString('utf8'))
+      const { body } = proto.canonical(wire)
+      if (!Array.isArray(body.messages) || !body.messages.length) return
+      const dir = path.join(logRoot, conversationId(h, proto.name, body, req.headers))
+      const headers = h && loggedHeaders(h, req.headers)
+      writeWhole({ dir, event: 'passthrough', side: body, named: h?.conventions.kinds, protocol: proto.name, params: paramsOf(wire), headers, more: { version, ...more } }, { time, model: body.model ?? 'unknown', provider: body.provider }, undefined)
+    } catch (err) {
+      console.error('shaver: passthrough request not logged:', err)
+    }
+  }
+  const out = answerHeaders(up)
+  if (up.status >= 400) {
+    const text = Buffer.from(await up.arrayBuffer())
+    console.error(`${new Date().toISOString()} shaver: upstream answered ${up.status} to ${req.method} ${upstream}${url.split('?')[0]}: ${errorShape(text.toString('utf8'))}`)
+    log(() => ({ status: up.status, error: text.toString('utf8').slice(0, 2000) }))
+    res.writeHead(up.status, out)
+    return void res.end(text)
+  }
+  res.writeHead(up.status, out)
+  const counts = (cut: boolean) => () => {
+    const { usage: u, failure } = usage.end()
+    return { status: up.status, ...usageFields(u), ...(failure && { failure }), ...(cut && { cut: true }) }
+  }
+  try {
+    if (up.body)
+      for await (const chunk of up.body) {
+        usage.push(chunk)
+        if (usage.done) log(counts(false))
+        if (!res.destroyed) res.write(chunk)
+      }
+  } catch (err) {
+    log(counts(true))
+    throw err
+  }
+  log(counts(false))
   res.end()
 }
 
@@ -1056,7 +1138,7 @@ function answeredResent(p: Prepared, usage: UsageReader, log?: WholeLog): void {
 // request, or one resent as it came.
 type WholeLog = { dir: string; event: string; side: Canonical; named?: Conventions['kinds']; protocol: string; params: Record<string, unknown>; headers?: Record<string, string>; more?: Record<string, unknown> }
 
-const writeWhole = (log: WholeLog, b: BareLine, counts: Record<string, unknown> | undefined) =>
+const writeWhole = (log: WholeLog, b: Pick<BareLine, 'time' | 'model' | 'provider'>, counts: Record<string, unknown> | undefined) =>
   writeLine(log.dir, { event: log.event, time: b.time, model: b.model, provider: b.provider, protocol: log.protocol, params: log.params, ...(log.headers && { headers: log.headers }), messages: writeMessages(log.dir, log.side.messages, log.named), ...writeDefs(log.dir, log.side as Parameters<typeof writeDefs>[1]), ...log.more, ...counts })
 
 // The warning a frozen conversation's turns end with, for the user; taken out
@@ -1507,7 +1589,7 @@ server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code !== 'EADDRINUSE') throw err
   console.error(`shaver: ${inUse(a.port)}`)
   process.exit(1)
-}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: version ${version}, listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}${dropUnbound ? ', dropping unbound thinking (SHAVER_DROP_UNBOUND_THINKING)' : ''}`))
+}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: version ${version}, listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}${passthrough ? ', passing every request through unmodified (SHAVER_MODE=passthrough)' : dropUnbound ? ', dropping unbound thinking (SHAVER_DROP_UNBOUND_THINKING)' : ''}`))
 
 function inUse(port: string) {
   return `port ${port} is in use by another program. Set SHAVER_PORT=NNNN to an available port number.`

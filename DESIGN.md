@@ -106,6 +106,17 @@ reported as that, with no registries offered.
 | `--log-step-events` | off | Write the log (below) |
 | `--cache-ttl-seconds` | `3600` | The longest cache TTL; a request's breakpoints or its model can make it shorter. Lower it only to test the cold path |
 
+With `SHAVER_MODE=passthrough` set when it starts, the proxy sends every
+request on byte for byte as it came, compressed or not, and passes its answer
+back as it came, to measure the unshaved path, such as a benchmark's baseline,
+with exact counts. Nothing is trimmed, marked with a breakpoint, resent, forked,
+frozen or warned of, and `shaver` commands go to the API unanswered. The policy
+file is neither read nor written, nor is `state/`. With `--log-step-events`,
+each request the API answers or refuses is logged as a `passthrough` line:
+its messages whole, with its usage, or the API's error. Any other value of
+`SHAVER_MODE` stops the proxy at start. `bin/run-proxy --restart` doesn't keep
+the mode: the proxy it starts shaves unless `SHAVER_MODE` is set where it runs.
+
 ### When the model is already proxied
 
 If `ANTHROPIC_BASE_URL` is already set when `claude-via-shaver` runs, say to a
