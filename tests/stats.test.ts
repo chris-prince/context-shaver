@@ -118,9 +118,9 @@ test('render prints the stats from the state alone', () => {
   const out = render(s, 'session')
   assert.match(out, /^Session: session\nModel: m\n/)
   // Model m has no price, so there is no cost to break down.
-  assert.match(out, /1 request across 1 turn, spanning 0m\n\nShaver Summary\n\n  Savings Breakdown\n    MISSING: Shaver lacks cost details for model m\.\n\nContext Details\n\n  1,000 tokens, actual\n  1,000 tokens, if no shaver\n\n  0 summary creation requests\n\n  Base/)
+  assert.match(out, /1 request across 1 turn, spanning 0m\n\nShaver Summary\n\n  Savings Breakdown\n    MISSING: Shaver lacks cost details for model m\.\n\nContext Details\n\n  1,000 total tokens\n\n  Base/)
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. Above 15k\? Run `shaver optimize`\./)
-  assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by type:\n      sysmsg-unrecognized +0 .*\n      user .*\n    by age:\n      today /)
+  assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by type:\n      user .*\n      sysmsg-unrecognized +0 .*\n    by age:\n      today .*\n\n    0 summary creation requests\n\n  Frontier/)
   assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
 })
 
@@ -206,16 +206,17 @@ test('before any request is answered, the request is estimated from its bytes', 
   assert.ok(s.inputTokens > 0)
   assert.equal(Math.round(sum(s)), s.inputTokens)
   const out = render(s, 'session', true)
-  assert.match(out, /0 requests across 0 turns, spanning 0m\n\nContext Details \(estimated\)\n\n  [\d,]+ tokens, actual\n  [\d,]+ tokens, if no shaver\n/)
+  assert.match(out, /0 requests across 0 turns, spanning 0m\n\nContext Details \(estimated\)\n\n  [\d,]+ total tokens\n\n/)
 })
 
 test('the summaries line counts summary creation requests by what became of them, none as 0', () => {
   const s = estimate(describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'))
-  assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 0 }), /\n  1 summary creation request\n    1 applied, 0 pending, 0 dropped\n\n/)
-  assert.match(render(s, 'session', true, undefined, { applied: 10, pending: 1, dropped: 2 }), /\n  13 summary creation requests\n    10 applied, 1 pending, 2 dropped\n\n/)
-  assert.match(render(s, 'session', true), /\n  0 summary creation requests\n\n/)
+  // Under the conversation's rows, set off by a blank line on each side.
+  assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 0 }), /\n\n    1 summary creation request\n      1 applied, 0 pending, 0 dropped\n\n  Frontier/)
+  assert.match(render(s, 'session', true, undefined, { applied: 10, pending: 1, dropped: 2 }), /\n\n    13 summary creation requests\n      10 applied, 1 pending, 2 dropped\n\n  Frontier/)
+  assert.match(render(s, 'session', true), /\n\n    0 summary creation requests\n\n  Frontier/)
   // The last that gave no record says how.
-  assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 1, failed: { time: '2026-11-04T10:00:00Z', outcome: 'rejected', reason: 'no-ends-before' } }), /\n    1 applied, 0 pending, 1 dropped\n    last failed: rejected, no-ends-before, 2026-11-04 \d\d:00 \S+\n\n/)
+  assert.match(render(s, 'session', true, undefined, { applied: 1, pending: 0, dropped: 1, failed: { time: '2026-11-04T10:00:00Z', outcome: 'rejected', reason: 'no-ends-before' } }), /\n      1 applied, 0 pending, 1 dropped\n      last failed: rejected, no-ends-before, 2026-11-04 \d\d:00 \S+\n\n  Frontier/)
 })
 
 test('an advance removes what the earlier messages cost less what they cost now', () => {

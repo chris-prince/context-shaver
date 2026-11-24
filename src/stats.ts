@@ -675,13 +675,11 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
 
   const window = `Context Window: ${s.window ? `${s.window.toLocaleString('en-US')} tokens${s.windowGuessed ? ' (guessing)' : ''}` : '(unknown)'}`
   const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...elsewhere, ...(cost ? ['', 'Shaver Summary', '', ...costLines(cost, undefined, costNote)] : unpriced(s, estimated))]
-  // The prompt as sent, then as it would be without the shaver, lined up.
-  const [now, without] = [total, total + (s.removedTokens ?? 0)].map((v) => Math.round(v).toLocaleString('en-US'))
   const { failed, ...counts } = forks
   const requests = counts.applied + counts.pending + counts.dropped
-  const last = failed ? [`    last failed: ${failed.outcome}, ${failed.reason}, ${localTime(failed.time)}`] : []
-  const fates = requests ? [`    ${Object.entries(counts).map(([fate, n]) => `${n} ${fate}`).join(', ')}`, ...last] : []
-  out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${now.padStart(without.length)} tokens, actual`, `  ${without} tokens, if no shaver`, '', `  ${counted(requests, 'summary creation request')}`, ...fates, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
+  const last = failed ? [`      last failed: ${failed.outcome}, ${failed.reason}, ${localTime(failed.time)}`] : []
+  const fates = requests ? [`      ${Object.entries(counts).map(([fate, n]) => `${n} ${fate}`).join(', ')}`, ...last] : []
+  out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${Math.round(total).toLocaleString('en-US')} total tokens`, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
   // The system prompt and the preamble by section, and the tools, side by
   // side.
   // BACKCOMPAT(2026-10-29)
@@ -694,7 +692,10 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   out.push('', head('Conversation', conversation, total), '  Earlier turns, already trimmed. Should stay small.', '    by type:')
   // Unrecognized notes show even when none are carried, with their first
   // lines, so a harness's new wording gets noticed (notes.ts).
-  for (const k of [...REST_TYPES].sort(byLabel)) {
+  // The user's and the assistant's text first, then what replaces it, then
+  // the rest by label.
+  const FIRST = ['user', 'assistant', 'summary', 'memoir']
+  for (const k of [...FIRST, ...REST_TYPES.filter((k) => !FIRST.includes(k)).sort(byLabel)]) {
     const unrecognized = k === 'harness:unrecognized' && !by.harness
     if (by[k] || unrecognized) out.push(row(label(k), by[k] ?? 0, total, 2))
     if (unrecognized) for (const line of s.unrecognized ?? []) out.push(`        ${line}`)
@@ -702,6 +703,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   out.push('    by age:')
   if (byDay[0]) out.push(row('today', byDay[0], total, 2))
   for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => a - b)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))
+  out.push('', `    ${counted(requests, 'summary creation request')}`, ...fates)
   out.push('', head('Frontier', frontier, total), '  Recent turns, not yet eligible to trim. Okay if large.')
   return out.join('\n')
 }
