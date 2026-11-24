@@ -157,16 +157,19 @@ export function coveredBy(a: Applied, msgs: readonly ApiMsg[], chain: readonly S
 // whether records already cover the turns before `start`.
 export type SummaryFork = { start: number; current: number; recorded: boolean; prompts: Array<{ id: number; quote: string; hash: string; time?: string; end?: string }>; chars: number }
 
-// The summary fork a request calls for: one when the turns completed since
-// `from` (the turn the last summary fork was offered at, or the last record's
-// end) hold at least `threshold` tokens of the user's and the assistant's text
-// in the messages as sent, by each one's count in `tokens` (stats.ts,
-// textTokens). `born` is when a
+// The summary fork a request calls for: one when a turn has completed since
+// the last fork was offered (`offered`), and the turns completed since the
+// last record's end hold at least `threshold` tokens of the user's and the
+// assistant's text in the messages as sent, by each one's count in `tokens`
+// (stats.ts, textTokens). Where the last fork made no record (`recorded`
+// false), only the turns from its offer count, so it isn't asked again until
+// as much is new; where it made one, the turns that record left out count
+// too. `born` is when a
 // message was first sent (stats.ts, bornOf). A turn's last request is the one
 // its last message answered, which sent the message before it. With none, it
 // says why (`skip`), and with too few tokens, how many the turns held.
 export type ForkSkip = { skip: 'no-new-turn' | 'no-preamble' | 'below-threshold'; tokens?: number }
-export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[], born: (m: ApiMsg) => string | undefined = () => undefined, turns = positional(msgs)): SummaryFork | ForkSkip {
+export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readonly Summary[], offered: number, threshold: number, thinking: Thinking, tokens: readonly number[], born: (m: ApiMsg) => string | undefined = () => undefined, turns = positional(msgs), recorded = false): SummaryFork | ForkSkip {
   const current = turns.at(-1)?.id ?? 0
   const start = chain.at(-1)?.endsBefore ?? turns[0]?.id ?? 1
   // Where turn `t` starts: the first turn's at the preamble's end. A turn no
@@ -177,9 +180,9 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
   }
   const covered = (t: number, j: number) => a.origin[j] >= at(t) && a.origin[j] < turns.at(-1)!.index
   const charsFrom = (t: number) => a.msgs.reduce((n, m, j) => (covered(t, j) ? n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking), 0) : n), 0)
-  const from = Math.max(start, Math.min(offered, current))
-  if (current <= start) return { skip: 'no-new-turn' }
+  if (current <= start || current <= offered) return { skip: 'no-new-turn' }
   if (preambleEnd(msgs) < 0) return { skip: 'no-preamble' }
+  const from = recorded ? start : Math.max(start, offered)
   const held = tokens.reduce((n, k, j) => (covered(from, j) ? n + k : n), 0)
   if (held < threshold) return { skip: 'below-threshold', tokens: held }
   const quote = (m: ApiMsg) => {

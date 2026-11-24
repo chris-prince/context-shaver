@@ -425,7 +425,9 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     ? (tokens: number[]): SummaryFork | Skip => {
         if (suggestion) return { skip: 'side-request' }
         if (!pos.some((q) => q.breakpoint)) return { skip: 'no-breakpoint' }
-        const f = summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m), turns)
+        // Whether the last fork offered made the last record, still in the messages.
+        const recorded = !broke && file?.recordedAt !== undefined && file.recordedAt === s?.offered
+        const f = summaryForkOf(sent, msgs, chain, s?.offered ?? 0, after, thinking, tokens, (m) => bornOf(latestOf(key), m), turns, recorded)
         return 'skip' in f && f.tokens !== undefined ? { ...f, threshold: after } : f
       }
     : undefined
@@ -1240,7 +1242,7 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
       merged = memoirAt ? mergedOf(chain, s.merged ?? 0, memoirAt) : 0
       // A salvage is shown as the last failure (shaver info), by its stop reason.
       const failed = salvaged ? { failed: { time, outcome: 'salvaged', reason: stop ?? 'unknown' } } : {}
-      writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain, merged, ...failed }))
+      writeFileSync(summariesOf(key), JSON.stringify({ ...s, chain, merged, recordedAt: f.current, ...failed }))
     } else if (!none) failedFork(key, { time, outcome: 'rejected', reason: rejected?.reason ?? 'unknown' })
     const tokens = usage ? `, ${usage.output_tokens} output tokens` : ''
     // proxy.log has problems only: a fork that recorded is in the step events.

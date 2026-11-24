@@ -13,8 +13,9 @@ import type { Summary } from './summary.ts'
 // holds, and the dollars its summary forks have cost. They are kept apart from
 // its state, which a request answered after a summary fork began, and prepared
 // before it ended, would save over. `failed` is the last summary fork that gave
-// no record (Forks, stats.ts).
-export type Summaries = { chain: Summary[]; merged?: number; spent: number; requests: number; failed?: Forks['failed'] }
+// no record (Forks, stats.ts); `recordedAt`, the turn the fork that made the
+// last record was offered at (summary.ts, summaryForkOf).
+export type Summaries = { chain: Summary[]; merged?: number; spent: number; requests: number; failed?: Forks['failed']; recordedAt?: number }
 export const summariesIn = (dir: string, key: string) => path.join(dir, `${key}.summaries.json`)
 export function summariesFrom(dir: string, key: string): Summaries {
   try {

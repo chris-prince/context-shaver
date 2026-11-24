@@ -186,6 +186,10 @@ test('each summary fork logs how it went, and each request why it sent none', as
     assert.match(err, /2 of 2 no longer fit, from record 1, which ends before \[5\]: that turn's prompt is gone/)
     const file = JSON.parse(readFileSync(path.join(dir, 'state', `${key}.summaries.json`), 'utf8'))
     assert.deepEqual([file.failed.outcome, file.failed.reason, file.requests], ['salvaged', 'refusal', 4])
+    // The last record was made by the fork offered at turn 9, and its state says it offered there.
+    const state = JSON.parse(readFileSync(path.join(dir, 'state', `${key}.json`), 'utf8'))
+    assert.equal(typeof forks[3].current, 'number')
+    assert.deepEqual([file.recordedAt, state.offered], [forks[3].current, forks[3].current])
   } finally {
     child.kill()
     up.close()

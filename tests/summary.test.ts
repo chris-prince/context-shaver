@@ -22,7 +22,7 @@ const session = (): ApiMsg[] => [
 const none = (msgs: ApiMsg[]) => apply(msgs, {}, { requests: 0, turns: 0 })
 // Each message's count as the stats have it: a tool result 1,000 tokens, the rest 100.
 const counts = (msgs: ApiMsg[]) => msgs.map((m) => (JSON.stringify(m).includes('tool_result') ? 1000 : 100))
-const forkOrSkip = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000, tokens = counts(msgs)) => summaryForkOf(none(msgs), msgs, chain, offered, threshold, new Map(), tokens)
+const forkOrSkip = (msgs: ApiMsg[], chain: Summary[] = [], offered = 0, threshold = 1000, tokens = counts(msgs), recorded = false) => summaryForkOf(none(msgs), msgs, chain, offered, threshold, new Map(), tokens, undefined, undefined, recorded)
 const summaryForkAt = (...args: Parameters<typeof forkOrSkip>) => {
   const f = forkOrSkip(...args)
   return 'skip' in f ? undefined : f
@@ -35,7 +35,7 @@ test('after a salvage, the next summary fork starts at the turn the cut-off answ
   const r = salvagedOf([{ type: 'text', text: cut }], f, 'now', 'refusal', 40)!
   assert.equal(r.endsBefore, 3)
   // No new turn since: the cut-off turns wait, rather than being asked again at once.
-  assert.deepEqual(forkOrSkip(session(), [r], f.current), { skip: 'below-threshold', tokens: 0 })
+  assert.deepEqual(forkOrSkip(session(), [r], f.current), { skip: 'no-new-turn' })
   // Turn four ends and turn five starts: the next fork starts at turn three,
   // so the turn the cut-off answer was in is asked for again.
   const five: ApiMsg[] = [...session(), { role: 'user', content: 'turn five' }]
@@ -74,12 +74,30 @@ test('a summary fork covers the completed turns from the last record on, once th
   assert.equal(summaryForkAt(msgs, [], 0, 3801), undefined)
   // Counted in tokens, not characters: the same turns at a token each are too few.
   assert.equal(summaryForkAt(msgs, [], 0, 1000, msgs.map(() => 1)), undefined)
-  // Offered at turn 3: only turn 3 counts towards the next, but it still asks from the start.
+  // Offered at turn 3, which made no record: only turn 3 counts towards the
+  // next, but it still asks from the start.
   assert.equal(summaryForkAt(msgs, [], 3, 1301), undefined)
   assert.equal(summaryForkAt(msgs, [], 3, 1300)?.start, 1)
+  // Offered at turn 4, the current one: none has completed since, so no fork.
+  assert.deepEqual(forkOrSkip(msgs, [], 4, 1), { skip: 'no-new-turn' })
   // With none, it says why.
   assert.deepEqual(forkOrSkip(msgs, [], 0, 3801), { skip: 'below-threshold', tokens: 3800 })
   assert.deepEqual(forkOrSkip(msgs, [{ endsBefore: 4 } as Summary]), { skip: 'no-new-turn' })
+})
+
+test('turns a record left out count towards the next fork, once a turn completes after the offer', () => {
+  // The fork offered at turn 4 recorded turn 1, ending before turn 2: turns 2 and 3 were left out.
+  const r = { endsBefore: 2 } as Summary
+  const five: ApiMsg[] = [...session(), { role: 'user', content: 'turn five' }]
+  // In turn 4 still, none has completed since the offer.
+  assert.deepEqual(forkOrSkip(session(), [r], 4, 2000, undefined, true), { skip: 'no-new-turn' })
+  // Turn four ends: turns 2–4 hold 3,900 tokens, past the threshold.
+  const g = forkOrSkip(five, [r], 4, 2000, undefined, true) as SummaryFork
+  assert.deepEqual([g.start, g.current], [2, 5])
+  assert.deepEqual(forkOrSkip(five, [r], 4, 3901, undefined, true), { skip: 'below-threshold', tokens: 3900 })
+  // Had that fork made no record (this one being an older fork's), only turn
+  // 4, from its offer, counts: 1,300 tokens, and it backs off.
+  assert.deepEqual(forkOrSkip(five, [r], 4, 2000), { skip: 'below-threshold', tokens: 1300 })
 })
 
 test("a summary fork's record is read back, and only one that covers a complete arc is kept", () => {
