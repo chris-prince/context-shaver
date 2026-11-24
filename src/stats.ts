@@ -626,8 +626,8 @@ export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')
 
 // What became of a session's summary requests (summary.ts): their records the
 // prompt sends now (applied), those still to answer or waiting for a cold cache
-// (pending), those that failed or were rejected (errors), those that found
-// nothing complete (empty), and the rest (dropped); and the last that gave no
+// (pending), those that found nothing complete (empty), those that failed or
+// were rejected (errors), and the rest (dropped); and the last that gave no
 // record, how and when.
 export type Forks = { applied: number; pending: number; errors: number; empty: number; dropped: number; failed?: { time: string; outcome: string; reason: string } }
 
@@ -680,7 +680,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const requests = applied + pending + errors + empty + dropped
   const last = failed ? [`      last failed: ${failed.outcome}, ${failed.reason}, ${localTime(failed.time)}`] : []
   // Applied and pending always; the rest only where there are some.
-  const fates = [`${applied} applied`, `${pending} pending`, ...(errors ? [counted(errors, 'error')] : []), ...(empty ? [`${empty} empty`] : []), ...(dropped ? [`${dropped} dropped`] : [])]
+  const fates = [`${applied} applied`, `${pending} pending`, ...(empty ? [`${empty} empty`] : []), ...(errors ? [counted(errors, 'error')] : []), ...(dropped ? [`${dropped} dropped`] : [])]
   const fateLines = requests ? [`      ${fates.join(', ')}`, ...last] : []
   out.push('', estimated ? 'Context Details (estimated)' : 'Context Details', '', `  ${Math.round(total).toLocaleString('en-US')} total tokens`, '', head('Base', base, total), "  Session's fixed overhead. Above 15k? Run `shaver optimize`.")
   // The system prompt and the preamble by section, and the tools, side by

@@ -213,10 +213,10 @@ test('the summaries line counts summary creation requests by what became of them
   const s = estimate(describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'))
   // Under the conversation's rows, set off by a blank line on each side.
   const none = { applied: 0, pending: 0, errors: 0, empty: 0, dropped: 0 }
-  // Applied and pending always; errors, empty and dropped only where there are some.
+  // Applied and pending always; empty, errors and dropped only where there are some.
   assert.match(render(s, 'session', true, undefined, { ...none, applied: 1 }), /\n\n    1 summary creation request\n      1 applied, 0 pending\n\n  Frontier/)
   assert.match(render(s, 'session', true, undefined, { ...none, applied: 10, pending: 1, dropped: 2 }), /\n\n    13 summary creation requests\n      10 applied, 1 pending, 2 dropped\n\n  Frontier/)
-  assert.match(render(s, 'session', true, undefined, { ...none, applied: 3, errors: 1, empty: 2, dropped: 1 }), /\n      3 applied, 0 pending, 1 error, 2 empty, 1 dropped\n/)
+  assert.match(render(s, 'session', true, undefined, { ...none, applied: 3, errors: 1, empty: 2, dropped: 1 }), /\n      3 applied, 0 pending, 2 empty, 1 error, 1 dropped\n/)
   assert.match(render(s, 'session', true, undefined, { ...none, errors: 2 }), /\n      0 applied, 0 pending, 2 errors\n/)
   assert.match(render(s, 'session', true), /\n\n    0 summary creation requests\n\n  Frontier/)
   // The last that gave no record says how.
