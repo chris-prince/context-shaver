@@ -6,7 +6,8 @@
 # The task is set in the environment:
 #   BENCH_COMMIT       the commit the checkout starts at. It has no later
 #                      commits, so the run can't look ahead.
-#   BENCH_PROMPT       a file holding the turn's prompt
+#   BENCH_PROMPT       a file holding the turn's prompt, or a folder of files,
+#                      one per turn, run in name order in one session
 #   BENCH_PATCH        a patch (git format-patch) committed on top, such as a
 #                      feature to try that's newer than BENCH_COMMIT (optional)
 #   BENCH_PROXY_COMMIT the commit the scratch proxy runs (optional; by default
@@ -265,13 +266,27 @@ run)
   # A run whose requests go around the proxy (a launcher that sets its own base
   # URL, or another claude on PATH) measures nothing, and one stuck before its
   # first request would wait out any outer timeout, so either fails the run.
-  agent "${PROMPT:-$(cat "$BENCH_PROMPT")}" >"$W/agent.jsonl" 2>"$W/agent.err" &
-  apid=$! limit=${BENCH_FIRST_REQUEST_TIMEOUT:-180} waited=0
-  while kill -0 $apid 2>/dev/null && ! reached; do
-    ((waited++ < limit)) || { kill_tree $apid; break; }
-    sleep 1
+  # A BENCH_PROMPT folder is a turn for each file in it, in name order, each
+  # resuming the session; turn N's output is agentN.jsonl, and agent.jsonl
+  # holds all the turns' in order.
+  prompts=()
+  if [[ -n ${PROMPT:-} || ! -d $BENCH_PROMPT ]]; then prompts=("${PROMPT:-$(cat "$BENCH_PROMPT")}")
+  else for f in "$BENCH_PROMPT"/*; do prompts+=("$(cat "$f")"); done; fi
+  limit=${BENCH_FIRST_REQUEST_TIMEOUT:-180} waited=0 n=0
+  : >"$W/agent.jsonl"
+  for p in "${prompts[@]}"; do
+    n=$((n + 1)) out=$W/agent.jsonl
+    ((${#prompts[@]} == 1)) || out=$W/agent$n.jsonl
+    agent "$p" >"$out" 2>>"$W/agent.err" &
+    apid=$!
+    while kill -0 $apid 2>/dev/null && ! reached; do
+      ((waited++ < limit)) || { kill_tree $apid; break; }
+      sleep 1
+    done
+    wait $apid || true
+    [[ $out == "$W/agent.jsonl" ]] || cat "$out" >>"$W/agent.jsonl"
+    reached || break
   done
-  wait $apid || true
   bypass=
   reached || bypass="no request reached the scratch proxy$( ((waited <= limit)) || echo " in $limit s"); check PATH (claude is $(command -v claude)) and BENCH_CLAUDE_UPSTREAM"
   [[ -z $bypass ]] || echo "$bypass" >>"$W/agent.err"
