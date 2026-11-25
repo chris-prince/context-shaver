@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { isMemoir, isSummary, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
-import { arcsIn, chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, keptNotes, memoirOf, mergedOf, nothingComplete, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { arcsPastEnd, arcsIn, chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, keptNotes, memoirOf, mergedOf, nothingComplete, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -299,8 +299,31 @@ test("a record's arcs are read from its headings and dated by their turns' promp
     { turn: 2, title: 'Did two.', time: born(msgs[6]), minutes: 2 },
   ])
   // No arcs without headings that start the record and rise within its turns.
-  for (const text of ['- a\n\n## [1] Did one.', '## [2] Two.\n## [1] One.', '## [1] One.\n## [3] Three.', '## Arc\n- a'])
+  for (const text of ['- a\n\n## [1] Did one.', '## [2] Two.\n## [1] One.', '## Arc\n- a'])
     assert.equal(recordOf([{ type: 'text', text: `${text}\n\nEnds before: [3]` }], f, 'now')!.arcs, undefined)
+})
+
+test('a record leaves out the arcs that start at or after its end, as interleaved work can write them', () => {
+  const msgs = session()
+  const f = summaryForkOf(none(msgs), msgs, [], 0, 1000, new Map(), counts(msgs)) as SummaryFork
+  // Arc 2 is still in progress, so the record ends before it; arc 3, done
+  // since, stays in its turn for a later summary fork.
+  const r = recordOf([{ type: 'text', text: '## [1] One.\n- a\n\n## [3] Three.\n- c\n\nEnds before: [2]' }], f, 'now')!
+  assert.deepEqual([r.endsBefore, r.text, r.arcs?.map((a) => a.turn)], [2, '## [1] One.\n- a', [1]])
+  // With every arc past the end there's no record.
+  const past = [{ type: 'text', text: '## [3] Three.\n- c\n\nEnds before: [2]' }]
+  assert.equal(recordOf(past, f, 'now'), undefined)
+  assert.deepEqual(rejectionOf(past, f), { reason: 'arcs-past-end', endsBefore: 2 })
+  // Each is named, for the proxy to log.
+  assert.deepEqual([arcsPastEnd([{ type: 'text', text: r.text + '\n\n## [3] Three.\n- c\n\nEnds before: [2]' }], f), arcsPastEnd(past, f)], [[3], [3]])
+  // Ending at the fork's first turn, as when the arc in progress started
+  // there, only arcs past it are nothing complete, with those arcs named.
+  const first = [{ type: 'text', text: `## [3] Three.\n- c\n\nEnds before: [${f.start}]` }]
+  assert.deepEqual([nothingComplete(first, f), recordOf(first, f, 'now'), arcsPastEnd(first, f)], [true, undefined, [3]])
+  // But not with text before them, or after the closing line.
+  assert.equal(nothingComplete([{ type: 'text', text: `Notes.\n\n## [3] Three.\n- c\n\nEnds before: [${f.start}]` }], f), false)
+  assert.equal(nothingComplete([{ type: 'text', text: `Ends before: [${f.start}]\nMore.` }], f), false)
+  assert.match(instructions(f), /Write every arc that starts before that turn, and none that starts at or after it, even a complete one/)
 })
 
 test('the oldest records merge into the memoir until the rest fit under the threshold', () => {

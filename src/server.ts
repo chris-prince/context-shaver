@@ -43,7 +43,7 @@ import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
 import { anchored, apply, counting, entriesOf, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
-import { chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
+import { arcsPastEnd, chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
 const mtimeOf: MtimeOf = (p) => {
@@ -1321,6 +1321,8 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     const none = !record && nothingComplete(out.content, f)
     const rejected = record || none ? undefined : rejectionOf(out.content, f)
     const outcome: Outcome = salvaged ? 'salvaged' : record ? 'recorded' : none ? 'nothing-complete' : 'rejected'
+    // Arcs written past the record's end, which the instructions ask for none of.
+    const cutArcs = arcsPastEnd(out.content, f)
     stage = 'write'
     let merged: number | undefined
     if (record)
@@ -1337,9 +1339,13 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     // proxy.log has problems only: a fork that recorded is in the step events.
     if (rejected) console.error(`${what} rejected, ${rejected?.reason}${tokens}, stopped: ${stop ?? 'unknown'}`)
     if (salvaged) console.error(`${what} cut off (${stop})${tokens}; kept its whole arcs, ending before [${record!.endsBefore}]`)
+    if (cutArcs.length && rejected?.reason !== 'arcs-past-end') console.error(`${what} wrote arcs past its end, ${cutArcs.map((id) => `[${id}]`).join(', ')}; left them out`)
+    if (record && !record.arcs) console.error(`${what} kept without arcs: its headings don't fit its turns`)
     if (logDir) {
-      const why = rejected ? { reason: rejected.reason, ...(rejected.endsBefore !== undefined && { foundEndsBefore: rejected.endsBefore }), answer: savedAnswer(logDir, time, text) } : salvaged ? { answer: savedAnswer(logDir, time, text) } : undefined
-      writeLine(logDir, { event: 'summary', time, outcome, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record && (record.arcs?.length ?? 'unparsed'), merged, usage, stop, ...why })
+      // The answer is saved wherever it departs from the instructions, for scripts/audit.ts.
+      const saved = salvaged || cutArcs.length || (record && !record.arcs)
+      const why = rejected ? { reason: rejected.reason, ...(rejected.endsBefore !== undefined && { foundEndsBefore: rejected.endsBefore }), answer: savedAnswer(logDir, time, text) } : saved ? { answer: savedAnswer(logDir, time, text) } : undefined
+      writeLine(logDir, { event: 'summary', time, outcome, ...asked, ms: Date.now() - began, endsBefore: record?.endsBefore, chars: record?.text.length ?? 0, arcs: record && (record.arcs?.length ?? 'unparsed'), merged, usage, stop, ...(cutArcs.length && { cutArcs }), ...why })
     }
   } catch (err) {
     const time = new Date().toISOString()

@@ -227,9 +227,9 @@ Under it, write terse bullets covering only the arc's memorable points, told as 
 
 Tell each point as an event, not as a rule drawn from it. Write "I deleted \`old/\` without asking; you had it restored (\`ed24806\`)", not "always ask before deleting". Report where things ended up rather than every step on the way, and leave out dead ends and intermediate versions unless they were land mines.
 
-Stop at the last complete arc. An arc is still in progress if the latest turn carries on its work, such as testing, fixing or committing what it built. Leave an arc in progress out entirely: I'll ask for it later, once it is done.
+An arc is still in progress if the latest turn carries on its work, such as testing, fixing or committing what it built. Your record ends where the earliest arc still in progress starts, or at the latest prompt's turn, [${f.prompts.at(-1)!.id}], if none is. Write every arc that starts before that turn, and none that starts at or after it, even a complete one: I'll ask for those later, once the earlier one is done.
 
-End your record with one line giving the internal ID of the first turn your arcs do not cover:
+End your record with one line giving the internal ID of the turn it ends at:
 
 Ends before: [<ID>]
 
@@ -266,7 +266,7 @@ export function recordOf(content: readonly Block[], f: SummaryFork, time: string
   const text = textOf(content)
   const m = endLine(text)!
   const n = Number(m[1])
-  const record = text.slice(0, m.index).trim()
+  const record = withinEnd(text.slice(0, m.index), f, n)
   const arcs = arcsOf(record, f, n)
   return { endsBefore: n, prompt: f.prompts[listedAt(f, n)].hash, text: record, time, ...(arcs && { arcs }), ...(tokens !== undefined && { tokens }) }
 }
@@ -300,7 +300,7 @@ export function salvagedOf(content: readonly Block[], f: SummaryFork, time: stri
 // turn its closing line names when it has one; or undefined when it gives one.
 // A line naming "Ends before" that isn't the closing line exactly is
 // misformatted.
-export type Rejection = { reason: 'tool-call' | 'no-ends-before' | 'ends-before-misformatted' | 'ends-before-out-of-range' | 'empty'; endsBefore?: number }
+export type Rejection = { reason: 'tool-call' | 'no-ends-before' | 'ends-before-misformatted' | 'ends-before-out-of-range' | 'empty' | 'arcs-past-end'; endsBefore?: number }
 export function rejectionOf(content: readonly Block[], f: SummaryFork): Rejection | undefined {
   if (content.some((b) => b.type === 'tool_use')) return { reason: 'tool-call' }
   const text = textOf(content)
@@ -309,13 +309,45 @@ export function rejectionOf(content: readonly Block[], f: SummaryFork): Rejectio
   const n = Number(m[1])
   if (listedAt(f, n) < 1) return { reason: 'ends-before-out-of-range', endsBefore: n }
   if (!text.slice(0, m.index).trim()) return { reason: 'empty', endsBefore: n }
+  if (!withinEnd(text.slice(0, m.index), f, n)) return { reason: 'arcs-past-end', endsBefore: n }
 }
 
-// Whether a summary fork answered that no arc is complete yet: only the
-// closing line, naming the turn it started at, as its instructions ask. That
-// gives no record but isn't a failure.
-export const nothingComplete = (content: readonly Block[], f: SummaryFork): boolean =>
-  !content.some((b) => b.type === 'tool_use') && textOf(content).trim() === `Ends before: [${f.start}]`
+// Whether a summary fork answered that no arc is complete yet: the closing
+// line, naming the turn it started at, as its instructions ask, with nothing
+// before it but arcs starting at or after that turn (arcsPastEnd), as when the
+// arc in progress started there and a later one is done. That gives no record
+// but isn't a failure.
+export function nothingComplete(content: readonly Block[], f: SummaryFork): boolean {
+  if (content.some((b) => b.type === 'tool_use')) return false
+  const text = textOf(content).trim()
+  const m = endLine(text)
+  return !!m && Number(m[1]) === f.start && !text.slice(m.index! + m[0].length).trim() && !withinEnd(text.slice(0, m.index), f, f.start)
+}
+
+// A record's text up to its first arc that starts at or after its end, which
+// it doesn't cover. The instructions ask for no such arc, but interleaved work
+// can finish an arc after one still in progress, and a summary fork may write
+// it anyway (arcsPastEnd, which the proxy logs). The arcs past the end stay in
+// their turns, for a later summary fork.
+function withinEnd(record: string, f: SummaryFork, endsBefore: number): string {
+  const past = pastEnd(record, f, endsBefore)[0]
+  return (past ? record.slice(0, past.index) : record).trim()
+}
+
+const pastEnd = (record: string, f: SummaryFork, endsBefore: number) => {
+  const end = listedAt(f, endsBefore)
+  return [...record.matchAll(/^## \[(\d+)\] /gm)].filter((h) => listedAt(f, Number(h[1])) >= end)
+}
+
+// The turn IDs of the arcs a summary fork's answer starts at or after the turn
+// its closing line names, which its record leaves out (withinEnd), or that a
+// nothing-complete answer has.
+export function arcsPastEnd(content: readonly Block[], f: SummaryFork): number[] {
+  const text = textOf(content)
+  const m = endLine(text)
+  if (!m || listedAt(f, Number(m[1])) < 0) return []
+  return pastEnd(text.slice(0, m.index), f, Number(m[1])).map((h) => Number(h[1]))
+}
 
 const textOf = (content: readonly Block[]) => content.filter((b) => b.type === 'text').map((b) => String(b.text)).join('')
 const endLine = (text: string) => [...text.matchAll(/^Ends before: \[(\d+)\]\s*$/gm)].at(-1)

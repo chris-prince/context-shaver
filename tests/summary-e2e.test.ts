@@ -26,7 +26,7 @@ async function upstream(): Promise<{ url: string; close(): void; asked: any[][] 
     () => ({ status: 500, body: { type: 'error', error: { type: 'api_error', message: 'boom' } } }),
     () => ({ status: 200, text: '## [1] Read the files.\n- read them', stop: 'max_tokens' }),
     () => ({ status: 200, text: '## [1] Read the files.\n- read them\n\n## [2] Read more.\n- read more\n\n## [5] And more.\n- partly don', stop: 'refusal' }),
-    () => ({ status: 200, text: '## [5] And more.\n- and more\n\n## [7] Last one.\n- the last\n\nEnds before: [9]', stop: 'end_turn' }),
+    () => ({ status: 200, text: '## [5] And more.\n- and more\n\n## [9] One more.\n- the last\n\nEnds before: [7]', stop: 'end_turn' }),
   ]
   let n = 0
   const server: Server = createServer((req, res) => {
@@ -144,8 +144,13 @@ test('each summary fork logs how it went, and each request why it sent none', as
     // record ends before [5], with the whole answer saved.
     assert.deepEqual([forks[2].endsBefore, forks[2].arcs, forks[2].stop], [5, 2, 'refusal'])
     assert.match(readFileSync(path.join(dir, 'logs', key, forks[2].answer), 'utf8'), /partly don/)
-    // The next fork picks up at the arc cut off.
-    assert.deepEqual([forks[3].start, forks[3].endsBefore, forks[3].arcs, forks[3].stop, forks[3].answer], [5, 9, 2, 'end_turn', undefined])
+    // The next fork picks up at the arc cut off. It writes arc [9] past its
+    // end, as interleaved work can: the record leaves it out, and the fork's
+    // line names it, with the answer saved, as proxy.log does.
+    assert.deepEqual([forks[3].start, forks[3].endsBefore, forks[3].arcs, forks[3].stop, forks[3].cutArcs], [5, 7, 1, 'end_turn', [9]])
+    assert.match(readFileSync(path.join(dir, 'logs', key, forks[3].answer), 'utf8'), /## \[9\] One more\./)
+    assert.match(err, /wrote arcs past its end, \[9\]; left them out/)
+    assert.equal(forks.filter((l) => l.cutArcs).length, 1)
     // Each fork has an internal ID of its own, after its request's.
     assert.deepEqual(all.filter((l) => l.event === 'fork').map((l) => l.id), [4, 6, 8, 10])
     // Why each request sent none, or that it sent one.
@@ -181,8 +186,8 @@ test('each summary fork logs how it went, and each request why it sent none', as
     assert.doesNotMatch(err, /boom|read them|partly don/)
     assert.match(err, /turns 1-5: rejected, no-ends-before, 20 output tokens, stopped: max_tokens/)
     assert.match(err, /turns 1-7: cut off \(refusal\), 20 output tokens; kept its whole arcs, ending before \[5\]/)
-    // It has problems only: the recorded fork is in the step events alone.
-    assert.doesNotMatch(err, /turns 5-9/)
+    // It has problems only: of the recorded fork, only the arcs it cut.
+    assert.deepEqual(err.match(/turns 5-9.*/g), ['turns 5-9: wrote arcs past its end, [9]; left them out'])
     assert.match(err, /2 of 2 no longer fit, from record 1, which ends before \[5\]: that turn's prompt is gone/)
     const file = JSON.parse(readFileSync(path.join(dir, 'state', `${key}.summaries.json`), 'utf8'))
     assert.deepEqual([file.failed.outcome, file.failed.reason, file.requests], ['salvaged', 'refusal', 4])

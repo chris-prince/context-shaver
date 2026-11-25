@@ -780,8 +780,18 @@ record is kept apart from sending it.
   same turn, when one prompt's work went to two goals; the first of them has
   the turn's minutes. The record also keeps the
   summary fork's output tokens. A record ending where a turn starts leaves no tool
-  call without its result. The next summary fork asks from that turn on. A
-  summary fork that finds no complete arc, or calls a tool, makes no record.
+  call without its result. A record covers the turns from its start up to its
+  end, with no gaps, so the instructions define its end as where the earliest
+  arc still in progress starts: an arc finished after that one, as interleaved
+  work leaves, waits for a later summary fork. Written anyway, its text is cut
+  off at the first arc starting at or after the end, its turn IDs logged as
+  `cutArcs` in the fork's summary line and in `proxy.log`, with the answer
+  saved. An answer with only such arcs makes no record: ending at the fork's
+  first turn, it counts as nothing complete, and otherwise it's rejected. The
+  next summary fork asks from that turn on. A summary fork that finds no
+  complete arc, or calls a tool, makes no record. `scripts/audit.ts` reports
+  each fork whose answer departs from the instructions: rejected, with arcs
+  cut, or kept without arcs.
 - **Turns by internal ID.** Each conversation has a counter, in
   `proxy-data/state/<key>.ids.json`, that every request and fork moves on.
   A prompt seen for the first time takes its next value as its turn's ID,

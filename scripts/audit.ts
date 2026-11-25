@@ -24,7 +24,9 @@ const logs = path.join(import.meta.dirname, '..', 'proxy-data', 'logs')
 // A logged conversation: its harness, from the key's prefix, each message
 // once, with when it was first sent, and each request as the proxy sent it.
 type Request = { time: string; protocol: string; breakpoints: number; last?: ApiMsg; count: number }
-type Conversation = { key: string; harness: string; messages: Array<{ msg: ApiMsg; time: string }>; requests: Request[] }
+type Conversation = { key: string; harness: string; messages: Array<{ msg: ApiMsg; time: string }>; requests: Request[]; forks: Fork[] }
+// A summary fork's step-event line (src/server.ts, summarize).
+type Fork = { time: string; outcome: string; reason?: string; endsBefore?: number; foundEndsBefore?: number; arcs?: number | 'unparsed'; cutArcs?: number[]; answer?: string }
 
 function load(): Conversation[] {
   const out: Conversation[] = []
@@ -34,10 +36,13 @@ function load(): Conversation[] {
     const seen = new Set<string>()
     const messages: Conversation['messages'] = []
     const requests: Request[] = []
+    const forks: Fork[] = []
     for (const line of readFileSync(path.join(dir, 'step_events.jsonl'), 'utf8').split('\n')) {
       if (!line) continue
       const e = JSON.parse(line)
-      if (e.event !== 'request' || Date.parse(e.time) < since) continue
+      if (Date.parse(e.time) < since) continue
+      if (e.event === 'summary') forks.push(e)
+      if (e.event !== 'request') continue
       const sent = messagesOf(e) ?? []
       const lastFile = sent.length ? path.join(objectsOf(dir), sent[sent.length - 1].hash + '.json') : ''
       // BACKCOMPAT(2026-10-18)
@@ -53,7 +58,7 @@ function load(): Conversation[] {
       }
     }
     const harness = ['claude', 'codex', 'opencode'].find((h) => key.startsWith(h + '-')) ?? 'unknown'
-    out.push({ key, harness, messages, requests })
+    out.push({ key, harness, messages, requests, forks })
   }
   return out
 }
@@ -130,6 +135,25 @@ function missingBreakpoints(cs: Conversation[]): Finding[] {
   return found
 }
 
+// Summary forks whose answers depart from their instructions, which the proxy
+// gets past but which mean the instructions or their parsing (src/summary.ts)
+// have stopped fitting: rejected, for any reason; arcs written past the
+// record's end, which it cut off (cutArcs); or a record kept without arcs, its
+// headings not fitting its turns.
+function offInstructions(cs: Conversation[]): Finding[] {
+  const found: Finding[] = []
+  for (const c of cs)
+    for (const x of c.forks) {
+      const why = [
+        ...(x.outcome === 'rejected' ? [`rejected, ${x.reason ?? 'unknown'}${x.foundEndsBefore !== undefined ? ` (ends before [${x.foundEndsBefore}])` : ''}`] : []),
+        ...(x.cutArcs?.length ? [`ends before [${x.endsBefore}], cut ${x.cutArcs.map((id) => `[${id}]`).join(', ')}`] : []),
+        ...(x.arcs === 'unparsed' ? [`ends before [${x.endsBefore}], kept without arcs`] : []),
+      ]
+      if (why.length) found.push({ time: x.time, text: `${c.key.slice(0, 48)} ${x.time.slice(0, 19)}  ${why.join('; ')}${x.answer ? `, answer ${x.answer}` : ''}` })
+    }
+  return found
+}
+
 // A window of findings already dealt with: those logged from `from` (or the
 // start) up to `until`, and why they need nothing more, usually a fix in the
 // proxy or the harness.
@@ -175,6 +199,38 @@ If it's neither: add the window to resolved, with why.`,
         why: `Claude Code sent 33, nearly all [SUGGESTION MODE…] or "The user stepped
 away" side requests right after one that had a breakpoint, then stopped:
 309 suggestion requests since, all with one. Taken as fixed in Claude Code.`,
+      },
+    ],
+  },
+  {
+    name: 'Summary forks answer as their instructions ask',
+    run: offInstructions,
+    todo: `Read the fork's saved answer (in that conversation's logs) and the turns
+it was asked about.
+- Rejected: the answer couldn't be read as a record. If it says something the
+  instructions allow, such as that nothing is complete, the parsing is wrong:
+  fix rejectionOf or nothingComplete. If not, and it keeps happening, reword
+  the instructions.
+- Arcs cut past the end: an arc complete after one still in progress, written
+  anyway. The record kept what came before the cut, and the cut arcs wait for
+  a later fork. If it keeps happening, reword where a record ends.
+- Kept without arcs: its headings don't fit its turns (arcsOf). The memoir
+  still lists them, undated. A heading form the instructions allow means
+  arcsOf is wrong; otherwise, if it keeps happening, reword the instructions.
+If it needs nothing more, add the window to resolved, with why.`,
+    resolved: [
+      {
+        from: '2026-11-05T23:47Z',
+        until: '2026-11-05T23:48Z',
+        why: `Rejected, ending before [1]: the answer was only "Ends before: [1]", the
+fork's start, as the instructions ask when nothing is complete. Read as
+nothing complete since a118a35.`,
+      },
+      {
+        from: '2026-11-18T01:40Z',
+        until: '2026-11-18T01:41Z',
+        why: `Kept without arcs: two arcs started in turn [1090], one prompt's work on
+two goals. Arcs can share a turn since 2026-11-24.`,
       },
     ],
   },
