@@ -24,10 +24,28 @@
 //     runs are as many. There's a session for each size and each padding.
 //   ttl: one short session per gap, all side by side; each is resumed after
 //     its gap, and the read shows whether the entry was still there.
+//   breakpoints: what explicit cache breakpoints (prompt_cache_breakpoint on
+//     an input_text part) do. One session of two prompts, the second --runs
+//     tool results long, is resumed once; that request is held while it's
+//     sent upstream changed, each variant once, in order (each reads what the
+//     ones before it left), and then passed on. P is the second prompt, far
+//     back; O1 to O5 the outputs after it, each the end of a request of Codex's:
+//       same     the request again: read all
+//       mark     a breakpoint on P's text: read all if one leaves the prompt as it was
+//       miss     O1 changed: read little, as it's past the lookback
+//       reach    O1 changed, P marked: read through P if a breakpoint finds an entry far back
+//       array    P marked, O1 sent as an array of one input_text part: read all if that's its string's prompt
+//       tmark    as array, O2 an array marked
+//       treach   as tmark, O3 changed: read through O2 if an output's breakpoint finds its entry
+//       read     O4 marked as an array, nothing changed: read all, writing past it
+//       onRead   O4 marked, O5 changed: read through O4, as a request of Codex's ended there
+//       split    P's text in two parts, the first marked: no request ended there
+//       onSplit  as split, O1 changed: read through it only if marking it made an entry
 //
-// Usage: bin/node-wrapper scripts/probe-codex-model-details.ts lookback|ttl --model M [options]
-//   lookback  [--runs 80] [--k 70,55,51,49,45,21,19,10] [--sizes 250,1000] [--pads 0,3]
-//   ttl       [--gaps 1,20,40,70]       minutes
+// Usage: bin/node-wrapper scripts/probe-codex-model-details.ts lookback|ttl|breakpoints --model M [options]
+//   lookback     [--runs 80] [--k 70,55,51,49,45,21,19,10] [--sizes 250,1000] [--pads 0,3]
+//   ttl          [--gaps 1,20,40,70]       minutes
+//   breakpoints  [--runs 100] [--lookback 78]   O1 to O5 must be more than --lookback items from the end
 //   --upstream URL   default https://chatgpt.com/backend-api/codex (ChatGPT sign-in)
 //   --codex PATH     default codex, as the user's shell has it (alias, function or PATH)
 //   --wrapper-var NAME --real-codex PATH
@@ -52,8 +70,8 @@ const opt = (name: string, def: string) => {
 const model = opt('model', '')
 const wrapperVar = opt('wrapper-var', '')
 const realCodex = opt('real-codex', '')
-if (!['lookback', 'ttl'].includes(mode) || !model || !wrapperVar !== !realCodex) {
-  console.error('usage: probe-codex-model-details.ts lookback|ttl --model M [--runs 80] [--k 70,...] [--sizes 250,1000] [--gaps 1,20,...] [--upstream URL] [--codex PATH] [--wrapper-var NAME --real-codex PATH]')
+if (!['lookback', 'ttl', 'breakpoints'].includes(mode) || !model || !wrapperVar !== !realCodex) {
+  console.error('usage: probe-codex-model-details.ts lookback|ttl|breakpoints --model M [--runs 80] [--k 70,...] [--sizes 250,1000] [--gaps 1,20,...] [--lookback 78] [--upstream URL] [--codex PATH] [--wrapper-var NAME --real-codex PATH]')
   process.exit(2)
 }
 const upstream = opt('upstream', 'https://chatgpt.com/backend-api/codex').replace(/\/$/, '')
@@ -63,16 +81,21 @@ const VIA = /^\/via\/([^/?#]*)(.*)$/
 const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`
 const nums = (s: string) => s.split(',').map(Number)
 
-type Item = { type?: string; role?: string; output?: unknown; content?: { type: string; text?: string }[] }
+type Part = { type: string; text?: string; prompt_cache_breakpoint?: unknown }
+type Item = { type?: string; role?: string; output?: unknown; content?: Part[] }
 type Seen = { session: string; items: number; input: number; cached: number; edited?: number }
 const seen: Seen[] = []
 // A probe's edit: the session it's for and k. Made on that session's requests
 // until one of them completes, so a retried one is edited too.
 const edits = new Map<string, number>()
 // How many responses each model answered under, as the response names it: one
-// name can be served by more than one backend (sol served by Bedrock answers
-// as global.openai.gpt-6.1-sol), and the cache can differ between them.
+// name can be served by more than one backend, each answering under a name of
+// its own, and the cache can differ between them.
 const served = new Map<string, number>()
+// For breakpoints: the session whose next request is held for the variants,
+// sent from the forwarder as Codex waits, as a wrapper's provider may last
+// only as long as Codex runs.
+let holding: { session: string; variants: (target: string, headers: Record<string, string>, body: { input: Item[] }) => Promise<void> } | undefined
 
 const isInput = (it: Item) => it.type === 'function_call_output' || it.type === 'custom_tool_call_output' || (it.type === 'message' && it.role !== 'assistant')
 // The last item of each run, oldest first.
@@ -140,6 +163,11 @@ const server = http.createServer(async (req, res) => {
   const via = VIA.exec(req.url ?? '')
   if (via && req.headers.host !== `127.0.0.1:${port}`) return void res.writeHead(403).end()
   const target = via ? decodeURIComponent(via[1]).replace(/\/$/, '') + via[2] : upstream + req.url
+  if (rec && body && holding?.session === rec.session) {
+    const { variants } = holding
+    holding = undefined
+    await variants(target, headers, body as { input: Item[] })
+  }
   // A connection the upstream drops is answered 502, which Codex retries, rather than ending the probe.
   const up = await fetch(target, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : raw }).catch((e: Error) => {
     console.error(`  upstream failed: ${e.cause instanceof Error ? e.cause.message : e.message}`)
@@ -360,6 +388,80 @@ if (mode === 'lookback') {
     console.log(`\nCan't tell ${fits.map((u) => u.unit).join(' from ')}: the edges agree in each. ${varied.length < 2 ? `Vary ${varied.includes('sizes') ? '--pads' : '--sizes'} too, or c` : 'C'}hoose --k closer to the edges.`)
   else console.log(`\nThe limit counts none of runs, tokens or items alone: the edges agree in none.`)
   console.log(`Answered as ${[...served].map(([m, n]) => `${m} (${n})`).join(', ') || 'nothing'}.`)
+  console.log(`Elapsed ${minutes(Date.now() - t0)}.`)
+} else if (mode === 'breakpoints') {
+  const runs = Number(opt('runs', '100'))
+  const lookback = Number(opt('lookback', '78'))
+  const cwd = files(250)
+  const t0 = Date.now()
+  const steps = (from: number, to: number) => `For N from ${from} to ${to}, run \`cat sN\` with the shell: exactly one call per step, in order, waiting for each result before the next. Never combine steps. Then reply DONE.`
+  const id = await codex(steps(1, 10), undefined, cwd)
+  await codex(steps(11, 10 + runs), id, cwd)
+  const MARK = { mode: 'explicit' }
+  const isOutput = (it: Item) => it.type === 'function_call_output' || it.type === 'custom_tool_call_output'
+  // The input tokens through an item: of the request of Codex's that ended with it.
+  const through = (i: number) => of(id).find((s) => s.items === i + 1)?.input ?? 0
+  holding = {
+    session: id,
+    variants: async (target, headers, T) => {
+      const p = T.input.findIndex((it) => it.type === 'message' && it.role === 'user' && it.content?.some((q) => q.text?.startsWith('For N from 11')))
+      if (p < 0) stop("the second prompt isn't in the request")
+      const o = T.input.flatMap((it, i) => (isOutput(it) && i > p ? [i] : []))
+      if (o.length < 5 || T.input.length - o[4] <= lookback) stop(`too few outputs more than ${lookback} items from the end: give more --runs`)
+      const markP = (b: { input: Item[] }) => void (b.input[p].content!.at(-1)!.prompt_cache_breakpoint = MARK)
+      const change = (b: { input: Item[] }, i: number) => mark(b.input[i])
+      const asArray = (b: { input: Item[] }, i: number, marked = false) => {
+        const it = b.input[i]
+        // Codex sends an output as a string or, since about 0.170, as parts
+        // already: then its last part is the one marked.
+        if (typeof it.output === 'string') it.output = [{ type: 'input_text', text: it.output, ...(marked && { prompt_cache_breakpoint: MARK }) }]
+        else if (marked && Array.isArray(it.output)) it.output.at(-1)!.prompt_cache_breakpoint = MARK
+      }
+      const split = (b: { input: Item[] }) => {
+        const it = b.input[p]
+        const t = it.content!.at(-1)!.text!
+        const k = Math.floor(t.length / 2)
+        it.content = [...it.content!.slice(0, -1), { type: 'input_text', text: t.slice(0, k), prompt_cache_breakpoint: MARK }, { type: 'input_text', text: t.slice(k) }]
+      }
+      const [o1, o2, o3, o4, o5] = o
+      const variants: [string, (b: { input: Item[] }) => void][] = [
+        ['same', () => {}],
+        ['mark', markP],
+        ['miss', (b) => change(b, o1)],
+        ['reach', (b) => (markP(b), change(b, o1))],
+        ['array', (b) => (markP(b), asArray(b, o1))],
+        ['tmark', (b) => (markP(b), asArray(b, o1), asArray(b, o2, true))],
+        ['treach', (b) => (markP(b), asArray(b, o1), asArray(b, o2, true), change(b, o3))],
+        ['read', (b) => asArray(b, o4, true)],
+        ['onRead', (b) => (asArray(b, o4, true), change(b, o5))],
+        ['split', split],
+        ['onSplit', (b) => (split(b), change(b, o1))],
+      ]
+      const from = (i: number) => `item ${i}, ${T.input.length - i} from the end, ${through(i)} tokens through it`
+      console.log(`session ${id}: ${T.input.length} items; P ${from(p)}; ${[o1, o2, o3, o4, o5].map((i, n) => `O${n + 1} ${from(i)}`).join('; ')}\n`)
+      console.log('variant   status    input   cached   share')
+      for (const [name, f] of variants) {
+        const b = structuredClone(T)
+        f(b)
+        const r = await fetch(target, { method: 'POST', headers, body: JSON.stringify(b) }).catch((e: Error) => stop(`upstream failed: ${e.message}`))
+        const text = await r.text()
+        let u: { input_tokens?: number; input_tokens_details?: { cached_tokens?: number } } | undefined
+        for (const line of text.split('\n'))
+          if (line.startsWith('data: '))
+            try {
+              const ev = JSON.parse(line.slice(6))
+              if (ev.type === 'response.completed') u = ev.response?.usage
+            } catch {}
+        const input = u?.input_tokens ?? 0
+        const cached = u?.input_tokens_details?.cached_tokens ?? 0
+        console.log(`${name.padEnd(8)}  ${String(r.status).padStart(6)}   ${String(input).padStart(6)}   ${String(cached).padStart(6)}   ${pct(cached, input).padStart(5)}`)
+        if (!u) console.log(`          ${text.slice(0, 400).replaceAll('\n', ' ')}`)
+      }
+    },
+  }
+  await codex('Reply OK.', id, cwd)
+  if (holding) stop("none of Codex's requests came through the forwarder after the session was built")
+  console.log(`\nAnswered as ${[...served].map(([m, n]) => `${m} (${n})`).join(', ') || 'nothing'}.`)
   console.log(`Elapsed ${minutes(Date.now() - t0)}.`)
 } else {
   const gaps = nums(opt('gaps', '1,20,40,70'))

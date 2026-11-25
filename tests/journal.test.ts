@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { bareLines, diff, journalKeys, LastCalls, history, newestCall, latest, record, recordBare, recordFork, recordResent, replay, sideKey, forks } from '../src/journal.ts'
+import { bareLines, cacheRead, diff, ignoredMark, ignoredMarks, journalKeys, LastCalls, history, newestCall, latest, record, recordBare, recordFork, recordResent, replay, sideKey, forks } from '../src/journal.ts'
 import { callIdsOf } from '../src/items.ts'
 import type { ApiMsg } from '../src/items.ts'
 
@@ -245,4 +245,26 @@ test('a restart fills in the conversations the table lacks, from their journals 
   // One found with none takes its call when it makes one.
   again.set('claude-c-main-cccc', 'toolu_4')
   assert.equal(new LastCalls(file).continuedFrom('claude-new-main-eeee', ['toolu_4']), 'claude-c-main-cccc')
+})
+
+test('a cache read is judged an ignored breakpoint only when the anchor would read well past lookback and the read stops near lookback', () => {
+  // Anchor would read 40K, lookback alone 10K.
+  const c = (read: number) => ({ predicted: 40_000, unmarked: 10_000, read })
+  assert.equal(ignoredMark(c(10_500)), true, 'read stops near lookback')
+  assert.equal(ignoredMark(c(38_000)), false, 'read reaches the anchor')
+  assert.equal(ignoredMark(c(0)), false, 'a miss below both is noise, not an ignored mark')
+  assert.equal(ignoredMark({ predicted: 12_000, unmarked: 10_000, read: 10_000 }), false, 'anchor adds too little to tell')
+  assert.equal(ignoredMark({ predicted: 40_000, read: 10_000 }), false, 'no breakpoint, nothing to judge')
+})
+
+test('cache predictions convert at the request\'s own token ratio, tool definitions counted as read, and ignored marks are counted from the journal', () => {
+  const s = { inputTokens: 11_000, tokens: { defs: 1_000 }, defs: { key: 'defs' } } as unknown as Stats
+  // 20,000 message chars carry 10,000 tokens: 0.5 a char.
+  assert.deepEqual(cacheRead({ chars: 8_000, total: 20_000, unmarked: 2_000 }, s, 2_000), { predicted: 5_000, unmarked: 2_000, read: 2_000 })
+  assert.deepEqual(cacheRead({ chars: 8_000, total: 20_000 }, s, 4_000), { predicted: 5_000, read: 4_000 })
+  const dir = mkdtempSync(path.join(tmpdir(), 'ignored-'))
+  const file = path.join(dir, 'k.journal.jsonl')
+  for (const cache of [{ predicted: 40_000, unmarked: 10_000, read: 10_000 }, { predicted: 40_000, unmarked: 10_000, read: 39_000 }, { predicted: 40_000, read: 10_000 }])
+    appendFileSync(file, JSON.stringify({ cache }) + '\n')
+  assert.equal(ignoredMarks(file), 1)
 })

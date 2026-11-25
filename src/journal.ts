@@ -56,6 +56,7 @@ export type Delta = {
   //   Remove when: with apply()'s.
   parts?: Ops
   usage?: Usage
+  cache?: CacheRead
   resent?: true
 }
 // why is set when the answer gave no usage, as on a bare line.
@@ -124,11 +125,33 @@ function apply(s: Stats | undefined, d: Delta): Stats {
   return s
 }
 
-// Appends the change from prev, the stats the journal ends with, to next, and
-// the usage the request reported.
-export function record(file: string, prev: Stats | undefined, next: Stats, usage?: Usage): void {
-  append(file, { ...diff(prev, next), ...(usage && { usage }) })
+// Appends the change from prev, the stats the journal ends with, to next, the
+// usage the request reported, and its cache read against the proxy's
+// prediction.
+export function record(file: string, prev: Stats | undefined, next: Stats, usage?: Usage, cache?: CacheRead): void {
+  append(file, { ...diff(prev, next), ...(usage && { usage }), ...(cache && { cache }) })
 }
+
+// A request's cache read, in tokens: what the proxy predicted, the read if
+// the server ignored its explicit breakpoints (where they'd read further),
+// and what the API reported. Predictions are in message characters, so they
+// convert at the request's own ratio, its tokens past the tool definitions
+// over its message characters; the definitions count as read.
+export type CacheRead = { predicted: number; unmarked?: number; read: number }
+export function cacheRead(p: { chars: number; total: number; unmarked?: number }, s: Stats, read: number): CacheRead {
+  const defs = s.defs ? (s.tokens[s.defs.key] ?? 0) : 0
+  const ratio = p.total ? (s.inputTokens - defs) / p.total : 0
+  const tokens = (chars: number) => Math.round(defs + chars * ratio)
+  return { predicted: tokens(p.chars), ...(p.unmarked !== undefined && { unmarked: tokens(p.unmarked) }), read }
+}
+
+// Whether a read shows the server ignored the explicit breakpoints: they'd
+// read at least IGNORED_GAP tokens further than lookback alone, and the read
+// is nearer lookback's prediction than theirs without falling well below it
+// (which is a cache miss, not an ignored mark).
+export const IGNORED_GAP = 4096
+export const ignoredMark = (c: CacheRead) =>
+  c.unmarked !== undefined && c.predicted - c.unmarked >= IGNORED_GAP && c.read - c.unmarked < (c.predicted - c.unmarked) / 2 && c.read >= c.unmarked - IGNORED_GAP
 
 // Appends a bare line.
 export function recordBare(file: string, b: BareLine): void {
@@ -345,6 +368,14 @@ export function sideKey(dir: string, key: string): string {
 // The bare lines a journal records, in order.
 export function* bareLines(file: string): Generator<BareLine> {
   for (const d of linesOf(file)) if (d.bare) yield d.bare
+}
+
+// How many of a journal's requests show the server ignored their explicit
+// breakpoints (ignoredMark).
+export function ignoredMarks(file: string): number {
+  let n = 0
+  for (const d of linesOf(file)) if (d.cache && ignoredMark(d.cache)) n++
+  return n
 }
 
 export function* replay(file: string): Generator<Stats> {

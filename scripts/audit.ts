@@ -15,11 +15,13 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { blocks, isPrompt, isSkillBody, READ, type ApiMsg } from '../src/items.ts'
+import { ignoredMark, linesOf } from '../src/journal.ts'
 import { messagesOf, objectsOf } from '../src/log.ts'
 
 const { values } = parseArgs({ options: { since: { type: 'string' }, all: { type: 'boolean' } } })
 const since = values.since ? Date.parse(values.since) : 0
 const logs = path.join(import.meta.dirname, '..', 'proxy-data', 'logs')
+const state = path.join(import.meta.dirname, '..', 'proxy-data', 'state')
 
 // A logged conversation: its harness, from the key's prefix, each message
 // once, with when it was first sent, and each request as the proxy sent it.
@@ -135,6 +137,24 @@ function missingBreakpoints(cs: Conversation[]): Finding[] {
   return found
 }
 
+// Requests whose cache read shows the server ignored their explicit
+// breakpoints (src/journal.ts, ignoredMark): it read only as far as the
+// lookback reaches without them. Read from each conversation's journal, where
+// the proxy records each request's predicted and actual cache read in tokens.
+function ignoredBreakpoints(cs: Conversation[]): Finding[] {
+  const found: Finding[] = []
+  for (const c of cs) {
+    let time = ''
+    for (const d of linesOf(path.join(state, `${c.key}.journal.jsonl`))) {
+      if (d.set?.time) time = d.set.time
+      if (!d.cache || !ignoredMark(d.cache) || Date.parse(time) < since) continue
+      const { predicted, unmarked, read } = d.cache
+      found.push({ time, text: `${c.key.slice(0, 48)} ${time.slice(0, 19)}  read ${read} tokens; ${predicted} with its breakpoints, ${unmarked} without (${predicted - read} short)` })
+    }
+  }
+  return found
+}
+
 // Summary forks whose answers depart from their instructions, which the proxy
 // gets past but which mean the instructions or their parsing (src/summary.ts)
 // have stopped fitting: rejected, for any reason; arcs written past the
@@ -201,6 +221,18 @@ away" side requests right after one that had a breakpoint, then stopped:
 309 suggestion requests since, all with one. Taken as fixed in Claude Code.`,
       },
     ],
+  },
+  {
+    name: 'Servers honour explicit breakpoints',
+    run: ignoredBreakpoints,
+    todo: `The server accepted prompt_cache_breakpoint but read the cache only as far as
+it would without it, so trims priced as reading through the anchor rewrote
+more than the proxy thought.
+- Check the model and server on that request (its step-event line). If that
+  model on that server ignores the field, it should be refused like one that
+  rejects it (src/breakpoints.ts), or marking turned off for it.
+- If a few requests ignore it among many that don't, it may be cache noise on
+  the server; add the window to resolved, with why.`,
   },
   {
     name: 'Summary forks answer as their instructions ask',

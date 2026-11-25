@@ -143,7 +143,7 @@ const sidesOf = (others: Other[]) => others.reduce((n, o) => n + (o.sides ?? 0),
 // What the proxy knows that the state files don't: the summary records that
 // still fit the messages, and the requests no journal line was written for.
 // Without a running proxy, no summary fork is in flight and none were missed.
-export type Live = { valid: number; inFlight?: boolean; missed?: number }
+export type Live = { valid: number; inFlight?: boolean; missed?: number; ignoredMarks?: number }
 
 // `shaver info`'s text: the stats, or with none journaled yet, `estimated`
 // ones; the cost with the summary forks' spend, summed over the session
@@ -165,6 +165,8 @@ export function infoText(key: string, version: string, s: Stats, estimated: bool
   const empty = o['nothing-complete'] ?? 0
   const forks: Forks = { applied, pending, errors, empty, dropped: sums.requests - applied - pending - errors - empty, ...(sums.failed && { failed: sums.failed }) }
   const text = render(s, key, estimated, session, forks, noteOf(others), elsewhereOf(others, s))
-  const warning = live.missed ? `\n\nshaver: since it started, the journal missed ${counted(live.missed, 'request')}; see proxy.log` : ''
+  const warning =
+    (live.missed ? `\n\nshaver: since it started, the journal missed ${counted(live.missed, 'request')}; see proxy.log` : '') +
+    (live.ignoredMarks ? `\n\nshaver: the server ignored the explicit breakpoints on ${counted(live.ignoredMarks, 'request')}, reading the cache only as far as without them; see the audit` : '')
   return '```\n' + `Shaver Version: ${version}\n` + text + warning + '\n```'
 }

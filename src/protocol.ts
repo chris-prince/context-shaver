@@ -7,6 +7,7 @@
 
 import type { Usage } from './cost.ts'
 import type { ApiMsg, Block } from './items.ts'
+import type { Markable } from './trim.ts'
 import type { Tool } from './stats.ts'
 
 // A request in the core's shape. Fields the core doesn't read ride along.
@@ -145,6 +146,10 @@ export type Protocol = {
   // Whether the provider caches each request's prefix by itself, rather than
   // where breakpoints are marked (trim.ts, positionsOf).
   automatic: boolean
+  // With automatic caching, the blocks that can carry an explicit breakpoint
+  // as well, for the anchor (trim.ts, liveEnd); render sends a block the core
+  // marked as the protocol marks one.
+  markable?: Markable
   // Whether tools can be deferred (defer.ts), for a harness that loads them
   // (harness.ts).
   defers: boolean

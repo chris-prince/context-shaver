@@ -386,7 +386,9 @@ export function sizeOf(b: Block, thinking: Thinking): number {
 // its entry (cache_control left out, since it moves from request to request
 // over the same prefix), its size, whether it is a breakpoint, and whether it
 // continues the previous block's position, in a run of tool calls or results.
-export type Position = { prefix: string; size: number; breakpoint: boolean; joined: boolean }
+// `exact`: an explicit breakpoint under automatic caching, which finds only
+// its own entry.
+export type Position = { prefix: string; size: number; breakpoint: boolean; joined: boolean; exact?: boolean }
 
 // The seconds a request's entries last, by its breakpoints: an hour where each
 // asks for "1h", else 5 minutes (the API's default, which Bedrock clients
@@ -432,24 +434,30 @@ export const wholeSeedOf = (model: string, tools: unknown, system: unknown) => h
 // user message's end (the rest joined), as measured on GPT-5.6
 // (local/openai-design.md, "CacheModel"); or with 'items', a model whose
 // lookback counts input items (models.ts, lookbackCounts), every block, each
-// an item but a message's parts after its first, which are few.
+// an item but a message's parts after its first, which are few. A block
+// marked there is an explicit breakpoint (OpenAI's prompt_cache_breakpoint,
+// which the proxy puts on as an anchor), which looks up only the entry at its
+// own end, however far back.
 export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking, automatic: boolean | 'items' = false): Position[] {
   let prefix = seed
-  const pos = msgs.flatMap((m) =>
+  const pos: Position[] = msgs.flatMap((m) =>
     blocks(m).map((b, i, bs) => {
       prefix = hash(prefix + m.role + JSON.stringify(b, uncontrolled))
-      if (automatic) return { prefix, size: sizeOf(b, thinking), breakpoint: false, joined: automatic !== 'items' && (m.role !== 'user' || i < bs.length - 1) }
+      const breakpoint = b.cache_control !== undefined
+      if (automatic) return { prefix, size: sizeOf(b, thinking), breakpoint, joined: automatic !== 'items' && (m.role !== 'user' || i < bs.length - 1), ...(breakpoint && { exact: true }) }
       const joined = (b.type === 'tool_use' || b.type === 'tool_result') && bs[i - 1]?.type === b.type
-      return { prefix, size: sizeOf(b, thinking), breakpoint: b.cache_control !== undefined, joined }
+      return { prefix, size: sizeOf(b, thinking), breakpoint, joined }
     }),
   )
-  if (automatic && pos.length) pos[pos.length - 1].breakpoint = true
+  if (automatic && pos.length) pos[pos.length - 1] = { ...pos[pos.length - 1], breakpoint: true, exact: false }
   return pos
 }
 
 // The entries a request writes or reads, by prefix: one at each breakpoint
-// (with automatic caching, its end), and `r`, the one it reads through.
-export const entriesOf = (pos: readonly Position[], r: number) => pos.filter((p, i) => p.breakpoint || i === r).map((p) => p.prefix)
+// (with automatic caching, its end), and `r`, the one it reads through. An
+// explicit breakpoint's entry is made only where the request writes past it,
+// not where it reads through it (probe-codex-breakpoints.ts).
+export const entriesOf = (pos: readonly Position[], r: number) => pos.filter((p, i) => (p.breakpoint && !(p.exact && i <= r)) || i === r).map((p) => p.prefix)
 
 // What positionsOf counts the lookback in, for a model with or without automatic caching.
 export const counting = (model: Model, automatic: boolean): boolean | 'items' => (automatic && model.lookbackCounts === 'items' ? 'items' : automatic)
@@ -459,6 +467,7 @@ export function readThrough(pos: readonly Position[], live: ReadonlySet<string>,
   let r = -1
   pos.forEach((p, b) => {
     if (!p.breakpoint) return
+    if (p.exact) return void (b > r && live.has(p.prefix) && (r = b))
     for (let j = b, n = 0; j > r && n <= lookback; n += pos[j--].joined ? 0 : 1)
       if (live.has(pos[j].prefix)) {
         r = j
@@ -490,15 +499,41 @@ export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], se
   return a[k]?.prefix
 }
 
-export function anchored(msgs: readonly ApiMsg[], end: string | undefined, seed: string, thinking: Thinking): ApiMsg[] {
+// With automatic caching the lookback from a request's end reaches only so far
+// (models.ts): a trim whose first change is further back rewrites everything
+// after the system prompt. Where the protocol can mark a block (protocol.ts,
+// markable), the anchor is an explicit breakpoint, which reads only the entry
+// at its own end, however far back. The cache made each entry where a request
+// ended, marked or not, so unlike settledEnd's the anchor needn't stay put for
+// its entry to be there: on each set of messages it goes on the last block the
+// protocol can mark whose prefix is a live entry, the furthest they can read.
+export type Markable = (b: Block, m: ApiMsg) => boolean
+export function liveEnd(msgs: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, thinking: Thinking, markable: Markable): string | undefined {
+  const a = positionsOf(msgs, seed, thinking)
+  const bs = msgs.flatMap((m) => blocks(m).map((bl) => [bl, m] as const))
+  for (let k = a.length - 1; k >= 0; k--) if (live.has(a[k].prefix) && markable(...bs[k])) return a[k].prefix
+}
+
+// The block each marked copy anchored made was copied from, for a protocol
+// that sends a block it was given as it came (responses.ts).
+export const unmarked = new WeakMap<Block, Block>()
+
+// The messages with a breakpoint at `end`, with the settings of the last one
+// they have, or `explicit` (with automatic caching) with none.
+export function anchored(msgs: readonly ApiMsg[], end: string | undefined, seed: string, thinking: Thinking, explicit = false): ApiMsg[] {
   const a = positionsOf(msgs, seed, thinking)
   const at: Array<[number, number]> = msgs.flatMap((m, i) => blocks(m).map((_, j): [number, number] => [i, j]))
   const marks = at.filter(([i, j]) => blocks(msgs[i])[j].cache_control !== undefined)
   const last = marks.at(-1)
   const k = a.findIndex((p) => p.prefix === end)
-  if (k < 0 || !last || a[k].breakpoint) return [...msgs]
-  const control = blocks(msgs[last[0]])[last[1]].cache_control
-  return msgs.map((m, i) => (i === at[k][0] ? { ...m, content: blocks(m).map((bl, j) => (j === at[k][1] ? { ...bl, cache_control: control } : bl)) } : m))
+  const control = last ? blocks(msgs[last[0]])[last[1]].cache_control : explicit ? { type: 'ephemeral' } : undefined
+  if (k < 0 || control === undefined || a[k].breakpoint) return [...msgs]
+  const mark = (bl: Block) => {
+    const copy = { ...bl, cache_control: control }
+    unmarked.set(copy, bl)
+    return copy
+  }
+  return msgs.map((m, i) => (i === at[k][0] ? { ...m, content: blocks(m).map((bl, j) => (j === at[k][1] ? mark(bl) : bl)) } : m))
 }
 
 // The system prompt with its first breakpoint taken out, freeing a slot for

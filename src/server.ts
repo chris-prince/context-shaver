@@ -24,6 +24,7 @@ import { blocks, callIdsOf, clockNow, clockOf, heldTo, isPrompt, type ApiMsg, ty
 import type { Canonical, Content, Counted, Protocol, UsageReader, Wire } from './protocol.ts'
 import { MESSAGES } from './messages.ts'
 import { dropAsked, fetchBound, on as dropUnbound } from './binding.ts'
+import { fetchMarked, marking, on as codexBreakpoints } from './breakpoints.ts'
 import { CHAT } from './chat.ts'
 import { RESPONSES } from './responses.ts'
 import { actionOf, dropTools, forceDefer, offerable, searchOn, toolListMessage, withPicked, type ToolRule } from './defer.ts'
@@ -35,14 +36,14 @@ import { conversationId, harnessOf, loggedHeaders, NO_CONVENTIONS, type Harness 
 import { autocompactAt } from './autocompact.ts'
 import { load as loadLaunch, type LaunchVals } from './launch-vals.ts'
 import { bornFrom, bornOf, compactedSince, counted, describe, estimate, isCompaction, isSideRequest, keyOf, observe, promptTokens, splitShaved, textTokens, tokensOf, withoutSideRequest, type Forks, type Sent, type Stats } from './stats.ts'
-import { journalKeys, LastCalls, newestCall, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
+import { cacheRead, ignoredMarks, journalKeys, LastCalls, newestCall, record, recordBare, recordFork, recordResent, sideKey, written, type BareLine, type ForkKind, type ForkLine, type Why } from './journal.ts'
 import { add, addBare, addResent, spent, type Cost, type Usage } from './cost.ts'
 import { localHost, route } from './via.ts'
 import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
-import { anchored, apply, counting, entriesOf, freedSystem, decide, markedTtl, positionsOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
+import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { arcsPastEnd, chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
@@ -230,7 +231,12 @@ const latestOf = (key: string) => currentOf(key).stats
 // Why an answered request sent no summary fork: summaryForkOf's reasons, with
 // the threshold the turns fell short of, or the proxy's own.
 type Skip = (ForkSkip & { threshold?: number }) | { skip: 'side-request' | 'no-breakpoint' | 'in-flight' | 'turn-continues' }
-type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[]; freeze: Freeze }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[]; freeze: Freeze; predicted: Predicted }
+
+// The cache read the proxy predicts for a request, in message characters out
+// of `total`; and, where it carries an explicit breakpoint that reads further
+// than lookback alone would, the read if the server ignored it (`unmarked`).
+type Predicted = { chars: number; total: number; unmarked?: number }
 
 // How a request stands to the freeze: `frozen`, sent as the last that worked;
 // `retry`, a shave tried while frozen; or neither. `gap` is the tokens the shave
@@ -245,7 +251,8 @@ type Freeze = { mode?: 'frozen' | 'retry'; gap: number; differs: boolean; unfroz
 // bare (journal.ts).
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
-// there is no breakpoint to add, so no anchor.
+// the anchor is an explicit breakpoint where the protocol can mark one and
+// that's turned on (breakpoints.ts), and otherwise there is none.
 // `side` and `compaction` are whether the harness's headers say it's a side
 // request, and its compaction, where they say (harness.ts). `freeze` sends it
 // shaped as the last request that worked, as when frozen (Frozen).
@@ -254,6 +261,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
+  const markable = auto && marking(body.model) ? proto.markable : undefined
   const s = load(key)
   // Over the messages as received, so a side request's ask is a turn too.
   const { id: requestId, turns } = idsOf(key, msgs)
@@ -340,7 +348,9 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     }
   }
   // One more breakpoint where the messages stop matching them settled
-  // (anchored), unless it leaves less read from the cache.
+  // (anchored), unless it leaves less read from the cache; with automatic
+  // caching, at the last live entry of the messages it goes on (liveEnd), only
+  // where that reads more.
   const endOf = (base: typeof keep) => (auto ? undefined : settledEnd(base.msgs, summarized(fullyTrimmed(msgs, conversationRules, conv, thinking), msgs, chain.slice(0, records), merged, turns).msgs, seed, thinking))
   let end = endOf(keep)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
@@ -351,6 +361,10 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     return ps.slice(0, readThrough(ps, live, model.lookback) + 1).reduce((n, q) => n + q.size, 0)
   }
   const anchor = (m: ApiMsg[]) => {
+    if (markable) {
+      const x = anchored(m, liveEnd(m, live, seed, thinking, markable), seed, thinking, true)
+      return reads(x) > reads(m) ? x : m
+    }
     if (auto || (spare <= 0 && !freed)) return m
     const x = anchored(m, end, seed, thinking)
     return reads(x) >= reads(m) ? x : m
@@ -387,6 +401,12 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const pos = positionsOf(body.messages, seed, thinking, counting(model, auto))
   const r = readThrough(pos, live, model.lookback)
   const touched = entriesOf(pos, r)
+  const charsTo = (r: number) => pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
+  const predicted: Predicted = { chars: charsTo(r), total: charsTo(pos.length - 1) }
+  if (pos.some((q) => q.exact)) {
+    const unmarked = charsTo(readThrough(pos.map((q) => (q.exact ? { ...q, breakpoint: false } : q)), live, model.lookback))
+    if (unmarked < predicted.chars) predicted.unmarked = unmarked
+  }
   // Where trimming ends in the messages as sent, which drops shorten.
   const ends = trimmedEnd(msgs, conversationRules, applied, conv, thinking)
   const sentEnd = (end: number) => sent.origin.filter((i) => i < end).length
@@ -443,7 +463,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
         return 'skip' in f && f.tokens !== undefined ? { ...f, threshold: after } : f
       }
     : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, freeze: freezing, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, freeze: freezing, predicted, ...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (forced) writeLine(p.logDir, { event: 'autocompact-trim', time, at, beforeTokens: forced.before, afterTokens: forced.after, requests: clock.requests, turns: clock.turns })
@@ -470,11 +490,11 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
         unanchored: (({ advanced, extraChars }) => ({ advanced, extraChars }))(decide(keep.msgs, next.msgs, new Set([...live].filter((e) => e !== end)), seed, model, thinking, auto, horizon)),
       })
     }
-    const predictedCachedChars = pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
+    const predictedCachedChars = predicted.chars
     // The messages as the client sent them, when they went up changed, so
     // what was taken (a newest answer's thinking, say) can be rebuilt.
     const changed = msgs.length !== body.messages.length || msgs.some((m, i) => JSON.stringify(m) !== JSON.stringify(body.messages[i]))
-    p.logLine = { event: 'request', time, version, policy: writePolicy(p.logDir, policy), model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), messages: writeMessages(p.logDir, body.messages, conv.kinds, ids?.of), ...(changed && { received: writeMessages(p.logDir, msgs, conv.kinds).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
+    p.logLine = { event: 'request', time, version, policy: writePolicy(p.logDir, policy), model: body.model, provider: body.provider, protocol: proto.name, params, ...(records && { summaries: records }), predictedCachedChars, ...(predicted.unmarked !== undefined && { predictedUnmarkedChars: predicted.unmarked }), breakpoints: pos.filter((q) => q.breakpoint).length, trimmedEnd: trimmed, id: requestId, turns: turns.map((t) => t.id), ...(ids && { headIds: ids.head }), messages: writeMessages(p.logDir, body.messages, conv.kinds, ids?.of), ...(changed && { received: writeMessages(p.logDir, msgs, conv.kinds).map((q) => q.hash) }), ...writeDefs(p.logDir, body as Parameters<typeof writeDefs>[1]) }
   }
   return p
 }
@@ -508,7 +528,7 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   // `shaver optimize`'s requests are one-time work, so they aren't counted.
   const sums = loadSummaries(key)
   const valid = validChain(sums.chain, sent.messages, idsOf(key, sent.messages, false).turns).length
-  const live = { valid, inFlight: summaryForking.has(key), missed }
+  const live = { valid, inFlight: summaryForking.has(key), missed, ignoredMarks: ignoredMarks(journalOf(key)) }
   const others = othersOf(stateDir, key, currentOf)
   if (s) return infoText(key, version, s, false, c, sums, load(key)?.summarized ?? 0, live, others)
   const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS, h?.alwaysLoaded)
@@ -847,7 +867,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // usage.
   res.on('close', () => res.writableFinished || usage.done || abort.abort())
   // A served Messages request may ask for unbound thinking to be dropped (binding.ts).
-  const sender = served && proto.name === 'messages' ? fetchBound : fetch
+  // A Responses one may carry explicit breakpoints (breakpoints.ts).
+  const sender = served && proto.name === 'messages' ? fetchBound : proto.markable ? fetchMarked : fetch
   const send = (body: Buffer | undefined) =>
     sender(upstream + url, { method: req.method, headers, body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body, signal: abort.signal })
   if (p?.freeze.mode === 'retry') console.error(`${new Date().toISOString()} shaver: shave tried again for ${p.key}, frozen since ${load(p.key)?.frozen?.since}: it saves ${p.freeze.gap} tokens a request`)
@@ -1096,7 +1117,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   const c = attribution !== undefined ? p.counted?.(attribution) : undefined
   const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds }, dropped, u.output_tokens_details?.thinking_tokens)
   const was = currentOf(p.key)
-  record(journalOf(p.key), was.stats, next, u)
+  record(journalOf(p.key), was.stats, next, u, cacheRead(p.predicted, next, u.cache_read_input_tokens ?? 0))
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
   // Where the protocol gives the reply, a fork asks as the user's next prompt
   // would, after a reply that ended the turn; so not while the turn goes on.
@@ -1595,7 +1616,7 @@ server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code !== 'EADDRINUSE') throw err
   console.error(`shaver: ${inUse(a.port)}`)
   process.exit(1)
-}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: version ${version}, listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}${passthrough ? ', passing every request through unmodified (SHAVER_MODE=passthrough)' : dropUnbound ? ', dropping unbound thinking (SHAVER_DROP_UNBOUND_THINKING)' : ''}`))
+}).listen(Number(a.port), '127.0.0.1', () => console.error(`shaver: version ${version}, listening on http://127.0.0.1:${(server.address() as AddressInfo).port}, forwarding to ${a.upstream}${passthrough ? ', passing every request through unmodified (SHAVER_MODE=passthrough)' : `${dropUnbound ? ', dropping unbound thinking (SHAVER_DROP_UNBOUND_THINKING)' : ''}${codexBreakpoints ? '' : ', no explicit breakpoints on Codex (SHAVER_CODEX_BREAKPOINTS=0)'}`}`))
 
 function inUse(port: string) {
   return `port ${port} is in use by another program. Set SHAVER_PORT=NNNN to an available port number.`

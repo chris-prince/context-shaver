@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canonical, RESPONSES, withWrites } from '../src/responses.ts'
+import { anchored, positionsOf } from '../src/trim.ts'
 import { forceDefer } from '../src/defer.ts'
 import { harnessOf, type Harness } from '../src/harness.ts'
-import type { ApiMsg, Block } from '../src/items.ts'
+import { blocks, type ApiMsg, type Block } from '../src/items.ts'
 import { wholeReply } from '../src/protocol.ts'
 
 const CODEX_ALWAYS = (harnessOf('codex', {}) as Harness).alwaysLoaded
@@ -277,4 +278,38 @@ test('how a stream said it failed: its error event, or a failed or incomplete re
   const incomplete = { type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [], usage: { input_tokens: 10, output_tokens: 5 } } }
   assert.deepEqual(failureOf(incomplete), { type: 'response.incomplete', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } })
   assert.equal(failureOf(completed), undefined)
+})
+
+test('a block the core anchored is sent with an explicit breakpoint, its item otherwise as it came', () => {
+  const c = canonical(wire)
+  const at = (msgs: ApiMsg[], k: number) => anchored(msgs, positionsOf(msgs, 's', new Map())[k].prefix, 's', new Map(), true)
+  const render = (w: typeof c, msgs: ApiMsg[]) => (w.render({ ...w.body, messages: msgs }) as typeof wire).input
+  // The prompt marked: its one part gets the breakpoint, the item keeps all else.
+  const out = render(c, at(c.body.messages, 0))
+  assert.deepEqual(out[3], { ...wire.input[3], content: [{ type: 'input_text', text: 'count the lines', prompt_cache_breakpoint: { mode: 'explicit' } }] })
+  assert.deepEqual(out.slice(0, 3), wire.input.slice(0, 3))
+  for (const i of [4, 5, 6, 7, 8, 9]) assert.strictEqual(out[i], wire.input[i])
+  // A tool's output of parts: its last text part gets it.
+  const k = c.body.messages.flatMap(blocks).findIndex((b) => b.type === 'tool_result')
+  assert.deepEqual(render(c, at(c.body.messages, k))[7], { ...wire.input[7], output: [{ type: 'input_text', text: 'x'.repeat(100), prompt_cache_breakpoint: { mode: 'explicit' } }] })
+  // A string output becomes one part, as an array the same prompt.
+  const s = canonical({ ...wire, input: wire.input.map((it, i) => (i === 7 ? { ...it, output: 'y'.repeat(100) } : it)) })
+  assert.deepEqual(render(s, at(s.body.messages, k))[7], { ...wire.input[7], output: [{ type: 'input_text', text: 'y'.repeat(100), prompt_cache_breakpoint: { mode: 'explicit' } }] })
+  // A stubbed output, then marked.
+  const stubbed = c.body.messages.map((m) => ({ ...m, content: blocks(m).map((b) => (b.type === 'tool_result' ? { ...b, content: '[stubbed]' } : b)) }))
+  assert.deepEqual(render(c, at(stubbed, k))[7], { ...wire.input[7], output: [{ type: 'input_text', text: '[stubbed]', prompt_cache_breakpoint: { mode: 'explicit' } }] })
+})
+
+test("an explicit breakpoint goes only where Responses takes one: a user message's last block, text or a tool's text output", () => {
+  const c = canonical(wire)
+  const markable = RESPONSES.markable!
+  const can = c.body.messages.flatMap((m) => blocks(m).map((b) => `${m.role}:${b.type}:${markable(b, m)}`))
+  assert.deepEqual(can, ['user:text:true', 'assistant:thinking:false', 'assistant:text:false', 'assistant:tool_use:false', 'user:tool_result:true', 'assistant:text:false', 'user:text:true'])
+  // A search's output holds the tools it loaded, no text.
+  const search: Block = { type: 'tool_result', tool_use_id: 's', content: [{ type: 'tool_reference', tool_name: 'x' }] }
+  assert.equal(markable(search, { role: 'user', content: [search] }), false)
+  // A run of outputs ended one request, at its last.
+  const [o1, o2]: Block[] = [{ type: 'tool_result', tool_use_id: 'a', content: 'x' }, { type: 'tool_result', tool_use_id: 'b', content: 'y' }]
+  const run: ApiMsg = { role: 'user', content: [o1, o2] }
+  assert.deepEqual([markable(o1, run), markable(o2, run)], [false, true])
 })

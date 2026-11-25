@@ -45,7 +45,10 @@
 // never made just before it; one a horizon would have avoided isn't, so
 // horizons that trim more are still charged the client's own. Summary
 // records aren't applied after a horizon's own compaction.
-// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-shaver.ts [--validate] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
+// A Codex request is anchored with an explicit breakpoint, as the proxy
+// anchors it by default; --no-codex-breakpoints leaves it unanchored, as
+// SHAVER_CODEX_BREAKPOINTS=0 does.
+// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-shaver.ts [--validate] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--no-codex-breakpoints] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { blocks, clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
@@ -57,7 +60,8 @@ import { forcedTrimOf, loadPolicy, policyNow, textRules, type PartRules, type Po
 import { isCompaction, isSideRequest, keyOf, promptTokens, type Stats, withoutSideRequest } from '../src/stats.ts'
 import { mergedOf, promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
-import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, markedTtl, positionsOf, readThrough, settledEnd, sizeOf } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, liveEnd, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, type Markable } from '../src/trim.ts'
+import { RESPONSES } from '../src/responses.ts'
 import { usesOf, wholeIn, type Uses } from './rereads.ts'
 
 // A re-read, as measured on Nov 22, 2026 over 57 re-reads of results the proxy
@@ -76,6 +80,7 @@ const validate = args.includes('--validate') && !!args.splice(args.indexOf('--va
 const compacting = !(args.includes('--no-compaction') && !!args.splice(args.indexOf('--no-compaction'), 1)) && !validate
 const rereading = !(args.includes('--no-rereads') && !!args.splice(args.indexOf('--no-rereads'), 1))
 const compactAt = opt('--compact-at')
+const codexBreakpoints = !(args.includes('--no-codex-breakpoints') && !!args.splice(args.indexOf('--no-codex-breakpoints'), 1))
 const fromTime = opt('--since') ?? ''
 const until = opt('--until') ?? '9999'
 const outFile = opt('--out')
@@ -140,7 +145,7 @@ type Logged = { advanced: boolean; cacheState?: string; savedChars: number; rewr
 // a prompt's tokens as the proxy would estimate them before sending it;
 // `version`: Claude Code's (ccVersion); `output`: its output tokens;
 // `policy`: the one the proxy logged it ran under, where it logged one.
-type Req = { time: string; model: Model; auto: boolean; msgs: ApiMsg[]; logged?: Logged; sent: ApiMsg[]; inputTokens?: number; ratio: number; base: number; at?: number | null; forced: boolean; estimate: (msgs: readonly ApiMsg[]) => number | undefined; version?: string; output?: number; policy?: Rules; side?: boolean }
+type Req = { time: string; model: Model; auto: boolean; markable?: Markable; msgs: ApiMsg[]; logged?: Logged; sent: ApiMsg[]; inputTokens?: number; ratio: number; base: number; at?: number | null; forced: boolean; estimate: (msgs: readonly ApiMsg[]) => number | undefined; version?: string; output?: number; policy?: Rules; side?: boolean }
 type Thinking = Map<string, number>
 type Conv = { reqs: Req[]; broken: number; logged: number; h?: Harness; thinking: Thinking; chain: Summary[]; uses: Uses }
 // `cost`: tokens at the input price; `tokens`: each request's prompt as sent,
@@ -228,7 +233,7 @@ function rebuild(dir: string): Conv {
   // Each policy logged, as the proxy loaded it (log.ts, writePolicy).
   const policies = new Map<string, Rules>()
   const policyOf = (h?: string) => (h === undefined ? undefined : policies.get(h) ?? policies.set(h, rulesOf(policyNow(JSON.parse(readFileSync(path.join(objects, h + '.json'), 'utf8'))))).get(h))
-  const reqs = all.map((e, n): Req => ({ time: e.time, model: { ...modelOf(e.model, e.provider), ...(ttlOf(e, n) && { ttl: ttlOf(e, n) }) }, auto: e.protocol !== undefined && e.protocol !== 'messages', msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n],
+  const reqs = all.map((e, n): Req => ({ time: e.time, model: { ...modelOf(e.model, e.provider), ...(ttlOf(e, n) && { ttl: ttlOf(e, n) }) }, auto: e.protocol !== undefined && e.protocol !== 'messages', ...(e.protocol === 'responses' && codexBreakpoints && { markable: RESPONSES.markable }), msgs: marked(orig[n], sent[n]), logged: trims.get(e.time), sent: sent[n],
     ...(typeof e.inputTokens === 'number' && { inputTokens: e.inputTokens }), ratio: typeof e.inputTokens === 'number' && sentChars[n] ? e.inputTokens / sentChars[n] : convRatio, base: bytes(e.system) + bytes(e.tools), at: atOf(e.time), forced: forced.has(e.time), estimate: estimateOf(e.time),
     ...(h?.name === 'claude' && { version: ccVersion((e.system ?? []).map((b: { hash: string }) => load(b.hash))) }), ...(typeof e.outputTokens === 'number' && { output: e.outputTokens }), ...(e.policy !== undefined && { policy: policyOf(e.policy) }),
     // Whether the harness's logged headers say it's a side request, as the
@@ -323,6 +328,11 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     sentMerged = merged
     const end = q.auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(q.msgs, rules, conv, thinking), q.msgs, chain.slice(0, records), merged).msgs, 's', thinking)
     const anchor = (m: ApiMsg[]) => {
+      // As prepare places it: with automatic caching, at the last live entry (liveEnd), only where that reads more.
+      if (q.markable) {
+        const x = anchored(m, liveEnd(m, live, 's', thinking, q.markable), 's', thinking, true)
+        return reads(x) > reads(m) ? x : m
+      }
       if (q.auto) return m
       const x = anchored(m, end, 's', thinking)
       return reads(x) >= reads(m) ? x : m

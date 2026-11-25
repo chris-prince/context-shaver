@@ -748,6 +748,35 @@ entry out of the last one's lookback, and the one before it still reaches
 it. A request where the swap would leave less read from the cache goes
 without it. `decide` prices both candidates with it.
 
+On Responses (Codex) the cache is automatic: each request leaves one entry,
+at its end, and a later one reads the newest entry within the model's
+lookback (78 input items on sol, `models.ts`). Unless
+`SHAVER_CODEX_BREAKPOINTS=0` (`breakpoints.ts`), the anchor is an explicit
+breakpoint, OpenAI's `prompt_cache_breakpoint` on an `input_text` part, on
+the last block of a user message (`responses.ts`, `markable`): a prompt's
+text or a tool's output, sent as an array of parts, which is the same prompt
+as its string. An explicit breakpoint reads only the entry at its own end,
+however far back, and a request makes one there only where it writes past
+it, not where it reads through it (`probe-codex-model-details.ts
+breakpoints`). So, unlike Claude Code's,
+the anchor needn't stay put to keep its entry: the entries are where Codex's
+requests ended, and the proxy knows which are live. On each set of messages,
+the kept and the trimmed alike, it goes on the last block it can mark whose
+prefix is a live entry (`liveEnd`), only where that reads more than the
+lookback does. `positionsOf` marks it `exact`, and `readThrough` and the
+entries recorded follow. It reads more only when what a trim keeps ends more
+than the lookback before the trimmed prompt's end, which happens in long
+conversations: it saved nothing on short ones backtested
+(`backtest-shaver.ts`; `--no-codex-breakpoints` turns it off there).
+
+It's on by default, and has been seen to work for gpt-6.1-sol, gpt-6.1-terra
+and gpt-6-luna. Codex's ChatGPT backend refuses it for gpt-6-luna. A 400 to a
+request with a breakpoint, however it's worded, sends the same request again
+without it (`breakpoints.ts`); if that's accepted, the field was what was
+refused, so a refusal costs one request, and that model isn't marked again
+until the proxy restarts. If it's refused too, the first refusal goes to the
+freeze, as any other does.
+
 ## Heavy compaction
 
 A conversation's early turns can be replaced with a record of their memorable

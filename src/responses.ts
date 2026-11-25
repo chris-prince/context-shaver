@@ -15,6 +15,7 @@ import type { Usage } from './cost.ts'
 import { blocks, type ApiMsg, type Block } from './items.ts'
 import { CODEX_PREAMBLE, kinds, preambleEnd } from './log.ts'
 import { eventReader, holding, openaiError, openaiUsage, type Canonical, type Content, type Counted, type Held, type Protocol, type Replying, type Reply, type Wire } from './protocol.ts'
+import { unmarked } from './trim.ts'
 
 type Part = { type: string; text?: string; [k: string]: unknown }
 type Item = { type: string; role?: string; content?: Part[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: unknown; encrypted_content?: string; summary?: Part[]; [k: string]: unknown }
@@ -22,6 +23,22 @@ type Tool = { type?: string; name?: string; tools?: Tool[]; [k: string]: unknown
 
 const CALLS = new Set(['function_call', 'custom_tool_call'])
 const OUTPUTS = new Set(['function_call_output', 'custom_tool_call_output'])
+
+// An explicit cache breakpoint, on an input_text part: the cache keeps an
+// entry at its end, which a later request with one there reads however far
+// back. A block the core marked (trim.ts, anchored) is sent with one; a tool's
+// output only as an array of parts, so a string one becomes one part (the same
+// prompt, probed on a function_call_output; a custom_tool_call_output's isn't
+// probed).
+const BREAKPOINT = { mode: 'explicit' }
+const marked = (b: Block, part: Part): Part => (b.cache_control !== undefined && part.type === 'input_text' ? { ...part, prompt_cache_breakpoint: BREAKPOINT } : part)
+function markedOutput(it: Item): Item {
+  if (typeof it.output === 'string') return { ...it, output: [{ type: 'input_text', text: it.output, prompt_cache_breakpoint: BREAKPOINT }] }
+  if (!Array.isArray(it.output)) return it
+  const ps = it.output as Part[]
+  const k = ps.findLastIndex((p) => p.type === 'input_text')
+  return k < 0 ? it : { ...it, output: ps.map((p, i) => (i === k ? { ...p, prompt_cache_breakpoint: BREAKPOINT } : p)) }
+}
 
 const textOf = (it: Item) => (it.content ?? []).map((p) => p.text ?? '').join('')
 const isHead = (it: Item) => it.type === 'additional_tools' || (it.type === 'message' && (it.role === 'developer' || it.role === 'system' || (it.role === 'user' && CODEX_PREAMBLE.some((p) => textOf(it).startsWith(p)))))
@@ -112,7 +129,7 @@ export function canonical(wire: Record<string, unknown>): Wire {
     // A message item given new text, part for part, keeps its other parts and fields.
     const item = was?.length === 1 && was[0].type === 'message' ? was[0] : undefined
     if (item && Array.isArray(m.content) && Array.isArray(old) && m.content.length === old.length)
-      return [{ ...item, content: m.content.map((b, k) => (b === old[k] ? item.content![k] : { ...item.content![k], text: String(b.text) })) }]
+      return [{ ...item, content: m.content.map((b, k) => (b === old[k] ? item.content![k] : unmarked.get(b) === old[k] ? marked(b, item.content![k]) : marked(b, { ...item.content![k], text: String(b.text) }))) }]
     const out: Item[] = []
     let open: { src?: Item; role: string; parts: Part[]; same: boolean } | undefined
     const close = () => {
@@ -120,17 +137,18 @@ export function canonical(wire: Record<string, unknown>): Wire {
       open = undefined
     }
     for (const b of blocks(m)) {
-      const s = srcOf.get(b)
+      // A block the core only marked is the one it was, marked.
+      const s = srcOf.get(b) ?? srcOf.get(unmarked.get(b) ?? b)
       if (s?.part || (!s && b.type === 'text')) {
         const role = s?.item.role ?? (m.role === 'assistant' ? 'assistant' : 'user')
         if (!open || open.src !== s?.item) close(), (open = { src: s?.item, role, parts: [], same: true })
-        const part = s?.part ?? { type: role === 'assistant' ? 'output_text' : 'input_text', text: String(b.text) }
+        const part = marked(b, s?.part ?? { type: role === 'assistant' ? 'output_text' : 'input_text', text: String(b.text) })
         open.same &&= part === open.src?.content?.[open.parts.length]
         open.parts.push(part)
         continue
       }
       close()
-      if (s) out.push(s.item)
+      if (s) out.push(b.cache_control !== undefined && OUTPUTS.has(s.item.type) ? markedOutput(s.item) : s.item)
       else if (b.type === 'tool_use') {
         const c = byCall.get(String(b.id)) ?? { type: 'function_call', call_id: String(b.id), name: String(b.name) }
         const input = typeof b.input === 'string' ? b.input : JSON.stringify(b.input)
@@ -140,7 +158,8 @@ export function canonical(wire: Record<string, unknown>): Wire {
       } else if (b.type === 'tool_result') {
         const r = byResult.get(String(b.tool_use_id)) ?? { type: 'function_call_output', call_id: String(b.tool_use_id) }
         // A search's result holds the tools it loaded, which are kept as they came.
-        out.push(r.type === 'tool_search_output' ? r : { ...r, output: b.content })
+        const o = { ...r, output: b.content }
+        out.push(r.type === 'tool_search_output' ? r : b.cache_control !== undefined ? markedOutput(o) : o)
       }
       else if (b.type === 'item') out.push(b.item as Item)
     }
@@ -362,6 +381,12 @@ export const RESPONSES: Protocol = {
   // Codex's limits and credits; its turn state is the turn's, not the account's.
   limits: /^x-codex-(?!turn-state)/,
   automatic: true,
+  // A prompt's text or a tool's output with text. A breakpoint finds only an
+  // entry at its own end, and reading past one makes none, so it goes where
+  // Codex's requests end, on a user message's last block: a run of outputs
+  // ends one request, not each output (probe-codex-model-details.ts
+  // breakpoints, 2026-11-19).
+  markable: (b, m) => m.role === 'user' && blocks(m).at(-1) === b && (b.type === 'text' || (b.type === 'tool_result' && (typeof b.content === 'string' || (Array.isArray(b.content) && b.content.some((p) => p?.type === 'input_text'))))),
   defers: true,
   // Run by the backend, which loads the tools it finds itself: Codex answers
   // searches only for the tools it deferred.

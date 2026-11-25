@@ -7,8 +7,9 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, policyNow, seedPolicy, skillRulesNow, textRules, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
+import { RESPONSES } from '../src/responses.ts'
 
 const long = 'x'.repeat(5000)
 const stubAll: PartRules = { tool: [{ action: 'stub', eligible_after: '0 requests' }], reasoning: [{ action: 'drop', eligible_after: '0 turns' }] }
@@ -697,6 +698,85 @@ test('with automatic caching, a request reads back only 20 user runs from its en
   // A change within reach reads up to the user run before it; one further back, nothing.
   assert.equal(readThrough(pos(stubbedAt(110)), live, 20), 108)
   assert.equal(readThrough(pos(stubbedAt(2)), live, 20), -1)
+})
+
+// Turns of a prompt, a call, its result and an answer, for explicit breakpoints.
+const bpTurn = (i: number): ApiMsg[] => [
+  { role: 'user', content: [{ type: 'text', text: `q${i}` }] },
+  { role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'read', input: {} }] },
+  { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: long }] },
+  { role: 'assistant', content: [{ type: 'text', text: `a${i}` }] },
+]
+const markable = RESPONSES.markable!
+
+test('with automatic caching, an explicit breakpoint reads the entry at its end however far back, and only that one', () => {
+  const before = Array.from({ length: 30 }, (_, i) => bpTurn(i)).flat()
+  const pos = (msgs: ApiMsg[]) => positionsOf(msgs, 's', new Map(), true)
+  const live = new Set(pos(before).filter((p) => !p.joined || p.breakpoint).map((p) => p.prefix))
+  // Turn 1's result stubbed, past the lookback from the end.
+  const stubbed = before.map((m, k) => (k === 6 ? { ...m, content: [{ type: 'tool_result', tool_use_id: 't1', content: stub(5000) }] } : m))
+  assert.equal(readThrough(pos(stubbed), live, 20), -1)
+  // Anchored on turn 1's prompt, the last live block before the change that Responses can mark, it reads through there.
+  const end = liveEnd(stubbed, live, 's', new Map(), markable)
+  const marked = anchored(stubbed, end, 's', new Map(), true)
+  assert.deepEqual(blocks(marked[4])[0].cache_control, { type: 'ephemeral' })
+  assert.equal(readThrough(pos(marked), live, 20), 4)
+  // It looks nowhere else: with no entry at its end, it finds none, though one is a block before.
+  assert.equal(readThrough(pos(marked), new Set([pos(before)[3].prefix]), 20), -1)
+  // It makes no entry where the request reads through it; the request's end it does.
+  const pm = pos(marked)
+  assert.deepEqual(entriesOf(pm, 4), [pm[4].prefix, pm.at(-1)!.prefix])
+  // The cost model sees the same: the move reads through the anchor, and
+  // rewrites only what follows it, where without one it rewrote all.
+  const sol = modelOf('gpt-6.1-sol')
+  const without = decide(before, stubbed, live, 's', sol, new Map(), true)
+  const withAnchor = decide(anchored(before, end, 's', new Map(), true), marked, live, 's', sol, new Map(), true)
+  const through = pos(before).slice(0, 5).reduce((n, p) => n + p.size, 0)
+  assert.equal(withAnchor.rewriteChars, without.rewriteChars - through)
+})
+
+test('with automatic caching, the anchor goes at the last live entry before the trim, not where the messages settle', () => {
+  const before = Array.from({ length: 30 }, (_, i) => bpTurn(i)).flat()
+  const pos = (msgs: ApiMsg[]) => positionsOf(msgs, 's', new Map(), true)
+  const live = new Set(pos(before).filter((p) => !p.joined || p.breakpoint).map((p) => p.prefix))
+  const stubbedAt = (...js: number[]) => before.map((m, k) => (js.includes(k) ? { ...m, content: [{ type: 'tool_result', tool_use_id: `t${(k - 2) / 4}`, content: stub(5000) }] } : m))
+  // This trim stubs turn 15's result, past the lookback from the end.
+  const trim = stubbedAt(62)
+  assert.equal(readThrough(pos(trim), live, 20), -1)
+  // On the first prompt it reads only that; on turn 0's call, nothing, though only joined blocks are between.
+  assert.equal(readThrough(pos(anchored(trim, pos(before)[0].prefix, 's', new Map(), true)), live, 20), 0)
+  assert.equal(readThrough(pos(anchored(trim, pos(before)[1].prefix, 's', new Map(), true)), live, 20), -1)
+  // At the last live entry it can mark, turn 15's prompt, it reads all before the change.
+  const at = anchored(trim, liveEnd(trim, live, 's', new Map(), markable), 's', new Map(), true)
+  assert.equal(readThrough(pos(at), live, 20), 60)
+  // An entry that has expired isn't one: it goes back to the one before.
+  const fewer = new Set([...live].filter((h) => h !== pos(before)[60].prefix))
+  assert.equal(liveEnd(trim, fewer, 's', new Map(), markable), pos(before)[58].prefix)
+  assert.equal(liveEnd(trim, new Set(), 's', new Map(), markable), undefined)
+})
+
+test('with automatic caching, the anchor goes on the last live block before the change that the protocol can mark', () => {
+  const msgs: ApiMsg[] = [
+    { role: 'user', content: [{ type: 'text', text: 'go' }] },
+    { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig' }, { type: 'tool_use', id: 't0', name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't0', content: long }] },
+    { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig2' }, { type: 'text', text: 'done' }] },
+  ]
+  const p = positionsOf(msgs, 's', new Map())
+  const live = new Set(p.map((q) => q.prefix))
+  // The first answer's reasoning dropped: an answer's blocks can't be marked, so it goes on the prompt before.
+  const dropped = msgs.map((m, k) => (k === 1 ? { ...m, content: blocks(m).slice(1) } : m))
+  const end = liveEnd(dropped, live, 's', new Map(), markable)
+  assert.equal(end, p[0].prefix)
+  // The second answer's: on the tool's result before it.
+  const dropped2 = msgs.map((m, k) => (k === 3 ? { ...m, content: blocks(m).slice(1) } : m))
+  assert.equal(liveEnd(dropped2, live, 's', new Map(), markable), p[3].prefix)
+  // A block anchored is a copy, which names the block it was made from.
+  const a = anchored(msgs, end, 's', new Map(), true)
+  assert.equal(unmarked.get(blocks(a[0])[0]), blocks(msgs[0])[0])
+  assert.equal(a[2], msgs[2])
+  // Without explicit, messages with no breakpoint get none.
+  assert.deepEqual(anchored(msgs, end, 's', new Map()), msgs)
 })
 
 test('with automatic caching counted in items, a request reads back only that many blocks', () => {

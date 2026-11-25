@@ -16,6 +16,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { infoText, journaled, othersOf, summariesFrom } from '../src/info.ts'
 import { LOG_DIR, objectsOf, receivedOf } from '../src/log.ts'
+import { ignoredMarks } from '../src/journal.ts'
 import { turnsOf, validChain } from '../src/summary.ts'
 import type { ApiMsg } from '../src/items.ts'
 
@@ -62,4 +63,4 @@ if (last && sums.chain.length) {
 }
 const state = existsSync(path.join(stateDir, `${key}.json`)) ? JSON.parse(readFileSync(path.join(stateDir, `${key}.json`), 'utf8')) : {}
 const others = othersOf(stateDir, key, (k) => journaled(stateDir, k, ttlMs))
-console.log(infoText(key, last?.version ?? 'unknown', stats, false, cost, sums, state.summarized ?? 0, { valid }, others))
+console.log(infoText(key, last?.version ?? 'unknown', stats, false, cost, sums, state.summarized ?? 0, { valid, ignoredMarks: ignoredMarks(path.join(stateDir, `${key}.journal.jsonl`)) }, others))
