@@ -186,6 +186,20 @@ test("Codex: a profile's file layers over config.toml, and -c values win over bo
   assert.deepEqual(at('codex', files, { model: 'gpt-6-luna', values: { model_auto_compact_token_limit: '120000' } }), { at: 120_000, source: 'config', ...w(200_000) })
 })
 
+test('Codex: a model_catalog_json file replaces models_cache.json, from -c, a profile or config.toml', () => {
+  const luna = (window: number) => ({ models: [{ slug: 'gpt-6-luna', context_window: window, max_context_window: window }] })
+  const files = { '.codex/models_cache.json': luna(272_000), '.codex/sub/cat.json': luna(372_000), 'flag.json': luna(500_000), '.codex/b.config.toml': 'model_catalog_json = "/nowhere.json"\n' }
+  assert.deepEqual(at('codex', files, { model: 'gpt-6-luna' }), { at: 244_800, source: 'models-cache', ...w(272_000) })
+  // In config.toml, relative to CODEX_HOME, as Codex reads it.
+  const set = { ...files, '.codex/config.toml': 'model_catalog_json = "sub/cat.json"\n' }
+  assert.deepEqual(at('codex', set, { model: 'gpt-6-luna' }), { at: 334_800, source: 'models-cache', ...w(372_000) })
+  // -c wins over the files, as the launcher passes it on, already absolute.
+  const h = home(set)
+  assert.deepEqual(at('codex', h, { model: 'gpt-6-luna', values: { model_catalog_json: path.join(h, 'flag.json') } }), { at: 450_000, source: 'models-cache', ...w(500_000) })
+  // A profile's wins over config.toml; a catalog that can't be read gives no model, as Codex fails on it.
+  assert.equal(at('codex', set, { model: 'gpt-6-luna', values: { profile: 'b' } }), undefined)
+})
+
 test("opencode: its config folder, project config turned off, and the user's own inline config, as passed on", () => {
   const up = 'https://openrouter.ai/api/v1'
   const listed = { openrouter: { models: { 'a/b': { limit: { context: 1_000_000 } } } } }

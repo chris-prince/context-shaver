@@ -30,7 +30,7 @@ const VARS: Record<string, string[]> = {
 // Paths the harness reads relative to where it was started. (OPENCODE_DB is
 // relative to opencode's data folder instead.)
 const RELATIVE = new Set(['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_MODELS_PATH'])
-const CODEX_KEYS = ['model_context_window', 'model_auto_compact_token_limit']
+const CODEX_KEYS = ['model_context_window', 'model_auto_compact_token_limit', 'model_catalog_json']
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -43,7 +43,11 @@ export function launchVals(harness: string, env: Record<string, string | undefin
   }
   // Where the harness's project settings are, for those that read them.
   if (harness === 'claude' || harness === 'opencode') vals.cwd = cwd
-  if (harness === 'codex') Object.assign(vals, codexFlags(args))
+  if (harness === 'codex') {
+    Object.assign(vals, codexFlags(args))
+    // Codex reads a -c catalog path relative to where it was started.
+    if (vals.model_catalog_json) vals.model_catalog_json = path.resolve(cwd, vals.model_catalog_json)
+  }
   if (harness === 'opencode') {
     const kept = opencodeKept(env.OPENCODE_CONFIG_CONTENT)
     if (kept) vals.OPENCODE_CONFIG_CONTENT = kept
@@ -51,7 +55,8 @@ export function launchVals(harness: string, env: Record<string, string | undefin
   return vals
 }
 
-// The profile, and the two limits as -c gives them, the last of each winning
+// The profile, and the two limits and the model catalog's path as -c gives
+// them, the last of each winning
 // as in Codex, without the quotes TOML may have around them.
 function codexFlags(args: string[]): LaunchVals {
   const vals: LaunchVals = {}

@@ -22,6 +22,9 @@ test("Codex: the profile and the two limits from the command line, the last winn
   const args = ['-c', 'model_context_window=100000', '--profile', 'a', '-c', 'model="gpt"', '--config=model_context_window="400000"', '-p', 'b', 'exec', '--', '-p', 'c', '-c', 'model_auto_compact_token_limit=1']
   assert.deepEqual(launchVals('codex', {}, args, '/w'), { profile: 'b', model_context_window: '400000' })
   assert.deepEqual(launchVals('codex', {}, ['--profile=work', '-c', "model_auto_compact_token_limit = '300000'"], '/w'), { profile: 'work', model_auto_compact_token_limit: '300000' })
+  // The model catalog's path, relative to where Codex was started.
+  assert.deepEqual(launchVals('codex', {}, ['-c', 'model_catalog_json="cat/models.json"'], '/w'), { model_catalog_json: '/w/cat/models.json' })
+  assert.deepEqual(launchVals('codex', {}, ['-c', 'model_catalog_json=/abs/models.json'], '/w'), { model_catalog_json: '/abs/models.json' })
   // A prompt or another key's value is never kept.
   assert.deepEqual(launchVals('codex', {}, ['-c', 'model_providers.gw.http_headers.x-key="secret"', 'exec', 'do it'], '/w'), {})
 })

@@ -217,12 +217,15 @@ function windowOf(v: unknown, fromEnv: boolean): number | 'auto' | undefined {
 // It compacts once the context reaches its auto-compact limit: the model's
 // auto_compact_token_limit, or model_auto_compact_token_limit in config.toml,
 // capped at 90% of the window. The window is the model's context_window (else
-// max_context_window) from models_cache.json, or model_context_window in
-// config.toml, capped at the max. With neither a window nor a limit, it never
-// compacts. A profile (-p name) is $CODEX_HOME/<name>.config.toml layered over
-// config.toml; Codex 0.167 rejects the older [profiles.x] tables. The launcher
-// passes on CODEX_HOME, and the profile and those two keys where its command
-// line gives them (-p, -c), which win over both files.
+// max_context_window) from its model list, or model_context_window in
+// config.toml, capped at the max. The model list is the file model_catalog_json
+// names, which replaces Codex's list (a path in a config file is relative to
+// CODEX_HOME), else models_cache.json. With neither a window nor a limit, it
+// never compacts; nor here when it uses only the list built into it, which
+// can't be read. A profile (-p name) is $CODEX_HOME/<name>.config.toml layered
+// over config.toml; Codex 0.167 rejects the older [profiles.x] tables. The
+// launcher passes on CODEX_HOME, and the profile and those three keys where its
+// command line gives them (-p, -c), which win over both files.
 function codex(r: Asked): Autocompact | undefined {
   const launch = launchOf(r)
   const given = (k: string) => (typeof launch[k] === 'string' && launch[k] ? (launch[k] as string) : undefined)
@@ -234,7 +237,10 @@ function codex(r: Asked): Autocompact | undefined {
   const profile = isObj(layered) ? layered : {}
   const flag = (k: string) => num(Number(given(k)?.replaceAll('_', '')))
   const setting = (k: string) => flag(k) ?? num(profile[k]) ?? num(cfg[k])
-  const cache = json(path.join(dir, 'models_cache.json'))
+  const text = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
+  const inFile = text(profile.model_catalog_json) ?? text(cfg.model_catalog_json)
+  const catalog = given('model_catalog_json') ?? (inFile && path.resolve(dir, inFile))
+  const cache = json(catalog ?? path.join(dir, 'models_cache.json'))
   const models = Array.isArray(cache) ? cache : isObj(cache) && Array.isArray(cache.models) ? cache.models : []
   const m = models.find((x): x is Obj => isObj(x) && x.slug === r.model)
   const setWindow = setting('model_context_window')
