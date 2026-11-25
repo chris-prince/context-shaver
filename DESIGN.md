@@ -387,13 +387,18 @@ The harness's notes that restate part of the current state (`notes.ts`,
 `latest`: the token counter, the date, an environment update) need no rule. One a
 newer note replaces goes once the request holding its replacement is completed
 at the clock, so only with a move a trim pays for or on a cold cache, and it
-stays gone. A user message holding nothing else keeps it: dropping the message
-could put a system message where the API refuses one.
+stays gone.
 
 A note about a file (`file_note`: one changed on disk, or read before a
 compaction) goes by `file_read_calls`'s drops, and a background task's output
 (`task_output`) by `shell_calls`'s. Only drops by requests or turns apply: a note has no call to stub
 and no token count of its own. Other notes are kept.
+
+A user message holding nothing but notes that are due can't be dropped, since
+that could put a system message where the API refuses one. Its content becomes
+a stub instead (`[CULLED N B FROM CTX]`, a string if it was one), so the policy's
+drop becomes a stub where a drop can't be made, with no stub rule of its own.
+A system message left empty goes.
 
 ```json
 {

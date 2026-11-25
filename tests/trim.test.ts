@@ -7,7 +7,7 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, policyNow, seedPolicy, skillRulesNow, textRules, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 import { RESPONSES } from '../src/responses.ts'
 
@@ -905,26 +905,28 @@ test("a request's cache entries are named by the base the API caches", () => {
 test('a trim drops the latest notes newer ones replace, once the request replacing them is done', () => {
   const counter = (n: number) => `<total_tokens>${1000 - n} tokens left</total_tokens>`
   const ending = (t: ApiMsg[], n: number) => [...t.slice(0, -1), { role: 'system', content: counter(n) } as ApiMsg]
-  const [a, b, c] = [ending(turn(1, 'Bash', { command: 'ls' }), 1), ending(turn(2, 'Bash', { command: 'ls' }), 2), ending(turn(3, 'Bash', { command: 'ls' }), 3)]
+  const [a, b, c, d] = [1, 2, 3, 4].map((n) => ending(turn(n, 'Bash', { command: 'ls' }), n))
   // Beside turn 2's tool result, a block holding a nudge and a counter; after
   // turn 2, a user message holding only a counter.
   const result = b[2] as { role: 'user'; content: Array<Record<string, unknown>> }
   b[2] = { ...result, content: [...result.content, { type: 'text', text: `<system-reminder>\nThe user hasn't heard from you in a while.\n\n${counter(20)}\n</system-reminder>` }] } as ApiMsg
   const alone: ApiMsg = { role: 'user', content: [{ type: 'text', text: `<system-reminder>\n${counter(25)}\n</system-reminder>` }] }
-  const convo = [...a, ...b, alone, ...c]
+  const convo = [...a, ...b, alone, ...c, ...d]
   const left = (out: readonly ApiMsg[]) => out.flatMap(blocks).map((x) => String(x.text ?? '')).join('\n').match(/<total_tokens>\d+/g)?.length ?? 0
   const now = apply(convo, {}, clockOf(convo)).msgs
-  assert.equal(left(convo), 5)
-  // The newest counter stays, and the one alone in a user message, which
-  // dropping would leave empty.
+  assert.equal(left(convo), 6)
+  // The two newest counters stay: the request replacing turn 3's isn't done.
+  // Older system ones go; the one alone in a user message, which dropping
+  // would leave empty, leaves a stub in its place.
   assert.equal(left(now), 2)
-  assert.ok(now.some((m) => JSON.stringify(m) === JSON.stringify(alone)))
+  assert.equal(now.length, convo.length - 2)
+  assert.ok(now.some((m) => m.role === 'user' && blocks(m).length === 1 && STUB.test(String(blocks(m)[0].text))))
   assert.equal(now.flatMap(blocks).find((x) => String(x.text).includes("hasn't heard"))?.text, "<system-reminder>\nThe user hasn't heard from you in a while.\n</system-reminder>")
   assert.deepEqual(apply(convo, {}, { requests: 0, turns: 0 }).msgs, convo)
   // Only ever more go as the clock moves.
   const counts = Array.from({ length: clockOf(convo).requests + 1 }, (_, r) => left(apply(convo, {}, { requests: r, turns: clockOf(convo).turns }).msgs))
   assert.deepEqual([...counts].sort((x, y) => y - x), counts)
-  assert.ok(counts[0] === 5 && counts.at(-1) === 2)
+  assert.ok(counts[0] === 6 && counts.at(-1) === 2)
 })
 
 test('a trim drops file notes by file_read_calls\' rules and task output by shell_calls\'', () => {
@@ -952,4 +954,34 @@ test('a trim drops file notes by file_read_calls\' rules and task output by shel
   assert.deepEqual(at(allCalls([{ action: 'drop', eligible_after: '0 tokens' }])), [true, true])
   // The committed policy drops both.
   assert.deepEqual(at(committed), [false, false])
+})
+
+test('a user message holding only due notes is cut to a stub, and a note beside a prompt goes', () => {
+  const done = (n: number) => `<system-reminder>\n[SYSTEM NOTIFICATION - NOT USER INPUT]\nBackground task ${n} finished with a long report of what it did.\n</system-reminder>`
+  const shapes: Array<ApiMsg['content']> = [
+    [{ type: 'text', text: done(1) }],
+    [{ type: 'text', text: done(1) }, { type: 'text', text: done(2) }],
+    done(1),
+  ]
+  for (const content of shapes) {
+    const [a, b, c, d] = [1, 2, 3, 4].map((n) => turn(n, 'Bash', { command: 'ls' }))
+    b[0] = { role: 'user', content: [{ type: 'text', text: done(3) }, { type: 'text', text: 'prompt 2' }] }
+    const alone: ApiMsg = { role: 'user', content }
+    const noted: ApiMsg = { role: 'assistant', content: [{ type: 'text', text: 'noted' }] }
+    const conv = [...a.slice(0, -1), alone, noted, ...b, ...c, ...d]
+    const out = apply(conv, committed, clockOf(conv)).msgs
+    const text = out.flatMap(blocks).map((x) => String(x.text ?? '')).join('\n')
+    assert.ok(!text.includes('Background task'), JSON.stringify(content))
+    // Every message stays, in its place and non-empty, so roles alternate as
+    // before; the lone notes leave one stub of their bytes, in the same shape.
+    const roles = out.map((m) => m.role).filter((r) => r !== 'system')
+    assert.ok(roles.every((r, j) => r === (j % 2 ? 'assistant' : 'user')), roles.join())
+    assert.ok(out.every((m) => blocks(m).some((x) => String(x.text ?? x.content ?? x.thinking ?? x.id ?? '').length)))
+    const stubbed = out.find((m) => m.role === 'user' && blocks(m).some((x) => STUB.test(String(x.text))))!
+    assert.equal(typeof stubbed.content, typeof content)
+    assert.equal(blocks(stubbed).length, 1)
+    assert.equal(out.indexOf(stubbed), out.findIndex((m) => blocks(m).some((x) => x.text === 'noted')) - 1)
+    // Beside a prompt, the note goes and the prompt stays as it was.
+    assert.ok(out.some((m) => m.role === 'user' && blocks(m).length === 1 && blocks(m)[0].text === 'prompt 2'))
+  }
 })

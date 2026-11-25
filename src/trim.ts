@@ -279,10 +279,16 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, item
     const gone = notes.get(i)
     if (gone) {
       const kept = withoutNotes(m, gone)
-      // A user message left empty would put the messages around it next to
-      // ones the API refuses beside a system message: its notes stay.
+      // A system message left empty goes. A user message can't: the messages
+      // around it would then meet ones the API refuses together, so it keeps
+      // a stub of its notes' text, when that is shorter than they are.
       if (!kept && m.role === 'system') return
       if (kept) m = kept
+      else {
+        const bs = blocks(m)
+        const n = bytes(bs.map((b) => String(b.text)).join('\n'))
+        if (n > stub(n).length) m = typeof m.content === 'string' ? { ...m, content: stub(n) } : { ...m, content: [{ ...bs[bs.length - 1], text: stub(n) }] }
+      }
     }
     if (m.role === 'system') {
       const r = readsOf(m) ? withReads(m, i, due, mark) : m
