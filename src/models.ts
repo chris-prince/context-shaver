@@ -128,13 +128,16 @@ const ASTRA_6_2 = { ...ASTRA, price: { input: 8, output: 40, read: 0.4, write: 1
 // Older models, priced from OpenRouter's listing (2026-11-24), but for
 // gpt-5.6-cyber, which it doesn't list: OpenAI's published price (its
 // long-context rates are trackers', not OpenAI's). Lookback, TTL and
-// compaction are their 6.x counterparts', not probed.
+// compaction are their 6.x counterparts', not probed, but for gpt-5.6-terra's
+// compaction: Codex's model catalog lists it at a 272K window (`codex debug
+// models`, Codex 0.172.0), so 244.8K, not 6.1-terra's 450K.
 const LUNA_5_6 = { ...LUNA, price: { input: 0.2, output: 1.2, read: 0.02, write: 0.25, long: OPENAI_LONG } }
+const TERRA_5_6 = { ...TERRA, price: { input: 2, output: 12, read: 0.2, write: 2.5, long: OPENAI_LONG }, compaction: CODEX_V2 }
 const SOL_6 = { ...SOL, price: { input: 2, output: 10, read: 0.2, write: 2.5, long: OPENAI_LONG } }
 const SOL_5_6 = { ...SOL, price: { input: 4, output: 20, read: 0.4, write: 5, long: OPENAI_LONG } }
 const CYBER_5_6 = { ...SOL, price: { input: 12.5, output: 75, read: 1.25, write: 15.625, long: OPENAI_LONG } }
 
-const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
+export const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },
   'claude-fable-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
   // OpenRouter's listing (2026-11-16): reads at 0.025x input, writes at the
@@ -166,32 +169,23 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   // Codex in use"): writes at 1.25x input, the latest 50 breakpoints looked
   // through, and entries kept at least 30 minutes after their last use. A
   // Codex session read nearly all of it after 35 minutes and nothing after 59,
-  // so the 30 minutes is what's counted on. OpenRouter names it openai/gpt-6-luna.
+  // so the 30 minutes is what's counted on.
   'gpt-6-luna': LUNA,
-  'openai/gpt-6-luna': LUNA,
   // Prices from OpenAI's model page, matching OpenRouter's: reads at 0.05x
   // input, not luna's 0.1x, and writes at 1.25x. The TTL was probed on
   // 2026-10-27 through Codex 0.163.0, two sessions per gap: all read after 28
   // minutes, nothing after 32 or 60. So the 30 minutes is a hard edge, not a
   // floor.
   'gpt-6.1-sol': SOL,
-  'openai/gpt-6.1-sol': SOL,
   'gpt-6.1-terra': TERRA,
-  'openai/gpt-6.1-terra': TERRA,
   'gpt-6-astra': ASTRA,
-  'openai/gpt-6-astra': ASTRA,
   'gpt-6.2-sol': SOL,
-  'openai/gpt-6.2-sol': SOL,
   'gpt-6.2-astra': ASTRA_6_2,
-  'openai/gpt-6.2-astra': ASTRA_6_2,
   'gpt-5.6-luna': LUNA_5_6,
-  'openai/gpt-5.6-luna': LUNA_5_6,
+  'gpt-5.6-terra': TERRA_5_6,
   'gpt-6-sol': SOL_6,
-  'openai/gpt-6-sol': SOL_6,
   'gpt-5.6-sol': SOL_5_6,
-  'openai/gpt-5.6-sol': SOL_5_6,
   'gpt-5.6-cyber': CYBER_5_6,
-  'openai/gpt-5.6-cyber': CYBER_5_6,
   // Priced apart by each provider, so only per provider.
   'deepseek/deepseek-v4.1-flash': {
     providers: {
@@ -216,8 +210,26 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
 export const SINCE = 0.5
 const DEFAULT: Model = { lookback: 20, horizon: (n, since) => Math.min(20, 0.6 * n, SINCE * since) }
 
+// A name not in the table is matched by its end, so a router's or gateway's
+// name finds its model (openai/gpt-6-luna, bedrock-claude-opus-4-6,
+// claude-opus-4.6-1m). Names are compared without case, with `/`, `.`, `_` and
+// `-` alike and without a context-size suffix (-1m, -200k), which doesn't
+// change the price; a key matches a name that is it or ends with it after a
+// separator, and the longest such key wins.
+const norm = (s: string) => s.toLowerCase().replace(/[-_./]\d+[km]$/, '').replace(/[/._]/g, '-')
+const NORMED = Object.keys(MODELS).map((k) => [k, norm(k)] as const)
+export function entryOf(name: string): string | undefined {
+  if (typeof name !== 'string') return
+  if (Object.hasOwn(MODELS, name)) return name
+  const n = norm(name)
+  let best: (typeof NORMED)[number] | undefined
+  for (const e of NORMED) if ((n === e[1] || n.endsWith('-' + e[1])) && e[1].length > (best?.[1].length ?? -1)) best = e
+  return best?.[0]
+}
+
 export function modelOf(name: string, provider?: string): Model {
-  const { providers, ...m } = MODELS[name] ?? {}
+  const key = entryOf(name)
+  const { providers, ...m } = (key && MODELS[key]) || {}
   return { ...DEFAULT, ...m, ...(provider ? providers?.[provider] : undefined) }
 }
 

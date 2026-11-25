@@ -31,12 +31,9 @@ if (!positionals.length) {
 const key = JSON.parse(readFileSync(path.join(homedir(), '.local/share/opencode/auth.json'), 'utf8')).openrouter.key
 const provider = values.provider
 
-// Our entry for an OpenRouter name: the name itself, or Anthropic's
-// claude-opus-5.5 as claude-opus-5-5.
-function ours(id: string): Model {
-  const m = modelOf(id, provider)
-  return m.price ? m : modelOf(id.split('/').at(-1)!.replace(/(\d+)\.(\d+)$/, '$1-$2'), provider)
-}
+// Our entry for an OpenRouter name (anthropic/claude-opus-5.5 is
+// claude-opus-5-5's, by models.ts's entryOf).
+const ours = (id: string): Model => modelOf(id, provider)
 
 // About 6,000 tokens, past every model's caching minimum, distinct per tag so
 // no prompt reads another's entry.
