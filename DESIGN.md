@@ -776,7 +776,9 @@ record is kept apart from sending it.
   The model sees no times (neither protocol puts one on a part), so the proxy
   dates each arc itself when it keeps the record: by when its first turn's
   prompt was sent, and its minutes by its turns' own, from each prompt to its
-  last request, leaving out the time between turns. The record also keeps the
+  last request, leaving out the time between turns. Arcs can start in the
+  same turn, when one prompt's work went to two goals; the first of them has
+  the turn's minutes. The record also keeps the
   summary fork's output tokens. A record ending where a turn starts leaves no tool
   call without its result. The next summary fork asks from that turn on. A
   summary fork that finds no complete arc, or calls a tool, makes no record.
@@ -814,8 +816,10 @@ record is kept apart from sending it.
   of their headings, `[shaver] Summary records:` and `[shaver] Memoir
   records:`, so the rest can be reworded; older logs by their old headings.
   Like a new record,
-  it is sent once the cache is cold. A record without arc headings (made before
-  they were asked for) stops the merge, along with every record after it. In
+  it is sent once the cache is cold. A record kept without arcs, whose headings
+  the summary fork's turns didn't bear out, gives its headings before its end,
+  undated and untimed. A record without arc headings (made before they were
+  asked for) stops the merge, along with every record after it. In
   `shaver info` the memoir counts as `memoir`.
 
 A summary fork's cost is in the session's actual cost in `shaver info`, which

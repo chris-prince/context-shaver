@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { isMemoir, isSummary, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg } from '../src/items.ts'
 import { preambleEnd } from '../src/log.ts'
 import { apply } from '../src/trim.ts'
-import { chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, keptNotes, memoirOf, mergedOf, nothingComplete, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
+import { arcsIn, chainBreak, coveredBy, summaryForkMessages, summaryForkOf, instructions, keptNotes, memoirOf, mergedOf, nothingComplete, promptHash, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type SummaryFork, type Summary } from '../src/summary.ts'
 
 const long = 'x'.repeat(4000)
 // A session: the preamble, then four turns, each a prompt, a tool call, its
@@ -291,6 +291,13 @@ test("a record's arcs are read from its headings and dated by their turns' promp
   // An arc over both turns counts their own minutes, not the gap between them.
   const both = recordOf([{ type: 'text', text: '## [1] Did both.\n- a\n\nEnds before: [3]' }], f, 'now')!
   assert.deepEqual(both.arcs, [{ turn: 1, title: 'Did both.', time: born(msgs[1]), minutes: 5 }])
+  // Two arcs started in one turn share its minutes: the first has them.
+  const shared = recordOf([{ type: 'text', text: '## [1] Did one.\n- a\n\n## [1] Also did one.\n- b\n\n## [2] Did two.\n- c\n\nEnds before: [3]' }], f, 'now')!
+  assert.deepEqual(shared.arcs, [
+    { turn: 1, title: 'Did one.', time: born(msgs[1]), minutes: 3 },
+    { turn: 1, title: 'Also did one.', time: born(msgs[1]) },
+    { turn: 2, title: 'Did two.', time: born(msgs[6]), minutes: 2 },
+  ])
   // No arcs without headings that start the record and rise within its turns.
   for (const text of ['- a\n\n## [1] Did one.', '## [2] Two.\n## [1] One.', '## [1] One.\n## [3] Three.', '## Arc\n- a'])
     assert.equal(recordOf([{ type: 'text', text: `${text}\n\nEnds before: [3]` }], f, 'now')!.arcs, undefined)
@@ -304,6 +311,19 @@ test('the oldest records merge into the memoir until the rest fit under the thre
   // Never fewer than before, and not past one without arcs.
   assert.equal(mergedOf(chain, 3, 15000), 3)
   assert.equal(mergedOf([rec(6000), rec(6000, false), rec(6000), rec(6000)], 0, 15000), 1)
+})
+
+test("a record kept without arcs gives its headings before its end, so the memoir can merge it", () => {
+  const at = (d: number, h: number) => new Date(2026, 9, d, h).toISOString()
+  // As one whose heading past its end, or repeated turn, kept it from having arcs.
+  const headed: Summary = { endsBefore: 5, prompt: '', text: '## [1] Did one.\n- a\n\n## [1] Also one.\n- b\n\n## [7] Done later.\n- c', time: at(16, 9), tokens: 6000 }
+  assert.deepEqual(arcsIn(headed), [{ turn: 1, title: 'Did one.' }, { turn: 1, title: 'Also one.' }])
+  const plain: Summary = { ...headed, text: 'no headings' }
+  assert.equal(arcsIn(plain), undefined)
+  const rec = (tokens: number): Summary => ({ endsBefore: 2, prompt: '', text: '', time: '', tokens, arcs: [] })
+  assert.equal(mergedOf([rec(6000), headed, rec(6000), rec(6000)], 0, 15000), 2)
+  assert.equal(mergedOf([rec(6000), plain, rec(6000), rec(6000)], 0, 15000), 1)
+  assert.equal(memoirOf([headed]), `${MEMOIR_HEAD}\n\n2026-10-16\n- Did one.\n- Also one.\n\n${MEMOIR_FOOT}`)
 })
 
 test('the memoir lists arc titles under their dates, before the records left', () => {

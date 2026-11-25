@@ -321,21 +321,35 @@ const textOf = (content: readonly Block[]) => content.filter((b) => b.type === '
 const endLine = (text: string) => [...text.matchAll(/^Ends before: \[(\d+)\]\s*$/gm)].at(-1)
 
 // A record's arcs, by their heading lines: one starts the record, and their
-// turns, each one listed, rise within those it covers. Each arc runs to the
-// next one's turn, and its minutes are its timed turns' own, from prompt to
-// last request: not the gaps between them.
+// turns, each one listed, never fall within those it covers. Each arc runs to
+// the next one's turn, and its minutes are its timed turns' own, from prompt
+// to last request: not the gaps between them. Arcs that start in the same
+// turn (one prompt's work on two goals) share its minutes: the first has
+// them, the rest none.
 function arcsOf(record: string, f: SummaryFork, endsBefore: number): Arc[] | undefined {
   const heads = [...record.matchAll(/^## \[(\d+)\] (.+)$/gm)]
   const turns = heads.map((h) => Number(h[1]))
   const at = turns.map((t) => listedAt(f, t))
-  if (heads[0]?.index !== 0 || at.some((k, j) => k < 0 || (j && k <= at[j - 1])) || at.at(-1)! >= listedAt(f, endsBefore)) return
+  if (heads[0]?.index !== 0 || at.some((k, j) => k < 0 || (j && k < at[j - 1])) || at.at(-1)! >= listedAt(f, endsBefore)) return
   return heads.map((h, k) => {
     const { time } = f.prompts[at[k]]
-    const own = f.prompts.slice(at[k], at[k + 1] ?? listedAt(f, endsBefore)).filter((p) => p.time && p.end)
+    const next = at.slice(k + 1).find((n) => n > at[k]) ?? listedAt(f, endsBefore)
+    const own = k && at[k] === at[k - 1] ? [] : f.prompts.slice(at[k], next).filter((p) => p.time && p.end)
     const ms = own.length ? own.reduce((n, p) => n + Date.parse(p.end!) - Date.parse(p.time!), 0) : undefined
     const minutes = ms === undefined ? undefined : Math.max(1, Math.round(ms / 60_000))
     return { turn: turns[k], title: h[2].trim(), ...(time && { time }), ...(minutes !== undefined && { minutes }) }
   })
+}
+
+// A record's arcs: those kept with it, or else its headings before its end,
+// undated and untimed. A record could be kept without arcs whose headings the
+// fork's turns didn't bear out (two in one turn, or one past its end), and
+// those still name its arcs; turn IDs only rise, so the end bounds them. A
+// record without headings (from before they were asked for) has none.
+export function arcsIn(s: Summary): readonly Arc[] | undefined {
+  if (s.arcs) return s.arcs
+  const heads = [...s.text.matchAll(/^## \[(\d+)\] (.+)$/gm)].filter((h) => Number(h[1]) < s.endsBefore)
+  return heads.length ? heads.map((h) => ({ turn: Number(h[1]), title: h[2].trim() })) : undefined
 }
 
 // How many of the oldest records the memoir holds once `chain` is kept: the
@@ -344,7 +358,7 @@ function arcsOf(record: string, f: SummaryFork, endsBefore: number): Arc[] | und
 export function mergedOf(chain: readonly Summary[], merged: number, threshold: number): number {
   let n = Math.min(merged, chain.length)
   const rest = (k: number) => chain.slice(k).reduce((t, s) => t + (s.tokens ?? 0), 0)
-  while (n < chain.length && chain[n].arcs && rest(n) > threshold) n++
+  while (n < chain.length && arcsIn(chain[n]) && rest(n) > threshold) n++
   return n
 }
 
@@ -361,7 +375,7 @@ export function memoirOf(chain: readonly Summary[]): string {
   const lines: string[] = []
   let day = ''
   for (const s of chain)
-    for (const a of s.arcs ?? []) {
+    for (const a of arcsIn(s) ?? []) {
       const d = localDate(a.time ?? s.time)
       if (d !== day) lines.push(...(day ? [''] : []), d), (day = d)
       lines.push(`- ${a.title}${a.minutes !== undefined ? ` (~${a.minutes} min)` : ''}`)
