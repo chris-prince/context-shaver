@@ -2,3 +2,4 @@ proxy-data/
 __pycache__/
 local/
 /policy.json
+.DS_Store
