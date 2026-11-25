@@ -50,7 +50,13 @@ test("shaver info's costs are the session's, with a note first saying what they 
   ]
   const out = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0 }, others)
   const actual = 1 + 2 + 4 + 8 + 16 + 0.25 + 0.5
-  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 2 ancestor convs, 1 subagent, 4 side reqs \\(1 not counted: no price for its model\\)\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
+  assert.match(out, new RegExp(`Shaver Summary\\n\\n  « Includes 1 ancestor conv, 1 subagent, 4 side reqs\\. »\\n\\n  Costs \\(session\\)\\n +\\$62\\.00 if no shaver.*\\n +\\$${actual.toFixed(2).replace('.', '\\.')} actual`))
+  // The conversation left out is warned of at the bottom, with the journal's
+  // misses and ignored breakpoints.
+  const warned = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0, missed: 2, ignoredMarks: 1 }, others)
+  assert.match(warned, /\n\nWARNINGS\n\n  - No price for model m, so the session's costs leave out 1 conv on it\.\n  - Since shaver started, the journal missed 2 requests; see proxy\.log\.\n  - The server ignored the explicit breakpoints on 1 request, .*; see scripts\/audit\.ts\.\n```$/)
+  // Without a cost, only the session's own missing price is warned of.
+  assert.match(infoText('k', 'v', s, false, undefined, sums, 0, { valid: 0 }, others), /\n\nWARNINGS\n\n  - No price for model m, so the session's costs aren't shown\.\n```$/)
   // The breakdown and speedup are the session's too: the summaries' spend
   // charged to their saving.
   assert.match(out, /\$31\.00 \(50%\) conv:tools/)

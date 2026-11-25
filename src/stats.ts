@@ -618,10 +618,6 @@ function split(c: Cost): string[] {
   return types.map((t) => `    ${money(c.saved[t]).padStart(width)} (${String(percent(c.saved[t], c.without)).padStart(2)}%) ${BASE.includes(t) ? `base:${t} <best case>` : `conv:${t}`}`)
 }
 
-// With no price for the session's model there is no cost (cost.ts, add), so
-// the breakdown says why.
-const unpriced = (s: Stats, estimated: boolean) => (estimated || modelOf(s.model, s.provider).price ? [] : ['', 'Shaver Summary', '', '  Savings Breakdown', `    MISSING: Shaver lacks cost details for model ${s.model}.`])
-
 export const counted = (n: number, noun: string) => `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`
 
 // What became of a session's summary requests (summary.ts): their records the
@@ -633,7 +629,7 @@ export type Forks = { applied: number; pending: number; errors: number; empty: n
 
 // `elsewhere` are lines under the requests line for the rest of the session
 // (info.ts): its ancestor conversations' and subagents' requests.
-export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, errors: 0, empty: 0, dropped: 0 }, costNote?: string, elsewhere: string[] = []): string {
+export function render(s: Stats, session: string, estimated = false, cost?: Cost, forks: Forks = { applied: 0, pending: 0, errors: 0, empty: 0, dropped: 0 }, costNote?: string, elsewhere: string[] = [], warnings: string[] = []): string {
   const total = s.inputTokens
   const by: Record<string, number> = {}
   const add = (k: string, n: number) => (by[k] = (by[k] ?? 0) + n)
@@ -675,7 +671,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   const conversation = total - base - frontier
 
   const window = `Context Window: ${s.window ? `${s.window.toLocaleString('en-US')} tokens${s.windowGuessed ? ' (guessing)' : ''}` : '(unknown)'}`
-  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...elsewhere, ...(cost ? ['', 'Shaver Summary', '', ...costLines(cost, undefined, costNote)] : unpriced(s, estimated))]
+  const out = [`Session: ${session}`, `Model: ${s.model}`, window, ...(s.provider ? [`Provider: ${s.provider}`] : []), '', localTime(s.time), `${counted(s.requests, 'request')} across ${counted(s.turns, 'turn')}, spanning ${span(s.first, s.time)}`, ...elsewhere, ...(cost ? ['', 'Shaver Summary', '', ...costLines(cost, undefined, costNote)] : [])]
   const { failed, applied, pending, errors, empty, dropped } = forks
   const requests = applied + pending + errors + empty + dropped
   const last = failed ? [`      last failed: ${failed.outcome}, ${failed.reason}, ${localTime(failed.time)}`] : []
@@ -708,5 +704,9 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   for (const d of Object.keys(byDay).map(Number).filter((d) => d > 0).sort((a, b) => a - b)) out.push(row(`${d} day${d !== 1 ? 's' : ''} ago`, byDay[d], total, 2))
   out.push('', `    ${counted(requests, 'summary creation request')}`, ...fateLines)
   out.push('', head('Frontier', frontier, total), '  Recent turns, not yet eligible to trim. Okay if large.')
+  // What needs attention, last: the session's model with no price (cost.ts,
+  // add, gives no cost), then the caller's.
+  const all = [...(cost || estimated || modelOf(s.model, s.provider).price ? [] : [`No price for model ${s.model}, so the session's costs aren't shown.`]), ...warnings]
+  if (all.length) out.push('', 'WARNINGS', '', ...all.map((w) => `  - ${w}`))
   return out.join('\n')
 }

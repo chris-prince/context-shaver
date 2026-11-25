@@ -117,11 +117,15 @@ test('render prints the stats from the state alone', () => {
   const s = observe(undefined, describe(body([{ role: 'user', content: 'hi' }]), ends, '2026-10-11T10:00:00Z'), 1000, 0)
   const out = render(s, 'session')
   assert.match(out, /^Session: session\nModel: m\n/)
-  // Model m has no price, so there is no cost to break down.
-  assert.match(out, /1 request across 1 turn, spanning 0m\n\nShaver Summary\n\n  Savings Breakdown\n    MISSING: Shaver lacks cost details for model m\.\n\nContext Details\n\n  1,000 total tokens\n\n  Base/)
+  // Model m has no price, so there is no cost to break down, and the
+  // warnings at the bottom say so.
+  assert.match(out, /1 request across 1 turn, spanning 0m\n\nContext Details\n\n  1,000 total tokens\n\n  Base/)
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. Above 15k\? Run `shaver optimize`\./)
   assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by type:\n      user .*\n      sysmsg-unrecognized +0 .*\n    by age:\n      today .*\n\n    0 summary creation requests\n\n  Frontier/)
-  assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.$/)
+  assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.\n\nWARNINGS\n\n  - No price for model m, so the session's costs aren't shown\.$/)
+  // A priced model, or estimated stats, has no warning.
+  assert.doesNotMatch(render(s, 'session', true), /WARNINGS/)
+  assert.match(render(s, 'session', false, undefined, undefined, undefined, [], ['w']), /\n\nWARNINGS\n\n  - No price for model m, so the session's costs aren't shown\.\n  - w$/)
 })
 
 test('render names the provider only when a request pins one', () => {

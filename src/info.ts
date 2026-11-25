@@ -103,16 +103,24 @@ function plus(a: Cost, b: Cost): Cost {
 
 // What the session's cost covers besides the conversation: its ancestor
 // conversations and subagents, the side requests of journals with only those
-// (sideOnly), and those whose model has no price, so aren't.
+// (sideOnly), but not those whose model has no price (unpricedOf warns of
+// them).
 function noteOf(others: Other[]): string | undefined {
-  const shown = others.filter((o) => !sideOnly(o.stats))
+  const shown = others.filter((o) => !sideOnly(o.stats) && o.cost)
   const histories = shown.filter((o) => !o.agent).length
   const agents = new Set(shown.flatMap((o) => o.agent ?? [])).size
   const sides = sidesOf(others)
   const parts = [...(histories ? [counted(histories, 'ancestor conv')] : []), ...(agents ? [counted(agents, 'subagent')] : []), ...(sides ? [counted(sides, 'side req')] : [])]
-  const unpriced = shown.filter((o) => !o.cost).length
   if (!parts.length) return undefined
-  return `Includes ${parts.join(', ')}${unpriced ? ` (${unpriced} not counted: no price for its model)` : ''}.`
+  return `Includes ${parts.join(', ')}.`
+}
+
+// The session's other conversations its costs leave out, by their model with
+// no price.
+function unpricedOf(others: Other[]): string[] {
+  const by = new Map<string, number>()
+  for (const o of others) if (!sideOnly(o.stats) && !o.cost) by.set(o.stats?.model ?? 'unknown', (by.get(o.stats?.model ?? 'unknown') ?? 0) + 1)
+  return [...by].map(([m, n]) => `No price for model ${m}, so the session's costs leave out ${counted(n, 'conv')} on it.`)
 }
 
 // The requests and turns of the session's ancestor conversations, and of its
@@ -164,9 +172,11 @@ export function infoText(key: string, version: string, s: Stats, estimated: bool
   const errors = (o.failed ?? 0) + (o.rejected ?? 0)
   const empty = o['nothing-complete'] ?? 0
   const forks: Forks = { applied, pending, errors, empty, dropped: sums.requests - applied - pending - errors - empty, ...(sums.failed && { failed: sums.failed }) }
-  const text = render(s, key, estimated, session, forks, noteOf(others), elsewhereOf(others, s))
-  const warning =
-    (live.missed ? `\n\nshaver: since it started, the journal missed ${counted(live.missed, 'request')}; see proxy.log` : '') +
-    (live.ignoredMarks ? `\n\nshaver: the server ignored the explicit breakpoints on ${counted(live.ignoredMarks, 'request')}, reading the cache only as far as without them; see the audit` : '')
-  return '```\n' + `Shaver Version: ${version}\n` + text + warning + '\n```'
+  const warnings = [
+    ...(c ? unpricedOf(others) : []),
+    ...(live.missed ? [`Since shaver started, the journal missed ${counted(live.missed, 'request')}; see proxy.log.`] : []),
+    ...(live.ignoredMarks ? [`The server ignored the explicit breakpoints on ${counted(live.ignoredMarks, 'request')}, reading the cache only as far as without them; see scripts/audit.ts.`] : []),
+  ]
+  const text = render(s, key, estimated, session, forks, noteOf(others), elsewhereOf(others, s), warnings)
+  return '```\n' + `Shaver Version: ${version}\n` + text + '\n```'
 }
