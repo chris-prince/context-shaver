@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { NOTES, notesOf, notesOfBlock } from '../src/notes.ts'
+import { firstLine, NOTES, notesOf, notesOfBlock } from '../src/notes.ts'
 
 // Each kind's opening, from the logs (shortened), or for the unseen ones from
 // another machine's sessions or the harness's source.
@@ -41,6 +41,8 @@ const SAMPLES: Record<string, string> = {
   plugins: '<recommended_plugins>\n- github',
   'approved-command': 'Approved command prefix saved:\n- ["git", "commit"]',
   'turn-aborted': '<turn_aborted>\nThe user interrupted the previous turn on purpose.',
+  'child-agent': 'You are now a newly spawned child agent. The preceding conversation is inherited',
+  'scoped-instructions': '<scoped-instructions path="/p/sub">\n# sub\n</scoped-instructions>',
 }
 // Kinds with more than one heading, and the sample of each other one.
 const MORE = [
@@ -52,6 +54,9 @@ const MORE = [
   'The following skills have changed:\n<skill><id>a</id></skill>',
   'From here on, do not add attribution lines to commits.',
   'Definitions of the following tools were loaded earlier in this conversation and their source has since been removed. Disregard those definitions:\n- Artifact',
+  'The following agent types are no longer available:\n- web-fetch',
+  'Result of calling the Read tool:\n     1\t# a',
+  'This is an incremental tools update. Previously declared tools remain available ',
 ]
 
 test('every heading has a sample that reads as its kind, alone and inside a reminder', () => {
@@ -97,6 +102,15 @@ test('an instructions re-read is keyed by the files it gives, present or gone', 
 test('blocks that are not text are one note each', () => {
   assert.deepEqual(notesOfBlock({ type: 'tool_addition', tool: { name: 'Docs' } }).map((n) => [n.kind, n.category]), [['tools-added', 'forever']])
   assert.deepEqual(notesOfBlock({ type: 'tool_removal', tool: { name: 'Docs' } }).map((n) => [n.kind, n.category]), [['tools-removed', 'forever']])
-  assert.deepEqual(notesOfBlock({ type: 'item', item: { type: 'compaction' } }).map((n) => [n.kind, n.category]), [['compaction', 'conversation']])
   assert.deepEqual(notesOfBlock({ type: 'image' }).map((n) => n.category), ['unrecognized'])
+})
+
+test("Codex's items are notes by their type, an unknown one unrecognized and shown by it", () => {
+  const of = (type: string) => notesOfBlock({ type: 'item', item: { type } }).map((n) => [n.kind, n.category])
+  assert.deepEqual(of('compaction'), [['compaction', 'forever']])
+  assert.deepEqual(of('compaction_trigger'), [['compaction-trigger', 'conversation']])
+  assert.deepEqual(of('additional_tools'), [['tools-added', 'forever']])
+  assert.deepEqual(of('agent_message'), [['agent-message', 'task_output']])
+  const [odd] = notesOfBlock({ type: 'item', item: { type: 'web_view' } })
+  assert.deepEqual([odd.category, firstLine(odd)], ['unrecognized', '(web_view)'])
 })

@@ -8,10 +8,15 @@
 // - file_note: about a file the model can read again (a file attached or
 //   changed, or too large to restore), like a tool's result (before
 //   2026-11-22, `tool`).
-// - conversation: an event in the conversation (a background task done, a turn
-//   aborted, a reminder), never trimmed and summarized with its turn.
-// - unrecognized: under no heading below, treated as conversation, and shown
-//   by its first line (stats.ts) so it gets a heading.
+// - task_output: what a task the model started reports back (a background
+//   task's notification, another agent's message), like a tool's result.
+// - conversation: an event in the conversation (a turn aborted, a reminder),
+//   never trimmed and summarized with its turn.
+// - unrecognized: under no heading below, kept as forever is, and shown by its
+//   first line (stats.ts) so it gets a heading. Of the notes given headings so
+//   far, half were forever's and few conversation's; and a forever note
+//   dropped loses a tool or an instruction, where a conversation one kept only
+//   costs its size until it gets a heading.
 //
 // Notes in the preamble are never trimmed or summarized, whatever their
 // category: only the ones after it are sorted here.
@@ -22,7 +27,7 @@
 
 import type { Block } from './items.ts'
 
-export const CATEGORIES = ['latest', 'forever', 'file_note', 'conversation', 'unrecognized'] as const
+export const CATEGORIES = ['latest', 'forever', 'file_note', 'task_output', 'conversation', 'unrecognized'] as const
 export type Category = (typeof CATEGORIES)[number]
 export type Note = { kind: string; category: Category; text: string; keys: string[] }
 
@@ -43,6 +48,7 @@ export const NOTES: Array<[string, string, Category]> = [
   // Each lists every skill invoked so far, so the newest has the others.
   ['The following skills were invoked EARLIER', 'skills-reread', 'latest'],
   ['Available agent types', 'agent-types', 'forever'],
+  ['The following agent types are no longer available', 'agent-types', 'forever'],
   ['The following deferred tools', 'deferred-tools', 'forever'],
   ['The following tools just became available', 'tools-added', 'forever'],
   ['The following tools are no longer available', 'tools-removed', 'forever'],
@@ -62,9 +68,11 @@ export const NOTES: Array<[string, string, Category]> = [
   ['You are powered by the model', 'model', 'latest'],
   ["Today's date is", 'date', 'latest'],
   ['Called the \\w+ tool with the following input', 'attached-file', 'file_note'],
+  // The attached file's contents, when they come in a block of their own.
+  ['Result of calling the \\w+ tool:', 'attached-file', 'file_note'],
   ['Note: .* changed on disk since you last read it', 'file-changed', 'file_note'],
   ['Note: .* was read before the last conversation was summarized', 'file-pointer', 'file_note'],
-  ['\\[SYSTEM NOTIFICATION - NOT USER INPUT\\]', 'task-notification', 'conversation'],
+  ['\\[SYSTEM NOTIFICATION - NOT USER INPUT\\]', 'task-notification', 'task_output'],
   ['This is a side question from the user', 'side-question', 'conversation'],
   // Codex
   ['<collaboration_mode>', 'collaboration-mode', 'latest'],
@@ -77,6 +85,11 @@ export const NOTES: Array<[string, string, Category]> = [
   ['# AGENTS.md instructions', 'agents-md', 'forever'],
   ['<turn_aborted>', 'turn-aborted', 'conversation'],
   ['Approved command prefix saved', 'approved-command', 'conversation'],
+  ['You are now a newly spawned child agent', 'child-agent', 'forever'],
+  // With an additional_tools item, which BLOCKS dedupes.
+  ['This is an incremental tools update', 'tools-added', 'forever'],
+  // Forever on the assumption that a path's instructions come once a session.
+  ['<scoped-instructions', 'scoped-instructions', 'forever'], // unseen
   // OpenCode, unseen
   ['<available_skills>', 'skills', 'forever'],
   ['New skills are available', 'skills', 'forever'],
@@ -124,15 +137,25 @@ export function notesOf(text: string): Note[] {
   })
 }
 
-// A note block's notes. A block that isn't text is one: a compaction item
-// (Codex's, which holds the history before it) is conversation, and Claude
-// Code's tool_addition and tool_removal, its deferred tools' changes, forever.
-const BLOCKS: Record<string, [string, Category]> = { item: ['compaction', 'conversation'], tool_addition: ['tools-added', 'forever'], tool_removal: ['tools-removed', 'forever'] }
+// A note block's notes. A block that isn't text is one: Claude Code's
+// tool_addition and tool_removal, its deferred tools' changes, are forever;
+// Codex's items go by their type. A compaction item holds the history before
+// it, so it is forever too, and additional_tools declares tools, as
+// tool_addition does (summary.ts keeps only each tool's newest definition).
+const BLOCKS: Record<string, [string, Category]> = { tool_addition: ['tools-added', 'forever'], tool_removal: ['tools-removed', 'forever'] }
+const ITEMS: Record<string, [string, Category]> = {
+  compaction: ['compaction', 'forever'],
+  compaction_trigger: ['compaction-trigger', 'conversation'], // unseen
+  additional_tools: ['tools-added', 'forever'],
+  agent_message: ['agent-message', 'task_output'],
+}
 export function notesOfBlock(b: Block): Note[] {
   if (b.type === 'text') return notesOf(String(b.text))
-  const [kind, category] = BLOCKS[b.type] ?? [b.type, 'unrecognized']
+  const type = b.type === 'item' ? String((b.item as { type?: unknown } | undefined)?.type) : b.type
+  const [kind, category] = (b.type === 'item' ? ITEMS[type] : BLOCKS[type]) ?? [type, 'unrecognized']
   return [{ kind, category, text: '', keys: [kind] }]
 }
 
-// A note's first line, cut short: how an unrecognized one is shown.
-export const firstLine = (n: Note) => n.text.trim().split('\n')[0].slice(0, 80)
+// A note's first line, cut short, or for a block that isn't text its type:
+// how an unrecognized one is shown.
+export const firstLine = (n: Note) => n.text.trim().split('\n')[0].slice(0, 80) || `(${n.kind})`

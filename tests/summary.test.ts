@@ -246,6 +246,21 @@ test('records keep only the newest definition of a tool added again', () => {
   assert.deepEqual(keptNotes([first, again, removed])!.content, [add('guide', 1), add('list', 2), add('publish', 2), removed.content[0]])
 })
 
+test("records keep Codex's newest declaration of each tool, and a declaration until all its tools are declared again", () => {
+  const tools = (v: number, ...names: string[]) => ({ type: 'item', item: { type: 'additional_tools', id: `at${v}`, tools: [{ type: 'namespace', name: 'functions', tools: names.map((name) => ({ type: 'custom', name })) }] } })
+  const msg = (...content: unknown[]) => ({ role: 'system', content }) as ApiMsg
+  const [a, b, c] = [tools(1, 'exec'), tools(2, 'exec', 'wait'), tools(3, 'exec')]
+  assert.deepEqual(keptNotes([msg(a), msg(b), msg(c)])!.content, [b, c])
+  assert.deepEqual(keptNotes([msg(a), msg(c)])!.content, [c])
+})
+
+test('records keep the notes no heading names, and drop a task\'s output', () => {
+  const odd = { type: 'item', item: { type: 'web_view' } }
+  const told = { type: 'item', item: { type: 'agent_message', content: [{ type: 'input_text', text: 'Message Type: MESSAGE' }] } }
+  const text = { type: 'text', text: '<system-reminder>\nSomething new\n</system-reminder>' }
+  assert.deepEqual(keptNotes([{ role: 'system', content: [odd, told] } as ApiMsg, { role: 'user', content: [text] } as ApiMsg])!.content, [odd, text])
+})
+
 test('after a /compact, records keep the preamble Claude Code puts after the exchange it kept', () => {
   const kept: ApiMsg[] = [
     { role: 'user', content: 'This session is being continued' },

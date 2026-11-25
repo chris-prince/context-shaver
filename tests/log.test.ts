@@ -13,7 +13,7 @@ test("after a Codex compaction, its preamble messages are base by section and th
   assert.deepEqual(Object.keys(kinds(JSON.stringify(dev), dev, true).kinds), ['system:skills'])
   // A user message's envelope stays user, as with Claude Code's reminders.
   assert.deepEqual(Object.keys(kinds(JSON.stringify(env), env, true).kinds), ['system:other', 'user'])
-  assert.deepEqual(Object.keys(kinds(JSON.stringify(compaction), compaction, true).kinds), ['harness:conversation'])
+  assert.deepEqual(Object.keys(kinds(JSON.stringify(compaction), compaction, true).kinds), ['harness:forever'])
 })
 
 test('injected content is system in the preamble and harness after it; the prompt is user', () => {

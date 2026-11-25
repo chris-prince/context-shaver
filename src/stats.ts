@@ -523,7 +523,7 @@ export function textTokens(s: Sent, tokens: Record<string, number>): number[] {
     return bytes && ((tokens[p.key] ?? 0) * ((p.kinds.user ?? 0) + (p.kinds.assistant ?? 0))) / bytes
   })
 }
-const LABELS: Record<string, string> = { harness: 'system-message', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'sysmsg-' + { latest: 'save-latest', forever: 'save-forever', file_note: 'file-note', conversation: 'like-conv', unrecognized: 'unrecognized' }[c]])) }
+const LABELS: Record<string, string> = { harness: 'system-message', ...Object.fromEntries(CATEGORIES.map((c) => ['harness:' + c, 'sysmsg-' + { latest: 'save-latest', forever: 'save-forever', file_note: 'file-note', task_output: 'task-output', conversation: 'like-conv', unrecognized: 'unrecognized' }[c]])) }
 const REST_TYPES = ['toolsLoaded', 'user', 'harness', ...CATEGORIES.map((c) => 'harness:' + c), 'assistant', 'toolCalls', 'toolCallsStubbed', 'toolResults', 'toolResultsStubbed', 'toolResults:skill', 'reasoning', 'memoir', 'summary', 'other']
 
 // A kind as the output shows it: renamed, if at all, then hyphen-cased.
