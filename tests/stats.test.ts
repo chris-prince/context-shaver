@@ -123,13 +123,13 @@ test('render prints the stats from the state alone', () => {
   assert.match(out, /\n  Base +[\d,]+ +\( *\d+%\)\n  Session's fixed overhead\. Above 15k\? Run `shaver optimize`\./)
   assert.match(out, /\n  Conversation +[\d,]+ .*\n  Earlier turns.*\n    by type:\n      user .*\n      sysmsg-unrecognized +0 .*\n    by age:\n      today .*\n\n    0 summary creation requests\n\n  Frontier/)
   // m isn't in the table, so its trims are on default settings too; the
-  // warning wraps under its first line's text.
-  assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.\n\nWARNINGS\n\n  - Model m isn't in shaver's table: its costs aren't shown,\n    and its trims are timed by default cache settings, which\n    may not fit it\.$/)
+  // warning's second line is indented under its first's text.
+  assert.match(out, /\n  Frontier +0 +\( 0%\)\n  Recent turns, not yet eligible to trim\. Okay if large\.\n\nWARNINGS\n\n  - Model not known to shaver: m\n    Costs aren't shown, and shaver may trim inefficiently!$/)
   // A priced model, or estimated stats, has no warning.
   assert.doesNotMatch(render(s, 'session', true), /WARNINGS/)
-  assert.match(render(s, 'session', false, undefined, undefined, undefined, [], ['w']), /\n    may not fit it\.\n  - w$/)
+  assert.match(render(s, 'session', false, undefined, undefined, undefined, [], ['w']), /\n    Costs aren't shown, and shaver may trim inefficiently!\n  - w$/)
   // A model in the table with no price for its host only lacks costs.
-  assert.match(render({ ...s, model: 'deepseek/deepseek-v4.1-flash', provider: 'nowhere' }, 'session'), /\n\nWARNINGS\n\n  - No price for model deepseek\/deepseek-v4\.1-flash at\n    nowhere, so its costs aren't shown\.$/)
+  assert.match(render({ ...s, model: 'deepseek/deepseek-v4.1-flash', provider: 'nowhere' }, 'session'), /\n\nWARNINGS\n\n  - No price known to shaver for: deepseek\/deepseek-v4\.1-flash\n    Costs aren't shown \(provider: nowhere\)\.$/)
   // No warning line is wider than the overhead line, but for a word too
   // long to break.
   const long = 'x'.repeat(70)

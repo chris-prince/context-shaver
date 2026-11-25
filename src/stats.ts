@@ -706,7 +706,7 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   out.push('', head('Frontier', frontier, total), '  Recent turns, not yet eligible to trim. Okay if large.')
   // What needs attention, last: the session's model with no price (cost.ts,
   // add, gives no cost), then the caller's.
-  const all = [...(cost || estimated || modelOf(s.model, s.provider).price ? [] : [unpriced(s.model, s.provider, "its costs aren't shown")]), ...warnings]
+  const all = [...(cost || estimated || modelOf(s.model, s.provider).price ? [] : [unpriced(s.model, s.provider, "Costs aren't shown")]), ...warnings]
   if (all.length) out.push('', 'WARNINGS', '', ...all.flatMap((w) => wrapped(w, '  - ', '    ')))
   return out.join('\n')
 }
@@ -716,13 +716,17 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
 // read prices and horizon, which time trims and cold requests, may not fit it.
 export const unpriced = (model: string, provider: string | undefined, costs: string) =>
   entryOf(model)
-    ? `No price for model ${model}${provider ? ` at ${provider}` : ''}, so ${costs}.`
-    : `Model ${model} isn't in shaver's table: ${costs}, and its trims are timed by default cache settings, which may not fit it.`
+    ? `No price known to shaver for: ${model}\n${costs}${provider ? ` (provider: ${provider})` : ''}.`
+    : `Model not known to shaver: ${model}\n${costs}, and shaver may trim inefficiently!`
 
 // The report's width: its widest fixed line, the overhead's "Run `shaver
 // optimize`." Words past it go to the next line, under the first's text.
 const WIDTH = 61
+// A newline in the text starts a line of its own; the first line of such a
+// text is a heading, such as a model's name, and is kept whole.
 function wrapped(text: string, first: string, rest: string): string[] {
+  const [head, ...more] = text.split('\n')
+  if (more.length) return [first + head, ...more.flatMap((t) => wrapped(t, rest, rest))]
   const lines: string[] = []
   let line = ''
   for (const w of text.split(' ')) {
