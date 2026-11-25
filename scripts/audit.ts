@@ -83,6 +83,8 @@ const MARKERS: Array<[RegExp, string[]]> = [
   [/^Base directory for this skill:/, ['claude']],
   [new RegExp(READ.source, 'm'), ['claude']],
   [/^\s*<environment_context>/, ['codex']],
+  [/^\s*<system-update>/, ['opencode']],
+  [/^\s*<conversation-checkpoint>/, ['opencode']],
 ]
 
 // A shared marker in another harness's conversation: that harness's own text

@@ -25,9 +25,12 @@ export const callIdsOf = (msgs: readonly ApiMsg[]): string[] => msgs.flatMap((m)
 
 // User text that is not a prompt: Claude Code's command rows, its interrupt
 // marker and the context it adds in <system-reminder> tags, and the
-// environment Codex sends again when it changes, as when the date does. Each
-// tag is its harness's own, so one list serves every harness.
-const NOT_A_PROMPT = /^\s*(<command-name>|<local-command-|\[Request interrupted|<system-reminder>|<environment_context>)/
+// environment Codex sends again when it changes, as when the date does, and
+// OpenCode's notes (<system-update>, as when the date changes) and the summary
+// that opens its conversation after a compaction, each in a user message of
+// its own before the prompt. Each tag is its harness's own, so one list serves
+// every harness.
+const NOT_A_PROMPT = /^\s*(<command-name>|<local-command-|\[Request interrupted|<system-reminder>|<environment_context>|<system-update>|<conversation-checkpoint>)/
 
 export function isPrompt(m: ApiMsg): boolean {
   if (m.role !== 'user') return false

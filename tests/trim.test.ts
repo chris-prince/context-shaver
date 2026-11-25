@@ -83,6 +83,8 @@ test('prompts: user text, not tool results or reminders', () => {
   assert.equal(isPrompt({ role: 'user', content: '<system-reminder>x</system-reminder>' }), false)
   assert.equal(isPrompt({ role: 'user', content: '[Request interrupted by user]' }), false)
   assert.equal(isPrompt({ role: 'user', content: '<environment_context>\n  <current_date>2026-10-16</current_date>\n</environment_context>' }), false)
+  assert.equal(isPrompt({ role: 'user', content: "<system-update>\nToday's date is now: Mon Nov 09 2026\n</system-update>" }), false)
+  assert.equal(isPrompt({ role: 'user', content: '<conversation-checkpoint>\nThe following is a summary\n</conversation-checkpoint>' }), false)
   assert.deepEqual(turnsOf(msgs).completed, 2)
   // Two assistant messages a turn; the sixth is the latest request.
   assert.deepEqual(requestsOf(msgs).completed, 5)
