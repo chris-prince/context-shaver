@@ -124,7 +124,7 @@ function unpricedOf(others: Other[]): string[] {
     const m = o.stats?.model ?? 'unknown'
     by.set(m, { provider: by.get(m)?.provider ?? o.stats?.provider, n: (by.get(m)?.n ?? 0) + 1 })
   }
-  return [...by].map(([m, { provider, n }]) => unpriced(m, provider, `Costs omit ${counted(n, 'conv')}`))
+  return [...by].map(([m, { provider, n }]) => unpriced(m, provider, `Costs omit ${counted(n, 'conv')}`, 'which may have been trimmed inefficiently.'))
 }
 
 // The requests and turns of the session's ancestor conversations, and of its

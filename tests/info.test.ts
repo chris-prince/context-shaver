@@ -55,7 +55,7 @@ test("shaver info's costs are the session's, with a note first saying what they 
   // misses and ignored breakpoints.
   const warned = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0, missed: 2, ignoredMarks: 1 }, others)
   const one = (t: string) => t.slice(t.indexOf('WARNINGS')).replace(/\n    /g, ' ')
-  assert.match(one(warned), /^WARNINGS\n\n  - Model not known to shaver: m Costs omit 1 conv, and shaver may trim inefficiently!\n  - Since shaver started, the journal missed 2 requests; see proxy\.log\.\n  - The server ignored the explicit breakpoints on 1 request, .*; see scripts\/audit\.ts\.\n```$/)
+  assert.match(one(warned), /^WARNINGS\n\n  - Model not known to shaver: m Costs omit 1 conv, which may have been trimmed inefficiently\.\n  - Since shaver started, the journal missed 2 requests; see proxy\.log\.\n  - The server ignored the explicit breakpoints on 1 request, .*; see scripts\/audit\.ts\.\n```$/)
   // Without a cost, only the session's own missing price is warned of.
   assert.match(one(infoText('k', 'v', s, false, undefined, sums, 0, { valid: 0 }, others)), /^WARNINGS\n\n  - Model not known to shaver: m Costs aren't shown, and shaver may trim inefficiently!\n```$/)
   // The breakdown and speedup are the session's too: the summaries' spend
