@@ -26,7 +26,7 @@ import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Convention
 import type { Cost } from './cost.ts'
 import type { Kept } from './compact-keep.ts'
 import { loaded as alwaysLoaded } from './defer.ts'
-import { modelOf } from './models.ts'
+import { entryOf, modelOf } from './models.ts'
 
 export type Tool = { type?: string; name?: string; defer_loading?: boolean }
 
@@ -706,7 +706,29 @@ export function render(s: Stats, session: string, estimated = false, cost?: Cost
   out.push('', head('Frontier', frontier, total), '  Recent turns, not yet eligible to trim. Okay if large.')
   // What needs attention, last: the session's model with no price (cost.ts,
   // add, gives no cost), then the caller's.
-  const all = [...(cost || estimated || modelOf(s.model, s.provider).price ? [] : [`No price for model ${s.model}, so the session's costs aren't shown.`]), ...warnings]
-  if (all.length) out.push('', 'WARNINGS', '', ...all.map((w) => `  - ${w}`))
+  const all = [...(cost || estimated || modelOf(s.model, s.provider).price ? [] : [unpriced(s.model, s.provider, "its costs aren't shown")]), ...warnings]
+  if (all.length) out.push('', 'WARNINGS', '', ...all.flatMap((w) => wrapped(w, '  - ', '    ')))
   return out.join('\n')
+}
+
+// A model with no price. One not in the table at all (models.ts, entryOf) is
+// also trimmed on DEFAULT's cache settings, Anthropic's: its lookback, write and
+// read prices and horizon, which time trims and cold requests, may not fit it.
+export const unpriced = (model: string, provider: string | undefined, costs: string) =>
+  entryOf(model)
+    ? `No price for model ${model}${provider ? ` at ${provider}` : ''}, so ${costs}.`
+    : `Model ${model} isn't in shaver's table: ${costs}, and its trims are timed by default cache settings, which may not fit it.`
+
+// The report's width: its widest fixed line, the overhead's "Run `shaver
+// optimize`." Words past it go to the next line, under the first's text.
+const WIDTH = 61
+function wrapped(text: string, first: string, rest: string): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const w of text.split(' ')) {
+    const prefix = lines.length ? rest : first
+    if (line && prefix.length + line.length + 1 + w.length > WIDTH) lines.push(prefix + line), (line = w)
+    else line = line ? `${line} ${w}` : w
+  }
+  return [...lines, (lines.length ? rest : first) + line]
 }

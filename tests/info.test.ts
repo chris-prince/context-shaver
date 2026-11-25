@@ -54,9 +54,10 @@ test("shaver info's costs are the session's, with a note first saying what they 
   // The conversation left out is warned of at the bottom, with the journal's
   // misses and ignored breakpoints.
   const warned = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0, missed: 2, ignoredMarks: 1 }, others)
-  assert.match(warned, /\n\nWARNINGS\n\n  - No price for model m, so the session's costs leave out 1 conv on it\.\n  - Since shaver started, the journal missed 2 requests; see proxy\.log\.\n  - The server ignored the explicit breakpoints on 1 request, .*; see scripts\/audit\.ts\.\n```$/)
+  const one = (t: string) => t.slice(t.indexOf('WARNINGS')).replace(/\n    /g, ' ')
+  assert.match(one(warned), /^WARNINGS\n\n  - Model m isn't in shaver's table: the session's costs leave out 1 conv on it, and its trims are timed by default cache settings, which may not fit it\.\n  - Since shaver started, the journal missed 2 requests; see proxy\.log\.\n  - The server ignored the explicit breakpoints on 1 request, .*; see scripts\/audit\.ts\.\n```$/)
   // Without a cost, only the session's own missing price is warned of.
-  assert.match(infoText('k', 'v', s, false, undefined, sums, 0, { valid: 0 }, others), /\n\nWARNINGS\n\n  - No price for model m, so the session's costs aren't shown\.\n```$/)
+  assert.match(one(infoText('k', 'v', s, false, undefined, sums, 0, { valid: 0 }, others)), /^WARNINGS\n\n  - Model m isn't in shaver's table: its costs aren't shown, .*\n```$/)
   // The breakdown and speedup are the session's too: the summaries' spend
   // charged to their saving.
   assert.match(out, /\$31\.00 \(50%\) conv:tools/)

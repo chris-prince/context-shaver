@@ -4,7 +4,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { counted, render, SUMMARIES, type Forks, type Stats } from './stats.ts'
+import { counted, render, SUMMARIES, unpriced, type Forks, type Stats } from './stats.ts'
 import { bareLines, history, latest, sessionOf } from './journal.ts'
 import { addBare, cost, type Cost } from './cost.ts'
 import type { Summary } from './summary.ts'
@@ -118,9 +118,13 @@ function noteOf(others: Other[]): string | undefined {
 // The session's other conversations its costs leave out, by their model with
 // no price.
 function unpricedOf(others: Other[]): string[] {
-  const by = new Map<string, number>()
-  for (const o of others) if (!sideOnly(o.stats) && !o.cost) by.set(o.stats?.model ?? 'unknown', (by.get(o.stats?.model ?? 'unknown') ?? 0) + 1)
-  return [...by].map(([m, n]) => `No price for model ${m}, so the session's costs leave out ${counted(n, 'conv')} on it.`)
+  const by = new Map<string, { provider?: string; n: number }>()
+  for (const o of others) {
+    if (sideOnly(o.stats) || o.cost) continue
+    const m = o.stats?.model ?? 'unknown'
+    by.set(m, { provider: by.get(m)?.provider ?? o.stats?.provider, n: (by.get(m)?.n ?? 0) + 1 })
+  }
+  return [...by].map(([m, { provider, n }]) => unpriced(m, provider, `the session's costs leave out ${counted(n, 'conv')} on it`))
 }
 
 // The requests and turns of the session's ancestor conversations, and of its
