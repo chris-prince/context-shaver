@@ -100,7 +100,7 @@ export function without(prev: Stats | undefined, s: Stats, u: Usage, ttlMs: numb
   const read = warm && !advanced && reads >= s.inputTokens / 2
   const r = Math.min(all - uncached, advanced ? ctx.cached :read ? Math.min(ctx.cached, reads + all - s.inputTokens) : reads && reads + base - (s.defs ? baseOf(s) : 0))
   const tokens = { uncached, reads: r, writes: all - uncached - r, output: u.output_tokens ?? 0 }
-  if (compaction && all > compaction.at) return { tokens, context: { rest: keptOf(compaction, s, rest), client, cached: base }, compacted: true }
+  if (compaction && all > compaction.at) return { tokens, context: { rest: keptOf(compaction, s, rest), client, cached: compaction.cold ? 0 : base }, compacted: true }
   return { tokens, context: { rest, client, cached: all }, compacted: false }
 }
 

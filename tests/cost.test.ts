@@ -103,6 +103,8 @@ test("past the compaction's limit the client compacts, keeping the base and some
   const c = cost(lines, HOUR)!
   assert.equal(c.compactions, 1)
   assert.equal(c.waitMs, 65_000)
+  // Not `cold`: the compaction leaves the base cached for the request after.
+  assert.equal(cost(lines.slice(0, 2), HOUR)!.context!.cached, 12_000)
   // The 2k deferred: written cold, then read with the base, after the
   // compaction too.
   const price = modelOf('claude-opus-5-5').price!
@@ -114,35 +116,40 @@ test("past the compaction's limit the client compacts, keeping the base and some
 })
 
 // A 10K base and a 2K prompt, the rest a tool result.
-const luna = (minute: number, inputTokens: number, removedTokens: number, compacted?: true) =>
-  ({ ...at(minute, inputTokens, removedTokens, 'gpt-6-luna'), ...(compacted && { compacted }), tokens: { d: 10_000, p: 2000, r: inputTokens - 12_000 }, messages: [{ key: 'p', kinds: { user: 1 } }, { key: 'r', kinds: { toolResults: 1 } }], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
+const sol = (minute: number, inputTokens: number, removedTokens: number, compacted?: true) =>
+  ({ ...at(minute, inputTokens, removedTokens, 'gpt-6.1-sol'), ...(compacted && { compacted }), tokens: { d: 10_000, p: 2000, r: inputTokens - 12_000 }, messages: [{ key: 'p', kinds: { user: 1 } }, { key: 'r', kinds: { toolResults: 1 } }], defs: { key: 'd', systemPrompt: 400, tools: 600 } }) as unknown as Stats
 
-test("Codex's compaction keeps the base, the user's messages and its summary", () => {
+test("Codex's compaction keeps the base, the user's messages and its summary, and the request after it reads none from the cache", () => {
   const lines = [
-    { stats: luna(0, 200_000, 0), usage: usage(3, 0, 199_997) },
+    { stats: sol(0, 200_000, 0), usage: usage(3, 0, 199_997) },
     // 250K w/o the proxy, past 244.8K: it compacts after.
-    { stats: luna(1, 150_000, 100_000), usage: usage(3, 10_000, 139_997) },
+    { stats: sol(1, 150_000, 100_000), usage: usage(3, 10_000, 139_997) },
   ]
   const c = cost(lines, HOUR)!
-  const { compaction } = modelOf('gpt-6-luna')
-  assert.deepEqual([c.compactions, c.waitMs, c.context!.rest, c.context!.cached], [1, 34_000, 2000 + 800, 10_000])
+  const { compaction } = modelOf('gpt-6.1-sol')
+  assert.deepEqual([c.compactions, c.waitMs, c.context!.rest, c.context!.cached], [1, 50_000, 2000 + 800, 0])
   // None of what was taken out is left to weigh against later trims.
   assert.ok(Object.values(c.removed!).every((n) => n === 0))
   // The compaction read all 250K and answered with the summary.
-  const price = modelOf('gpt-6-luna').price!
+  const price = modelOf('gpt-6.1-sol').price!
   const one = cost([lines[0]], HOUR)!
   const second = without(lines[0].stats, lines[1].stats, lines[1].usage, HOUR, one.context, compaction).tokens
   const dollars = (t: { uncached: number; reads: number; writes: number; output: number }) => (t.uncached * price.input + t.reads * price.read + t.writes * price.write! + t.output * price.output) / 1e6
-  assert.ok(Math.abs(c.without - one.without - dollars(second) - dollars({ uncached: 0, reads: 250_000, writes: 0, output: 800 })) < 1e-12)
+  assert.ok(Math.abs(c.without - one.without - dollars(second) - dollars({ uncached: 0, reads: 250_000, writes: 0, output: 3500 })) < 1e-12)
+  // The request after it writes the compacted prompt whole: the base, the
+  // user's messages and the summary, and what it adds.
+  const third = sol(2, 151_000, 100_000)
+  const next = without(lines[1].stats, third, usage(3, 150_000, 997), HOUR, c.context, compaction).tokens
+  assert.deepEqual([next.reads, next.writes], [0, 10_000 + 2000 + 800 + 1000 - 3])
 })
 
 test("where the client compacts with the proxy, the prompt without it compacts too", () => {
   const lines = [
-    { stats: luna(0, 100_000, 0), usage: usage(3, 0, 99_997) },
-    { stats: luna(1, 40_000, 60_000), usage: usage(3, 10_000, 29_997) },
+    { stats: sol(0, 100_000, 0), usage: usage(3, 0, 99_997) },
+    { stats: sol(1, 40_000, 60_000), usage: usage(3, 10_000, 29_997) },
     // The trims are gone with what the client compacted (stats.ts, observe):
     // both read the base and write the rest.
-    { stats: luna(2, 13_000, 0, true), usage: usage(3, 10_000, 2997) },
+    { stats: sol(2, 13_000, 0, true), usage: usage(3, 10_000, 2997) },
   ]
   const two = cost(lines.slice(0, 2), HOUR)!
   const c = cost(lines, HOUR)!

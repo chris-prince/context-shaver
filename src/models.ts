@@ -39,8 +39,10 @@ type Settings = Partial<Model>
 // `kept`: the tokens of the newest messages a compaction keeps besides its
 // summary, or the user's messages (up to PROMPTS_KEPT), where the journal
 // doesn't fold what it keeps (compact-keep.ts). `summarized`: the tokens the
-// summary takes in the prompt after, where less than its output.
-export type Compaction = { at: number; kept: number | 'prompts'; summary: number; summarized?: number; ms: number }
+// summary takes in the prompt after, where less than its output. `cold`: the
+// request after it reads none of its prompt from the cache, where the cache
+// holds a prompt only as some request ended it and none ended at the base.
+export type Compaction = { at: number; kept: number | 'prompts'; summary: number; summarized?: number; cold?: true; ms: number }
 
 // Codex keeps the newest user messages up to 64K tokens (compact_remote_v2.rs,
 // RETAINED_MESSAGE_TOKEN_BUDGET, by osolmaz's reading of its source; local/notes.md).
@@ -63,15 +65,25 @@ export const PROMPTS_KEPT = 64_000
 // 2.6-7.0K tokens, a median of 3.4K, over ten compactions logged here.
 const CLAUDE_CODE = { compaction: { at: 165_000, kept: 20_000, summary: 7600, summarized: 3400, ms: 65_000 } }
 
-// Codex caps its auto-compact limit at 90% of the context window, and luna's
-// is 272K (~/.codex/models_cache.json; local/notes.md, "Make Codex's cost and
-// savings figures accurate"). It compacts remotely (v2): the answer is one
-// encrypted item, the summary, which the prompt keeps after the user's
-// messages. Two logged here (2026-10-24) counted 150-200 tokens, at about 20
-// of its characters a token, and their requests answered with about as many; over
-// 1,087 compactions osolmaz measured a median item of 15,820 characters, so
-// about 800 tokens, and 34s for one of a 174K prompt.
-const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 800, ms: 34_000 } // at: 90% of 272K
+// Codex caps its auto-compact limit at 90% of the context window, and sol's
+// is 272K (`codex debug models`, Codex 0.163.0). It compacts remotely (v2):
+// the answer is one encrypted item, the summary, which the prompt keeps after
+// the user's messages. Two logged here (2026-10-24) counted 150-200 tokens, at
+// about 20 of its characters a token; over 1,087 compactions osolmaz measured
+// a median item of 15,820 characters, so about 800 tokens. The request answers
+// with more than the item, its reasoning with it. Over 5,548 compactions
+// measured on 2026-11-23 and 24 (a request of 100K tokens or more answering
+// with 1,000 or more, the next in its session much smaller, the prompt never
+// read again), luna's, sol's and astra's were alike: medians of 3,325 output
+// tokens over 4,798 of sol's, 3,475 over 140 of luna's and 3,701 over 610 of
+// astra's, about 50s from the request to the next (sol 54s, astra 49s). The
+// request after one read nothing from the cache in 90-100% of them, and wrote
+// the prompt whole (`cold`): no request had ended at the base, and the cache
+// holds a prompt only where one ended. A provider that caches every prefix
+// (DeepInfra's, below) would read it, so `cold` is Codex's on OpenAI's cache,
+// not automatic caching's. Where a machine's Codex sets a larger window,
+// autocompact.ts reads it; `at` here is 90% of OpenAI's 272K.
+const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 3500, summarized: 800, cold: true as const, ms: 50_000 } // at: 90% of 272K
 // OpenAI's long prompts: past 272K input tokens, input, reads and writes
 // double and output is 1.5x (OpenRouter's listings, 2026-11-16).
 const OPENAI_LONG = { over: 272_000, times: 2, output: 1.5 }
@@ -106,6 +118,9 @@ const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI
 // measured on these.
 const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG }, lookback: 37, compaction: { ...CODEX_V2, at: 450_000 } } // at: 90% of 500K
 const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG }, lookback: 79 }
+// The 6.2 models' prices are OpenRouter's listing (2026-11-24); sol's are
+// 6.1's. Lookback, TTL and compaction are 6.1's, not probed.
+const ASTRA_6_2 = { ...ASTRA, price: { input: 8, output: 40, read: 0.4, write: 10, long: OPENAI_LONG } }
 
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },
@@ -140,13 +155,17 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   // input, not luna's 0.1x, and writes at 1.25x. The TTL was probed on
   // 2026-10-27 through Codex 0.163.0, two sessions per gap: all read after 28
   // minutes, nothing after 32 or 60. So the 30 minutes is a hard edge, not a
-  // floor. The compaction summary is luna's, not yet measured on sol.
+  // floor.
   'gpt-6.1-sol': SOL,
   'openai/gpt-6.1-sol': SOL,
   'gpt-6.1-terra': TERRA,
   'openai/gpt-6.1-terra': TERRA,
   'gpt-6-astra': ASTRA,
   'openai/gpt-6-astra': ASTRA,
+  'gpt-6.2-sol': SOL,
+  'openai/gpt-6.2-sol': SOL,
+  'gpt-6.2-astra': ASTRA_6_2,
+  'openai/gpt-6.2-astra': ASTRA_6_2,
   // Priced apart by each provider, so only per provider.
   'deepseek/deepseek-v4.1-flash': {
     providers: {
