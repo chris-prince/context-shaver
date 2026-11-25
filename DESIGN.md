@@ -388,6 +388,12 @@ at the clock, so only with a move a trim pays for or on a cold cache, and it
 stays gone. A user message holding nothing else keeps it: dropping the message
 could put a system message where the API refuses one.
 
+A note about a file (`file_note`: one changed on disk, or read before a
+compaction) goes by `tool:file_read`'s drops, and a background task's output
+(`task_output`) by `tool:command`'s, each falling back to `tool`'s as their
+items do. Only drops by requests or turns apply: a note has no call to stub
+and no token count of its own. Other notes are kept.
+
 ```json
 {
   "conversation_shaver_rules": {

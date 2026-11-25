@@ -11,7 +11,7 @@ import type { Model } from './models.ts'
 import { blocks, CLAUDE_CODE, GROUP_KINDS, heldTo, isGroupKind, isSkillBody, isThinking, itemsOf, READ, READ_RESULT, readPairs, readsOf, requestsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash, isNote, preambleEnd } from './log.ts'
 import { joinedNotes, notesOfBlock } from './notes.ts'
-import { afterOf, rulesFor, treatment, type Action, type PartRules } from './policy.ts'
+import { afterOf, noteRulesFor, rulesFor, treatment, type Action, type PartRules } from './policy.ts'
 
 // Where trimming ends in the messages: the index of the first message past
 // the requests (or turns) the furthest-reaching rule covers, for tool calls and
@@ -190,24 +190,40 @@ function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Con
   }
 }
 
-// The harness's latest notes after the preamble that newer ones replace
-// (notes.ts), each due once the request holding the last of its replacements,
-// one for each of its keys, is completed at the clock, as with a rule of "0
-// requests": by message, each block's notes to drop, by their place in
-// notesOfBlock. They move only with the clock, so they go in a move a trim
-// pays for (decide) or on a cold cache, and stay gone.
-function supersededNotes(msgs: readonly ApiMsg[], c: Clock): Map<number, Map<number, Set<number>>> {
+// The harness's notes after the preamble due at the clock (notes.ts): a
+// latest one once the request holding the last of its replacements, one for
+// each of its keys, is completed, as with a rule of "0 requests"; a file note
+// or a task's output by the drops of file_read's or command's rules
+// (policy.ts, noteRulesFor), less a Read Claude Code attaches, which is a
+// file_read item itself. By message, each block's notes to
+// drop, by their place in notesOfBlock. They move only with the clock, so
+// they go in a move a trim pays for (decide) or on a cold cache, and stay
+// gone.
+function notesDue(msgs: readonly ApiMsg[], policy: PartRules, c: Clock): Map<number, Map<number, Set<number>>> {
   const out = new Map<number, Map<number, Set<number>>>()
   const start = preambleEnd(msgs)
   if (start < 0) return out
   const { requestOf } = requestsOf(msgs)
+  const { turnOf } = turnsOf(msgs)
   const next = new Map<string, number>() // each key's nearest latest note after, by message
   for (let i = msgs.length - 1; i >= start; i--) {
     const bs = blocks(msgs[i])
+    const reads = new Set(readPairs(msgs[i]).flatMap((j) => [j, j + 1]))
     for (let j = bs.length - 1; j >= 0; j--) {
       if (!isNote(bs[j], msgs[i])) continue
+      const read = reads.has(j) || (bs[j].type === 'text' && !!String(bs[j].text).match(READ))
       const ns = notesOfBlock(bs[j])
       for (let n = ns.length - 1; n >= 0; n--) {
+        const rules = read ? undefined : noteRulesFor(policy, ns[n].category)
+        if (rules) {
+          if (treatment(rules, { request: requestOf[i], turn: turnOf[i] }, c) === 'drop') {
+            if (!out.has(i)) out.set(i, new Map())
+            const m = out.get(i)!
+            if (!m.has(j)) m.set(j, new Set())
+            m.get(j)!.add(n)
+          }
+          continue
+        }
         if (ns[n].category !== 'latest') continue
         const by = ns[n].keys.map((k) => next.get(k))
         const r = by.every((x) => x !== undefined) ? requestOf[Math.max(...(by as number[]))] : 0
@@ -257,7 +273,7 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, item
   const out: Applied = { msgs: [], origin: [], treated: new Map() }
   const mark = (id: unknown, action: Action) => out.treated.set(String(id), { kind: items.get(String(id))!.kind, action })
   const idOf = (b: Block) => (b.type === 'tool_use' ? b.id : b.type === 'tool_result' ? b.tool_use_id : undefined)
-  const notes = supersededNotes(msgs, c)
+  const notes = notesDue(msgs, policy, c)
   msgs.forEach((m, i) => {
     const push = (m: ApiMsg) => (out.msgs.push(m), out.origin.push(i))
     const gone = notes.get(i)

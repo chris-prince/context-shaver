@@ -892,3 +892,30 @@ test('a trim drops the latest notes newer ones replace, once the request replaci
   assert.deepEqual([...counts].sort((x, y) => y - x), counts)
   assert.ok(counts[0] === 5 && counts.at(-1) === 2)
 })
+
+test('a trim drops file notes by file reads\' rules and task output by commands\'', () => {
+  const changed = '<system-reminder>\nNote: /a.ts changed on disk since you last read it.\n</system-reminder>'
+  const done = '<system-reminder>\n[SYSTEM NOTIFICATION - NOT USER INPUT]\nA background task finished.\n</system-reminder>'
+  const [a, b, c] = [turn(1, 'Bash', { command: 'ls' }), turn(2, 'Bash', { command: 'ls' }), turn(3, 'Bash', { command: 'ls' })]
+  const result = a[2] as { role: 'user'; content: Array<Record<string, unknown>> }
+  a[2] = { ...result, content: [...result.content, { type: 'text', text: changed }, { type: 'text', text: done }] } as ApiMsg
+  const conv = [...a, ...b, ...c]
+  const text = (out: readonly ApiMsg[]) => out.flatMap(blocks).map((x) => String(x.text ?? '')).join('\n')
+  const has = (out: readonly ApiMsg[]) => [text(out).includes('changed on disk'), text(out).includes('background task')]
+  const drop = [{ action: 'drop' as const, eligible_after: '1 turns' }]
+  const at = (p: PartRules, c: Clock = clockOf(conv)) => has(apply(conv, p, c).msgs)
+  // With no rule for their kinds, they stay.
+  assert.deepEqual(at({}), [true, true])
+  assert.deepEqual(at({ 'tool:file_read': drop }), [false, true])
+  assert.deepEqual(at({ 'tool:command': drop }), [true, false])
+  // A kind without its own rules takes tool's, as its items do.
+  assert.deepEqual(at({ tool: drop }), [false, false])
+  // Not before they're due.
+  assert.deepEqual(at({ tool: drop }, { requests: 1, turns: 1 }), [true, true])
+  // Only drops by requests or turns: a note has no call to stub and no token
+  // count of its own.
+  assert.deepEqual(at({ tool: [{ action: 'stub', eligible_after: '0 requests' }] }), [true, true])
+  assert.deepEqual(at({ tool: [{ action: 'drop', eligible_after: '0 tokens' }] }), [true, true])
+  // The committed policy drops both.
+  assert.deepEqual(at(committed), [false, false])
+})

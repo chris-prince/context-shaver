@@ -4,6 +4,7 @@
 
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Clock, Item, Kind } from './items.ts'
+import type { Category } from './notes.ts'
 import type { ToolRule } from './defer.ts'
 import type { SkillRule } from './skills.ts'
 
@@ -36,6 +37,16 @@ type Text = { summary_threshold_tokens?: Threshold; memoir_threshold_tokens?: Th
 const KEYS = { tool: 'tool', 'tool:file_read': 'file_read', 'tool:file_edit': 'file_edit', 'tool:command': 'command', 'tool:web': 'web','tool:skill': 'skill', 'tool:tool_search': 'tool_search', reasoning: 'reasoning' } as const satisfies Record<string, Kind>
 type Key = keyof typeof KEYS
 export type PartRules = Partial<Record<Key, Rule[]>> & { user_and_assistant_text?: Text }
+
+// The harness's notes trimmed by a tool kind's rules (notes.ts): a note
+// about a file as a file read is, a task's output as a command's. Only their
+// drops by requests or turns, as a note has no call to stub and no token
+// count of its own; none for other notes.
+const NOTE_KINDS: Partial<Record<Category, Kind>> = { file_note: 'file_read', task_output: 'command' }
+export function noteRulesFor(p: PartRules, category: Category): Rule[] | undefined {
+  const kind = NOTE_KINDS[category]
+  return kind && rulesFor(p, kind)?.filter((r) => r.action === 'drop' && afterOf(r)?.on !== 'token')
+}
 // `conversation_shaver_rules` says, by kind, when the proxy stubs or drops a part of
 // the conversation (trim.ts), and when it summarizes the rest.
 // `tool_shaver_rules` says, by harness name, which tools it sends in full the
@@ -302,7 +313,7 @@ export function loadPolicy(file: string): Policy | undefined {
 // What is due to an item at a clock: the strongest due rule's action, drop
 // over stub. `newer` is the tokens of its kind's parts after it, at the clock.
 // A token rule reaches only completed requests, as the others do.
-export function treatment(rules: readonly Rule[] = [], it: Item, c: Clock, newer = 0): Action | undefined {
+export function treatment(rules: readonly Rule[] = [], it: Pick<Item, 'request' | 'turn'>, c: Clock, newer = 0): Action | undefined {
   const due = rules.filter((r) => {
     const { on, wait } = afterOf(r)!
     if (on === 'token') return it.request && it.request <= c.requests && newer >= wait
