@@ -64,6 +64,10 @@ export const PROMPTS_KEPT = 64_000
 // summary in the prompt after is shorter than its output, its analysis cut:
 // 2.6-7.0K tokens, a median of 3.4K, over ten compactions logged here.
 const CLAUDE_CODE = { compaction: { at: 165_000, kept: 20_000, summary: 7600, summarized: 3400, ms: 65_000 } }
+// Fable 5.2's and Sonnet 5.5's summaries run longer: medians of 10,580 output
+// tokens over 95 compactions and 9,000 over 108 (2026-11-23 and 24), where
+// Opus 5.5's 743 came to 7,915.
+const CLAUDE_CODE_LONG_SUMMARY = { compaction: { ...CLAUDE_CODE.compaction, summary: 10_000 } }
 
 // Codex caps its auto-compact limit at 90% of the context window, and sol's
 // is 272K (`codex debug models`, Codex 0.163.0). It compacts remotely (v2):
@@ -121,6 +125,14 @@ const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, lo
 // The 6.2 models' prices are OpenRouter's listing (2026-11-24); sol's are
 // 6.1's. Lookback, TTL and compaction are 6.1's, not probed.
 const ASTRA_6_2 = { ...ASTRA, price: { input: 8, output: 40, read: 0.4, write: 10, long: OPENAI_LONG } }
+// Older models, priced from OpenRouter's listing (2026-11-24), but for
+// gpt-5.6-cyber, which it doesn't list: OpenAI's published price (its
+// long-context rates are trackers', not OpenAI's). Lookback, TTL and
+// compaction are their 6.x counterparts', not probed.
+const LUNA_5_6 = { ...LUNA, price: { input: 0.2, output: 1.2, read: 0.02, write: 0.25, long: OPENAI_LONG } }
+const SOL_6 = { ...SOL, price: { input: 2, output: 10, read: 0.2, write: 2.5, long: OPENAI_LONG } }
+const SOL_5_6 = { ...SOL, price: { input: 4, output: 20, read: 0.4, write: 5, long: OPENAI_LONG } }
+const CYBER_5_6 = { ...SOL, price: { input: 12.5, output: 75, read: 1.25, write: 15.625, long: OPENAI_LONG } }
 
 const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }> = {
   'claude-opus-5-5': { price: { input: 4, output: 20, read: 0.2 }, ...CLAUDE_CODE },
@@ -130,10 +142,10 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   // was probed on 2026-11-16, served by Anthropic, two reads per gap: read
   // after 1, 30 and 58 minutes, gone after 62. The lookback is assumed to be
   // Anthropic's documented 20 blocks.
-  'claude-fable-5-2': { price: { input: 8, output: 40, read: 0.2 }, ...CLAUDE_CODE },
+  'claude-fable-5-2': { price: { input: 8, output: 40, read: 0.2 }, ...CLAUDE_CODE_LONG_SUMMARY },
   'claude-mythos-5-1': { price: { input: 10, output: 50, read: 0.25 }, ...CLAUDE_CODE },
   // Reads at 0.1, as billed through OpenRouter (scripts/check-prices.ts).
-  'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.1 }, ...CLAUDE_CODE },
+  'claude-sonnet-5-5': { price: { input: 2, output: 10, read: 0.1 }, ...CLAUDE_CODE_LONG_SUMMARY },
   // Anthropic's pricing page, matching OpenRouter: reads at 0.1x input, not
   // Sonnet 5.5's 0.05x, and no long-context surcharge across its 1M window.
   // The lookback (20 blocks) and the TTL (5 minutes or an hour, as each
@@ -144,6 +156,12 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   // and 10. The base before them, the same in every session, was read throughout.
   'claude-sonnet-5': { price: { input: 2, output: 10, read: 0.2 }, ...CLAUDE_CODE },
   'claude-haiku-5-5': { price: { input: 0.1, output: 0.5, read: 0.01, long: { over: 100_000, times: 5 } }, ...CLAUDE_CODE },
+  // Older models, priced from OpenRouter's listing (2026-11-24); writes at the
+  // usual 1.25x and 2x.
+  'claude-opus-4-6': { price: { input: 5, output: 25, read: 0.5 }, ...CLAUDE_CODE },
+  'claude-opus-4-8': { price: { input: 5, output: 25, read: 0.5 }, ...CLAUDE_CODE },
+  'claude-opus-5': { price: { input: 5, output: 25, read: 0.5 }, ...CLAUDE_CODE },
+  'claude-sonnet-4-6': { price: { input: 3, output: 15, read: 0.3 }, ...CLAUDE_CODE },
   // OpenAI's pricing page and prompt-caching guide (local/notes.md, "Check
   // Codex in use"): writes at 1.25x input, the latest 50 breakpoints looked
   // through, and entries kept at least 30 minutes after their last use. A
@@ -166,6 +184,14 @@ const MODELS: Record<string, Settings & { providers?: Record<string, Settings> }
   'openai/gpt-6.2-sol': SOL,
   'gpt-6.2-astra': ASTRA_6_2,
   'openai/gpt-6.2-astra': ASTRA_6_2,
+  'gpt-5.6-luna': LUNA_5_6,
+  'openai/gpt-5.6-luna': LUNA_5_6,
+  'gpt-6-sol': SOL_6,
+  'openai/gpt-6-sol': SOL_6,
+  'gpt-5.6-sol': SOL_5_6,
+  'openai/gpt-5.6-sol': SOL_5_6,
+  'gpt-5.6-cyber': CYBER_5_6,
+  'openai/gpt-5.6-cyber': CYBER_5_6,
   // Priced apart by each provider, so only per provider.
   'deepseek/deepseek-v4.1-flash': {
     providers: {
