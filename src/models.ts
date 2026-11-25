@@ -126,8 +126,10 @@ const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, lo
 // 6.1's. Lookback, TTL and compaction are 6.1's, not probed.
 const ASTRA_6_2 = { ...ASTRA, price: { input: 8, output: 40, read: 0.4, write: 10, long: OPENAI_LONG } }
 // Older models, priced from OpenRouter's listing (2026-11-24), but for
-// gpt-5.6-cyber, which it doesn't list: OpenAI's published price (its
-// long-context rates are trackers', not OpenAI's). Lookback, TTL and
+// gpt-5.6-terra, at OpenAI's pricing page's Standard tier, long context
+// included (2026-11-25; Flex is half), and gpt-5.6-cyber, which OpenRouter
+// doesn't list: OpenAI's published price (its long-context rates are
+// trackers', not OpenAI's). Lookback, TTL and
 // compaction are their 6.x counterparts', not probed, but for gpt-5.6-terra's
 // compaction: Codex's model catalog lists it at a 272K window (`codex debug
 // models`, Codex 0.172.0), so 244.8K, not 6.1-terra's 450K.
