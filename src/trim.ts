@@ -9,7 +9,8 @@
 
 import type { Model } from './models.ts'
 import { blocks, CLAUDE_CODE, GROUP_KINDS, heldTo, isGroupKind, isSkillBody, isThinking, itemsOf, READ, READ_RESULT, readPairs, readsOf, requestsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
-import { hash } from './log.ts'
+import { hash, isNote, preambleEnd } from './log.ts'
+import { joinedNotes, notesOfBlock } from './notes.ts'
 import { afterOf, rulesFor, treatment, type Action, type PartRules } from './policy.ts'
 
 // Where trimming ends in the messages: the index of the first message past
@@ -189,6 +190,53 @@ function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Con
   }
 }
 
+// The harness's latest notes after the preamble that newer ones replace
+// (notes.ts), each due once the request holding the last of its replacements,
+// one for each of its keys, is completed at the clock, as with a rule of "0
+// requests": by message, each block's notes to drop, by their place in
+// notesOfBlock. They move only with the clock, so they go in a move a trim
+// pays for (decide) or on a cold cache, and stay gone.
+function supersededNotes(msgs: readonly ApiMsg[], c: Clock): Map<number, Map<number, Set<number>>> {
+  const out = new Map<number, Map<number, Set<number>>>()
+  const start = preambleEnd(msgs)
+  if (start < 0) return out
+  const { requestOf } = requestsOf(msgs)
+  const next = new Map<string, number>() // each key's nearest latest note after, by message
+  for (let i = msgs.length - 1; i >= start; i--) {
+    const bs = blocks(msgs[i])
+    for (let j = bs.length - 1; j >= 0; j--) {
+      if (!isNote(bs[j], msgs[i])) continue
+      const ns = notesOfBlock(bs[j])
+      for (let n = ns.length - 1; n >= 0; n--) {
+        if (ns[n].category !== 'latest') continue
+        const by = ns[n].keys.map((k) => next.get(k))
+        const r = by.every((x) => x !== undefined) ? requestOf[Math.max(...(by as number[]))] : 0
+        if (r && r <= c.requests) {
+          if (!out.has(i)) out.set(i, new Map())
+          const m = out.get(i)!
+          if (!m.has(j)) m.set(j, new Set())
+          m.get(j)!.add(n)
+        }
+        for (const k of ns[n].keys) next.set(k, i)
+      }
+    }
+  }
+  return out
+}
+
+// A message without the notes given, by block and their place in it: a block
+// left with none goes, and so does the message left with no block.
+function withoutNotes(m: ApiMsg, gone: ReadonlyMap<number, ReadonlySet<number>>): ApiMsg | undefined {
+  const content = blocks(m).flatMap((b, j): Block[] => {
+    const drop = gone.get(j)
+    if (!drop) return [b]
+    const keep = notesOfBlock(b).filter((_, n) => !drop.has(n))
+    return keep.length ? [{ ...b, text: joinedNotes(String(b.text), keep) }] : []
+  })
+  if (!content.length) return undefined
+  return typeof m.content === 'string' ? { ...m, content: String(content[0].text) } : { ...m, content }
+}
+
 // Adds the tool calls a message makes or answers.
 function pairsOf(m: ApiMsg | undefined, to: Set<unknown>) {
   if (m && typeof m.content !== 'string')
@@ -209,8 +257,17 @@ function applyKeeping(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, item
   const out: Applied = { msgs: [], origin: [], treated: new Map() }
   const mark = (id: unknown, action: Action) => out.treated.set(String(id), { kind: items.get(String(id))!.kind, action })
   const idOf = (b: Block) => (b.type === 'tool_use' ? b.id : b.type === 'tool_result' ? b.tool_use_id : undefined)
+  const notes = supersededNotes(msgs, c)
   msgs.forEach((m, i) => {
     const push = (m: ApiMsg) => (out.msgs.push(m), out.origin.push(i))
+    const gone = notes.get(i)
+    if (gone) {
+      const kept = withoutNotes(m, gone)
+      // A user message left empty would put the messages around it next to
+      // ones the API refuses beside a system message: its notes stay.
+      if (!kept && m.role === 'system') return
+      if (kept) m = kept
+    }
     if (m.role === 'system') {
       const r = readsOf(m) ? withReads(m, i, due, mark) : m
       return r && push(r)

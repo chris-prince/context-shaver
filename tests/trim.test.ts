@@ -867,3 +867,28 @@ test("a request's cache entries are named by the base the API caches", () => {
   assert.equal(seedOf('m', tools, system, false), wholeSeedOf('m', tools, system))
   assert.notEqual(seedOf('m', [tools[0]], system, false), seedOf('m', tools, system, false))
 })
+
+test('a trim drops the latest notes newer ones replace, once the request replacing them is done', () => {
+  const counter = (n: number) => `<total_tokens>${1000 - n} tokens left</total_tokens>`
+  const ending = (t: ApiMsg[], n: number) => [...t.slice(0, -1), { role: 'system', content: counter(n) } as ApiMsg]
+  const [a, b, c] = [ending(turn(1, 'Bash', { command: 'ls' }), 1), ending(turn(2, 'Bash', { command: 'ls' }), 2), ending(turn(3, 'Bash', { command: 'ls' }), 3)]
+  // Beside turn 2's tool result, a block holding a nudge and a counter; after
+  // turn 2, a user message holding only a counter.
+  const result = b[2] as { role: 'user'; content: Array<Record<string, unknown>> }
+  b[2] = { ...result, content: [...result.content, { type: 'text', text: `<system-reminder>\nThe user hasn't heard from you in a while.\n\n${counter(20)}\n</system-reminder>` }] } as ApiMsg
+  const alone: ApiMsg = { role: 'user', content: [{ type: 'text', text: `<system-reminder>\n${counter(25)}\n</system-reminder>` }] }
+  const convo = [...a, ...b, alone, ...c]
+  const left = (out: readonly ApiMsg[]) => out.flatMap(blocks).map((x) => String(x.text ?? '')).join('\n').match(/<total_tokens>\d+/g)?.length ?? 0
+  const now = apply(convo, {}, clockOf(convo)).msgs
+  assert.equal(left(convo), 5)
+  // The newest counter stays, and the one alone in a user message, which
+  // dropping would leave empty.
+  assert.equal(left(now), 2)
+  assert.ok(now.some((m) => JSON.stringify(m) === JSON.stringify(alone)))
+  assert.equal(now.flatMap(blocks).find((x) => String(x.text).includes("hasn't heard"))?.text, "<system-reminder>\nThe user hasn't heard from you in a while.\n</system-reminder>")
+  assert.deepEqual(apply(convo, {}, { requests: 0, turns: 0 }).msgs, convo)
+  // Only ever more go as the clock moves.
+  const counts = Array.from({ length: clockOf(convo).requests + 1 }, (_, r) => left(apply(convo, {}, { requests: r, turns: clockOf(convo).turns }).msgs))
+  assert.deepEqual([...counts].sort((x, y) => y - x), counts)
+  assert.ok(counts[0] === 5 && counts.at(-1) === 2)
+})

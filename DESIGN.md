@@ -381,6 +381,13 @@ Like any rule, it only makes an item eligible; the cache gate still decides
 whether trimming it pays. The strongest due rule wins, drop over stub. A kind with no rules
 is never trimmed.
 
+The harness's notes that restate part of the current state (`notes.ts`,
+`latest`: the token counter, the date, an environment update) need no rule. One a
+newer note replaces goes once the request holding its replacement is completed
+at the clock, so only with a move a trim pays for or on a cold cache, and it
+stays gone. A user message holding nothing else keeps it: dropping the message
+could put a system message where the API refuses one.
+
 ```json
 {
   "conversation_shaver_rules": {

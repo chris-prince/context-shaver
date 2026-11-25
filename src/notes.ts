@@ -137,6 +137,11 @@ export function notesOf(text: string): Note[] {
   })
 }
 
+export function joinedNotes(text: string, keep: readonly Note[]): string {
+  const t = keep.map((n) => n.text.replace(/\s*<\/system-reminder>\s*$/, '').trimEnd()).join('\n\n')
+  return /^<system-reminder>/.test(text) ? `<system-reminder>\n${t}\n</system-reminder>` : t
+}
+
 // A note block's notes. A block that isn't text is one: Claude Code's
 // tool_addition and tool_removal, its deferred tools' changes, are forever;
 // Codex's items go by their type. A compaction item holds the history before
