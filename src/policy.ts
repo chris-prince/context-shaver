@@ -28,7 +28,9 @@ export function afterOf(r: Rule): { on: Unit; wait: number } | undefined {
 // asks for the next (summary.ts); without it, none is made or applied.
 // `memoir_threshold_tokens` is how many tokens the records can hold before the
 // oldest are merged into the memoir (summary.ts); without it, none are.
-type Text = { summary_threshold_tokens?: number; memoir_threshold_tokens?: number }
+// Either can be "never", which is the same as leaving it out, written out.
+type Threshold = number | 'never'
+type Text = { summary_threshold_tokens?: Threshold; memoir_threshold_tokens?: Threshold }
 // Each kind's key: a tool group, skill or tool search is a kind of tool call,
 // keyed `tool:<kind>`.
 const KEYS = { tool: 'tool', 'tool:file_read': 'file_read', 'tool:file_edit': 'file_edit', 'tool:command': 'command', 'tool:web': 'web','tool:skill': 'skill', 'tool:tool_search': 'tool_search', reasoning: 'reasoning' } as const satisfies Record<string, Kind>
@@ -65,7 +67,12 @@ export function forcedTrimOf(p: Policy): { proximity: number; saves: number } | 
 }
 
 // The policy's summary and memoir thresholds, if any.
-export const textRules = (p: Policy): Text => p.conversation_shaver_rules?.user_and_assistant_text ?? {}
+// The thresholds as token counts, one that is "never" left out.
+export function textRules(p: Policy): { summary_threshold_tokens?: number; memoir_threshold_tokens?: number } {
+  const t = p.conversation_shaver_rules?.user_and_assistant_text ?? {}
+  const count = (n?: Threshold) => (n === 'never' ? undefined : n)
+  return { summary_threshold_tokens: count(t.summary_threshold_tokens), memoir_threshold_tokens: count(t.memoir_threshold_tokens) }
+}
 
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], file_read: ['stub', 'drop'], file_edit: ['stub', 'drop'], command: ['stub', 'drop'], web: ['stub', 'drop'],skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
@@ -90,7 +97,7 @@ export function parsePolicy(v: unknown): Policy {
           if (!isObject(rules)) throw new Error('policy: user_and_assistant_text is not an object of token counts')
           for (const [k, n] of Object.entries(rules)) {
             if (k !== 'summary_threshold_tokens' && k !== 'memoir_threshold_tokens') throw new Error(`policy: unknown user_and_assistant_text key ${k}`)
-            if (!Number.isInteger(n) || (n as number) <= 0) throw new Error(`policy: ${k} is not a positive token count`)
+            if (n !== 'never' && (!Number.isInteger(n) || (n as number) <= 0)) throw new Error(`policy: ${k} is not a positive token count or "never"`)
           }
           continue
         }
@@ -259,13 +266,32 @@ function spanOf(text: string, name: string): { key: number; value: number; end: 
 //   Shim: upgraded() writes it as `eligible_after`, the same way.
 //   Remove when: upgrading from before 2026-11-23 is no longer supported, and
 //   policies saved in logs from before then are no longer read.
+// BACKCOMPAT(2026-10-25)
+//   Before: the default policy had no memoir_threshold_tokens, and its
+//   summary_threshold_tokens was 20000 until 2026-11-07.
+//   Shim: withMemoir() gives a policy file with a summary threshold but no
+//   memoir threshold the default's 15000, and a summary threshold of 20000
+//   becomes 15000 too, the same way. "never" keeps the memoir off.
+//   Remove when: upgrading from before 2026-10-25 is no longer supported.
+//   Only the file is changed: a policy saved in the logs is read as it ran.
 // A policy in the current form, as a policy saved in the logs is read.
 export const policyNow = (v: unknown): Policy => parsePolicy((isObject(v) && upgraded(v)) || v)
+
+// A policy with summaries but no memoir threshold given the default's, or
+// none if it has a memoir threshold or no summaries.
+function withMemoir(v: Record<string, unknown>): Record<string, unknown> | undefined {
+  const conv = v.conversation_shaver_rules
+  const text = isObject(conv) ? conv.user_and_assistant_text : undefined
+  if (!isObject(text) || typeof text.summary_threshold_tokens !== 'number' || 'memoir_threshold_tokens' in text) return undefined
+  const summary = text.summary_threshold_tokens === 20000 ? 15000 : text.summary_threshold_tokens
+  return { ...v, conversation_shaver_rules: { ...conv, user_and_assistant_text: { ...text, summary_threshold_tokens: summary, memoir_threshold_tokens: 15000 } } }
+}
 
 export function loadPolicy(file: string): Policy | undefined {
   if (!existsSync(file)) return undefined
   const v = JSON.parse(readFileSync(file, 'utf8'))
-  const now = isObject(v) ? upgraded(v) : undefined
+  const upgrade = isObject(v) ? upgraded(v) : undefined
+  const now = isObject(v) ? (withMemoir(upgrade ?? v) ?? upgrade) : undefined
   if (!now) return parsePolicy(v)
   const policy = parsePolicy(now)
   copyFileSync(file, `${file}.old`)

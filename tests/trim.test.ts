@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, type Clock } from '../src/items.ts'
 import { hash } from '../src/log.ts'
-import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
+import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, policyNow, seedPolicy, skillRulesNow, textRules, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
 import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, stub, stubHeredocs, transitions, trimmedEnd, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
@@ -164,10 +164,41 @@ test('loading a policy in an older form rewrites the file in the current one, ke
   const older = '{"tool":[{"on":"step","wait":4,"action":"drop"}],"tool_list":{"claude":[{"name":"*","defer":true}]},"summary_threshold_tokens":20000}'
   writeFileSync(file, older)
   const loaded = loadPolicy(file)
-  assert.deepEqual(loaded, { conversation_shaver_rules: { tool: [{ action: 'drop', eligible_after: '4 requests' }], user_and_assistant_text: { summary_threshold_tokens: 20000 } }, tool_shaver_rules: { claude: [{ name: '*', action: 'defer' }] } })
+  assert.deepEqual(loaded, { conversation_shaver_rules: { tool: [{ action: 'drop', eligible_after: '4 requests' }], user_and_assistant_text: { summary_threshold_tokens: 15000, memoir_threshold_tokens: 15000 } }, tool_shaver_rules: { claude: [{ name: '*', action: 'defer' }] } })
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), loaded)
   assert.equal(readFileSync(`${file}.old`, 'utf8'), older)
   assert.deepEqual(loadPolicy(file), loaded)
+})
+
+test('a policy file with summaries but no memoir threshold gets the default 15000, and a summary threshold of 20000 becomes 15000; only the file, not a logged policy', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'shaver-'))
+  const file = path.join(dir, 'policy.json')
+  const text = (t: object) => ({ conversation_shaver_rules: { tool: [{ action: 'drop', eligible_after: '4 requests' }], user_and_assistant_text: t } })
+  const load = (v: object) => (rmSync(`${file}.old`, { force: true }), writeFileSync(file, JSON.stringify(v)), loadPolicy(file))
+  for (const [had, now] of [
+    [{ summary_threshold_tokens: 20000 }, { summary_threshold_tokens: 15000, memoir_threshold_tokens: 15000 }],
+    [{ summary_threshold_tokens: 12000 }, { summary_threshold_tokens: 12000, memoir_threshold_tokens: 15000 }],
+  ]) {
+    assert.deepEqual(load(text(had)), text(now))
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), text(now))
+    assert.deepEqual(JSON.parse(readFileSync(`${file}.old`, 'utf8')), text(had))
+  }
+  // A memoir threshold, "never" included, or no summaries: the file is left as it is.
+  for (const t of [{ summary_threshold_tokens: 20000, memoir_threshold_tokens: 'never' }, { summary_threshold_tokens: 20000, memoir_threshold_tokens: 9000 }, { summary_threshold_tokens: 'never' }, {}]) {
+    assert.deepEqual(load(text(t)), text(t))
+    assert.equal(existsSync(`${file}.old`), false)
+  }
+  assert.deepEqual(load({ conversation_shaver_rules: { tool: [] } }), { conversation_shaver_rules: { tool: [] } })
+  assert.equal(existsSync(`${file}.old`), false)
+  // A policy saved in the logs is read as it ran.
+  assert.deepEqual(policyNow(text({ summary_threshold_tokens: 20000 })), text({ summary_threshold_tokens: 20000 }))
+})
+
+test('"never" for either threshold is the same as leaving it out', () => {
+  const text = (t: object) => parsePolicy({ conversation_shaver_rules: { user_and_assistant_text: t } })
+  assert.deepEqual(textRules(text({ summary_threshold_tokens: 'never', memoir_threshold_tokens: 'never' })), textRules(text({})))
+  assert.deepEqual(textRules(text({ summary_threshold_tokens: 15000, memoir_threshold_tokens: 'never' })), { summary_threshold_tokens: 15000, memoir_threshold_tokens: undefined })
+  for (const bad of ['Never', 'off', '15000', 0, -1, 1.5]) assert.throws(() => text({ memoir_threshold_tokens: bad }), /positive token count or "never"/)
 })
 
 test('a rewritten policy reads back every setting as it was, plain values included', () => {

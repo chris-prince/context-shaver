@@ -526,11 +526,15 @@ holds two thresholds rather than rules.
 made once the completed turns past the last one offered hold that many tokens
 of the user's and the assistant's text. The default is 15000; a model can set its own
 (`summaryThreshold` in `models.ts`, 7000 for DeepSeek at DeepInfra). Without the
-key no record is made or sent.
+key, or with `"never"`, no record is made or sent.
 
 `memoir_threshold_tokens` turns on the memoir (below): once the records hold
 more than that many tokens, the oldest are merged into it. It is 15000 in the
-default policy. Without the key no record is merged.
+default policy. Without the key, or with `"never"`, no record is merged. A
+policy file from before the memoir, with a summary threshold but no memoir
+threshold, is given 15000 when it loads, and a summary threshold of 20000, the
+default then, becomes 15000 too; the old text is kept as `.old`. To keep the
+memoir off, write `"never"`.
 
 `force_trim_before_autocompact` (top level, as `{ "on_proximity_to_autocompact":
 "20000 tokens", "if_trim_saves_at_least": "20000 tokens" }`, off without it)
