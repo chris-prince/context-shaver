@@ -809,7 +809,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         // Read before stripping: an answer to `shaver optimize` is one only after its reply.
         const command = body.tools?.length && pendingCommand(body.messages)
         if (command) {
-          const r = proto.replying(body.model, !!body.stream, latestOf(key)?.inputTokens ?? 0)
+          const r = proto.replying(body.model, !!body.stream, latestOf(key)?.inputTokens ?? 0, (body as { safeguards?: unknown }).safeguards)
           res.writeHead(200, { ...limits.get(proto), 'content-type': body.stream ? 'text/event-stream' : 'application/json' })
           res.write(r.start)
           // What an answer says before it's done shows at once in a stream.

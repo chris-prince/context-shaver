@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answeredMidTurn, closeHeld, commandOf, midTurnCommands, pendingCommand, reply, stripCommands, textBlock, withoutPending, wordsOf } from '../src/command.ts'
+import { answeredMidTurn, closeHeld, commandOf, midTurnCommands, pendingCommand, reply, replying, stripCommands, textBlock, withoutPending, wordsOf } from '../src/command.ts'
 import { PICK } from '../src/optimize.ts'
 import { CHAT } from '../src/chat.ts'
 import { MESSAGES } from '../src/messages.ts'
@@ -107,6 +107,17 @@ test('the reply streams as one text block, reporting the context as cache reads'
   const plain = JSON.parse(reply('hi', 'm', false, 58000))
   assert.deepEqual(plain.content, [{ type: 'text', text: 'hi' }])
   assert.equal(plain.usage.cache_read_input_tokens, 58000)
+})
+
+test("a reply to a request asking for auto mode's review carries each review's results, with no tool calls", () => {
+  const delta = (safeguards?: unknown) => {
+    const events = wholeReply(replying('m', true, 0, safeguards), 'hi').trim().split('\n\n').map((e) => JSON.parse(e.split('\ndata: ')[1]))
+    return events.find((e) => e.type === 'message_delta').delta
+  }
+  const asked = [{ type: 'dangerous_tool_use', classifier_context: { v: 1, permission_mode: 'auto' } }]
+  assert.deepEqual(delta(asked).safeguard_results, [{ type: 'dangerous_tool_use', status: { type: 'available', tool_uses: {} } }])
+  assert.equal(delta(asked).stop_reason, 'end_turn')
+  for (const none of [undefined, [], 'x']) assert.equal('safeguard_results' in delta(none), false)
 })
 
 test('a reply sent in pieces reads as one whole answer of all its text, on every protocol', () => {

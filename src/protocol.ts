@@ -136,8 +136,9 @@ export type Protocol = {
   canonical(wire: Record<string, unknown>): Wire
   usageReader(): UsageReader
   // A response holding just text, as Claude Code's `shaver` answers are made
-  // (command.ts), with `context` reported as the input read.
-  replying(model: string, stream: boolean, context: number): Replying
+  // (command.ts), with `context` reported as the input read, and the results
+  // of any review the request's `safeguards` asked for.
+  replying(model: string, stream: boolean, context: number, safeguards?: unknown): Replying
   // A stream held at its close, for the answers to commands sent mid-turn.
   holdClose(write: (s: string) => void): Held
   error(status: number, message: string): string

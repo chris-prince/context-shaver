@@ -203,8 +203,17 @@ export function stripCommands<M extends Msg>(msgs: M[]): M[] {
 // No model ran, but Claude Code reads its context size from the last reply's
 // usage, so `context` (the latest real request's input) is reported as cache
 // reads, the input that adds least to its cost tally.
-export function replying(model: string, stream: boolean, context: number): Replying {
+//
+// A request that asks for auto mode's server-side review (its `safeguards`)
+// gets each review's results, with no tool calls to judge, as the API's answer
+// to a turn without them comes: in the message_delta, as
+// { type, status: { type: 'available', tool_uses: {} } }. A response without
+// them makes Claude Code stop asking for the session and run its own
+// classifier requests, billed. Only the streamed form has been seen from the
+// API, so a reply that isn't streamed has none.
+export function replying(model: string, stream: boolean, context: number, safeguards?: unknown): Replying {
   const usage = { input_tokens: 0, cache_read_input_tokens: context, output_tokens: 0 }
+  const reviewed = Array.isArray(safeguards) && safeguards.length ? { safeguard_results: safeguards.map((s) => ({ type: (s as { type?: unknown })?.type, status: { type: 'available', tool_uses: {} } })) } : undefined
   const message = { id: `msg_proxy_${Date.now()}`, type: 'message', role: 'assistant', model, stop_sequence: null, usage }
   if (!stream) return { start: '', text: () => '', end: (text) => JSON.stringify({ ...message, content: [{ type: 'text', text }], stop_reason: 'end_turn' }) }
   return {
@@ -213,7 +222,7 @@ export function replying(model: string, stream: boolean, context: number): Reply
     end: () =>
       [
         { type: 'content_block_stop', index: 0 },
-        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 0 } },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null, ...reviewed }, usage: { output_tokens: 0 } },
         { type: 'message_stop' },
       ]
         .map(sse)
