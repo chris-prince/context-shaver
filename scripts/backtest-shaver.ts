@@ -28,7 +28,7 @@
 // received where they were logged (server.ts, received), and as sent before
 // that. Each conversation's line is printed as it finishes, the totals at the
 // end; --out writes each request's cost too. Every horizon is priced under
-// POLICY (else policy.json). Where every request of a conversation names the
+// POLICY (else policy.json, else policy.default.json). Where every request of a conversation names the
 // policy it ran under (log.ts, writePolicy), it is also priced as the proxy
 // ran it, each request under its own policy at its model's horizon, and the
 // horizons' percentages are against that; elsewhere they're against the
@@ -94,7 +94,12 @@ const rulesOf = (p: Policy): Rules => ({ rules: p.conversation_shaver_rules ?? {
 // How many of `chain`'s oldest records the memoir holds, as the proxy works
 // it out on each record's arrival (server.ts, after a summary).
 const mergedIn = (chain: readonly Summary[], memoirAt?: number) => (memoirAt ? chain.reduce((m, _, k) => mergedOf(chain.slice(0, k + 1), m, memoirAt), 0) : 0)
-const given = rulesOf(loadPolicy(process.env.POLICY ?? path.join(root, 'policy.json'))!)
+// The proxy makes policy.json from policy.default.json when it first starts,
+// so a checkout it hasn't run in has only the default; that's priced as is.
+const policyFile = process.env.POLICY ?? [path.join(root, 'policy.json'), path.join(root, 'policy.default.json')].find(existsSync)!
+const policy = loadPolicy(policyFile)
+if (!policy) throw new Error(`no policy file at ${policyFile}`)
+const given = rulesOf(policy)
 const dirs = args.length ? args : readdirSync(path.join(root, 'proxy-data/logs'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(root, 'proxy-data/logs', d.name))
 
 // Each request's model's horizon, as the proxy asks it (server.ts, prepare).
