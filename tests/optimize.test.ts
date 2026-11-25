@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { afterAnswer, optimizing, pickWords, PICK, SKILLS_NOTE, skillsAsked, skillsText, toolsAsked, toolsText, TOOLS_NOTE, type Proposal } from '../src/optimize.ts'
 import { parsePolicy, toolRulesOf } from '../src/policy.ts'
 import { harnessOf, type Harness } from '../src/harness.ts'
@@ -7,7 +8,10 @@ import { harnessOf, type Harness } from '../src/harness.ts'
 const skill = (name: string) => ({ name, description: `${name} does a long thing in many words` })
 const skills = [skill('alpha'), skill('beta'), skill('gamma')]
 const lines = { alpha: 'Alpha line', beta: 'Beta line', gamma: 'Gamma line' }
-const file = (body: object) => JSON.stringify(body, null, 2) + '\n'
+// A policy file that is `body` beside the default's part rules, which every
+// policy lists.
+const parts = JSON.parse(readFileSync(new URL('../policy.default.json', import.meta.url), 'utf8')).conversation_shaver_rules
+const file = (body: object) => JSON.stringify({ conversation_shaver_rules: parts, ...body }, null, 2) + '\n'
 const rulesIn = (text: string) => parsePolicy(JSON.parse(text))
 const stub = (s: { name: string; description: string }, text: string) => ({ name: s.name, action: 'stub', text, replaces: '*' })
 

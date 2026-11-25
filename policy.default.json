@@ -1,31 +1,31 @@
 {
   "conversation_shaver_rules": {
-    "tool": [
+    "file_read_calls": [
       { "action": "drop", "eligible_after": "4 requests" },
       { "action": "drop", "eligible_after": "2 turns" }
     ],
-    "tool:file_read": [
+    "file_edit_calls": [
       { "action": "drop", "eligible_after": "4 requests" },
       { "action": "drop", "eligible_after": "2 turns" }
     ],
-    "tool:file_edit": [
+    "shell_calls": [
       { "action": "drop", "eligible_after": "4 requests" },
       { "action": "drop", "eligible_after": "2 turns" }
     ],
-    "tool:command": [
+    "web_calls": [
       { "action": "drop", "eligible_after": "4 requests" },
       { "action": "drop", "eligible_after": "2 turns" }
     ],
-    "tool:web": [
-      { "action": "drop", "eligible_after": "4 requests" },
-      { "action": "drop", "eligible_after": "2 turns" }
-    ],
-    "tool:skill": [
+    "skill_calls": [
       { "action": "stub", "eligible_after": "10 requests" },
       { "action": "drop", "eligible_after": "100 requests" }
     ],
-    "tool:tool_search": [
+    "tool_search_calls": [
       { "action": "drop", "eligible_after": "10 turns" }
+    ],
+    "other_tool_calls": [
+      { "action": "drop", "eligible_after": "4 requests" },
+      { "action": "drop", "eligible_after": "2 turns" }
     ],
     "reasoning": [
       { "action": "drop", "eligible_after": "0 turns" },

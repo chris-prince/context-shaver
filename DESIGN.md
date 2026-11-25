@@ -378,8 +378,10 @@ them (`thinking` in a session's state), and a Codex tool call, with its output,
 at the tokens Codex counted for it (`calls`); other parts at 0.39 tokens a
 character.
 Like any rule, it only makes an item eligible; the cache gate still decides
-whether trimming it pays. The strongest due rule wins, drop over stub. A kind with no rules
-is never trimmed.
+whether trimming it pays. The strongest due rule wins, drop over stub. Every
+key must be listed; an empty list (`[]`) means the kind is never trimmed, and
+a key left out is an error. A kind's key is its only rules: no key falls back
+on another.
 
 The harness's notes that restate part of the current state (`notes.ts`,
 `latest`: the token counter, the date, an environment update) need no rule. One a
@@ -389,39 +391,41 @@ stays gone. A user message holding nothing else keeps it: dropping the message
 could put a system message where the API refuses one.
 
 A note about a file (`file_note`: one changed on disk, or read before a
-compaction) goes by `tool:file_read`'s drops, and a background task's output
-(`task_output`) by `tool:command`'s, each falling back to `tool`'s as their
-items do. Only drops by requests or turns apply: a note has no call to stub
+compaction) goes by `file_read_calls`'s drops, and a background task's output
+(`task_output`) by `shell_calls`'s. Only drops by requests or turns apply: a note has no call to stub
 and no token count of its own. Other notes are kept.
 
 ```json
 {
   "conversation_shaver_rules": {
-    "tool": [
+    "file_read_calls": [
       { "action": "stub", "eligible_after": "1 request" },
       { "action": "drop", "eligible_after": "10 requests" }
     ],
-    "tool:skill": [{ "action": "drop", "eligible_after": "0 turns" }],
+    "file_edit_calls": [{ "action": "drop", "eligible_after": "4 requests" }],
+    "shell_calls": [{ "action": "drop", "eligible_after": "4 requests" }],
+    "web_calls": [{ "action": "drop", "eligible_after": "2 turns" }],
+    "skill_calls": [{ "action": "drop", "eligible_after": "0 turns" }],
+    "tool_search_calls": [],
+    "other_tool_calls": [{ "action": "drop", "eligible_after": "4 requests" }],
     "reasoning": [{ "action": "drop", "eligible_after": "0 turns" }],
-    "user_and_assistant_text": { "summary_threshold_tokens": 20000 }
+    "user_and_assistant_text": { "summary_threshold_tokens": 20000, "memoir_threshold_tokens": "never" }
   }
 }
 ```
 
 | Kind | Item | Actions |
 | --- | --- | --- |
-| `tool` | A tool call with its results | `stub`, `drop` |
-| `tool:file_read` | A call that shows a file (`Read`; shell `cat`, `sed -n`, `head`, …), or a file Claude Code restores | `stub`, `drop` |
-| `tool:file_edit` | A call that changes a file (`Edit`, `Write`, `apply_patch`; shell `sed -i`, `tee`, a write into a file) | `stub`, `drop` |
-| `tool:command` | Any other shell command, and a search or listing (`Grep`, `Glob`) | `stub`, `drop` |
-| `tool:web` | A web fetch or search (`WebFetch`, `WebSearch`, `web_search`) | `stub`, `drop` |
-| `tool:skill` | A `Skill` call, its result and the skill's body beside it | `stub`, `drop` |
-| `tool:tool_search` | A `ToolSearch` call and its result | `drop` |
+| `file_read_calls` | A call that shows a file (`Read`; shell `cat`, `sed -n`, `head`, …), or a file Claude Code restores | `stub`, `drop` |
+| `file_edit_calls` | A call that changes a file (`Edit`, `Write`, `apply_patch`; shell `sed -i`, `tee`, a write into a file) | `stub`, `drop` |
+| `shell_calls` | Any other shell command, and a search or listing (`Grep`, `Glob`) | `stub`, `drop` |
+| `web_calls` | A web fetch or search (`WebFetch`, `WebSearch`, `web_search`) | `stub`, `drop` |
+| `skill_calls` | A `Skill` call, its result and the skill's body beside it | `stub`, `drop` |
+| `tool_search_calls` | A `ToolSearch` call and its result | `drop` |
+| `other_tool_calls` | Any other tool call with its results (subagents, MCP tools, todo lists, …) | `stub`, `drop` |
 | `reasoning` | An assistant message's thinking blocks | `drop` |
 
-A `tool:` kind without its own key takes the `tool` rules it can be given: a
-skill takes them all, a tool search only the drops. An empty list of its own
-keeps it. The logs name these calls and results the same way, as
+The logs keep the kinds' internal names (`tool`, `command`, …) and name these calls and results the same way, as
 `toolCalls:skill` and `toolResults:tool_search`. The groups are sorted as the
 logs sort them (`src/tool-groups.ts`); a token rule counts all tool calls'
 tokens, whatever their group.

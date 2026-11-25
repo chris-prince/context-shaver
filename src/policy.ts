@@ -32,14 +32,14 @@ export function afterOf(r: Rule): { on: Unit; wait: number } | undefined {
 // Either can be "never", which is the same as leaving it out, written out.
 type Threshold = number | 'never'
 type Text = { summary_threshold_tokens?: Threshold; memoir_threshold_tokens?: Threshold }
-// Each kind's key: a tool group, skill or tool search is a kind of tool call,
-// keyed `tool:<kind>`.
-const KEYS = { tool: 'tool', 'tool:file_read': 'file_read', 'tool:file_edit': 'file_edit', 'tool:command': 'command', 'tool:web': 'web','tool:skill': 'skill', 'tool:tool_search': 'tool_search', reasoning: 'reasoning' } as const satisfies Record<string, Kind>
+// Each kind's key. A policy lists every one, `[]` for a kind it doesn't trim
+// (parsePolicy); a kind's rules are its key's alone (rulesFor).
+const KEYS = { file_read_calls: 'file_read', file_edit_calls: 'file_edit', shell_calls: 'command', web_calls: 'web', skill_calls: 'skill', tool_search_calls: 'tool_search', other_tool_calls: 'tool', reasoning: 'reasoning' } as const satisfies Record<string,Kind>
 type Key = keyof typeof KEYS
 export type PartRules = Partial<Record<Key, Rule[]>> & { user_and_assistant_text?: Text }
 
 // The harness's notes trimmed by a tool kind's rules (notes.ts): a note
-// about a file as a file read is, a task's output as a command's. Only their
+// about a file by file_read_calls', a task's output by shell_calls'. Only their
 // drops by requests or turns, as a note has no call to stub and no token
 // count of its own; none for other notes.
 const NOTE_KINDS: Partial<Record<Category, Kind>> = { file_note: 'file_read', task_output: 'command' }
@@ -88,12 +88,9 @@ export function textRules(p: Policy): { summary_threshold_tokens?: number; memoi
 // What each kind can be given. Only tool calls and skills have a stub.
 const ACTIONS: Record<Kind, Action[]> = { tool: ['stub', 'drop'], file_read: ['stub', 'drop'], file_edit: ['stub', 'drop'], command: ['stub', 'drop'], web: ['stub', 'drop'],skill: ['stub', 'drop'], tool_search: ['drop'], reasoning: ['drop'] }
 
-// The rules a kind is given: its key's, or for a kind of tool call without
-// its own key, the tool rules it can be given (a tool search's drops only).
+// The rules a kind is given: its key's, none without one.
 export function rulesFor(p: PartRules, kind: Kind): Rule[] | undefined {
-  const key = (Object.keys(KEYS) as Key[]).find((k) => KEYS[k] === kind)!
-  if (p[key] || key === 'tool' || key === 'reasoning') return p[key]
-  return p.tool?.filter((r) => ACTIONS[kind].includes(r.action))
+  return p[(Object.keys(KEYS) as Key[]).find((k) => KEYS[k] === kind)!]
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -110,6 +107,8 @@ export function parsePolicy(v: unknown): Policy {
             if (k !== 'summary_threshold_tokens' && k !== 'memoir_threshold_tokens') throw new Error(`policy: unknown user_and_assistant_text key ${k}`)
             if (n !== 'never' && (!Number.isInteger(n) || (n as number) <= 0)) throw new Error(`policy: ${k} is not a positive token count or "never"`)
           }
+          for (const k of ['summary_threshold_tokens', 'memoir_threshold_tokens'])
+            if (!(k in rules)) throw new Error(`policy: user_and_assistant_text needs ${k} (a token count, or "never")`)
           continue
         }
         if (!Object.hasOwn(KEYS, kind)) throw new Error(`policy: unknown part kind ${kind}`)
@@ -118,6 +117,8 @@ export function parsePolicy(v: unknown): Policy {
           if (!afterOf(r) || Object.keys(r).length !== 2 || !ACTIONS[KEYS[kind as Key]].includes(r.action))
             throw new Error(`policy: bad ${kind} rule ${JSON.stringify(r)}`)
       }
+      for (const k of [...Object.keys(KEYS), 'user_and_assistant_text'])
+        if (!(k in value)) throw new Error(`policy: conversation_shaver_rules needs ${k} (${k === 'user_and_assistant_text' ? 'its two thresholds' : '[] to trim none'})`)
     } else if (key === 'tool_shaver_rules') {
       if (!isObject(value) || !Object.values(value).every(Array.isArray)) throw new Error('policy: tool_shaver_rules is not rule lists by harness')
       for (const r of Object.values(value).flat())
@@ -137,6 +138,7 @@ export function parsePolicy(v: unknown): Policy {
       if (value.on_proximity_to_autocompact === undefined) throw new Error(`policy: ${key} needs on_proximity_to_autocompact`)
     } else throw new Error(`policy: unknown key ${key}`)
   }
+  if (!('conversation_shaver_rules' in v)) throw new Error('policy: conversation_shaver_rules is missing')
   return v as Policy
 }
 
@@ -153,17 +155,15 @@ export const skillRulesNow = (rules: (SkillRule & { match?: string })[]): SkillR
 // the tools Claude Code keeps, every other deferred; and part rules timed by
 // `on` ("step" or "turn") and `wait`, a step as a request, or by `after`, both
 // written as `eligible_after`; and the thresholds under
-// `prompt_and_assistant_text`; and skill and tool search rules keyed `skill`
-// and `tool_search`.
+// `prompt_and_assistant_text`. Its part kinds keep their older keys, for
+// keyedNow.
 export function upgraded(v: Record<string, unknown>): Record<string, unknown> | undefined {
   const old = ['skill_list', 'tool_list', 'tools_not_deferred', 'summary_threshold_tokens', 'memoir_threshold_tokens']
-  const kinds = Object.keys(v).filter((k) => Object.hasOwn(ACTIONS, k))
+  const kinds = Object.keys(v).filter((k) => ['tool', 'skill', 'tool_search', 'reasoning'].includes(k))
   const conv = isObject(v.conversation_shaver_rules) ? v.conversation_shaver_rules : {}
   const onWait = (r: unknown) => isObject(r) && ('on' in r || 'after' in r)
   const timedOlder = [...kinds.map((k) => v[k]), ...Object.values(conv)].some((rs) => Array.isArray(rs) && rs.some(onWait))
-  const renamed = (k: string) => (k === 'skill' || k === 'tool_search' ? `tool:${k}` : k)
-  const unkeyed = [...kinds, ...Object.keys(conv)].some((k) => renamed(k) !== k)
-  if (!kinds.length && !timedOlder && !unkeyed && !('prompt_and_assistant_text' in conv) && !old.some((k) => k in v)) return undefined
+  if (!kinds.length && !timedOlder && !('prompt_and_assistant_text' in conv) && !old.some((k) => k in v)) return undefined
   const after = (wait: number, unit: string) => `${wait} ${unit}${wait === 1 ? '' : 's'}`
   const eligible = (r: Record<string, unknown>) => ('after' in r ? r.after : after(r.wait as number, r.on === 'step' ? 'request' : (r.on as string)))
   const timed = (rs: unknown) => (Array.isArray(rs) ? rs.map((r) => (onWait(r) ? { action: r.action, eligible_after: eligible(r) } : r)) : rs)
@@ -176,7 +176,7 @@ export function upgraded(v: Record<string, unknown>): Record<string, unknown> | 
   const { user_and_assistant_text: had, prompt_and_assistant_text: older, ...convKinds } = conv
   const text = { ...(isObject(older) && older), ...(isObject(had) && had), ...Object.fromEntries(['summary_threshold_tokens', 'memoir_threshold_tokens'].filter((k) => k in v).map((k) => [k, v[k]])) }
   const parts = {
-    ...Object.fromEntries([...Object.entries(convKinds), ...kinds.map((k) => [k, v[k]])].map(([k, rs]) => [renamed(k), timed(rs)])),
+    ...Object.fromEntries([...Object.entries(convKinds), ...kinds.map((k) => [k, v[k]])].map(([k, rs]) => [k, timed(rs)])),
     ...(Object.keys(text).length && { user_and_assistant_text: text }),
   }
   const rest = Object.fromEntries(Object.entries(v).filter(([k]) => !kinds.includes(k) && !old.includes(k) && (k !== 'conversation_shaver_rules' || !isObject(v[k]))))
@@ -266,12 +266,15 @@ function spanOf(text: string, name: string): { key: number; value: number; end: 
 //   old text beside it as .old.
 //   Remove when: upgrading from before 2026-10-29 is no longer supported.
 //   Each file is rewritten the first time newer code loads it.
-// BACKCOMPAT(2026-11-22)
-//   Before: conversation_shaver_rules keyed skill and tool search rules
-//   `skill` and `tool_search`.
-//   Shim: upgraded() renames them `tool:skill` and `tool:tool_search`, the
-//   same way.
-//   Remove when: upgrading from before 2026-11-22 is no longer supported.
+// BACKCOMPAT(2026-11-25)
+//   Before: part rules were keyed `tool`, `skill`, `tool_search` (to
+//   2026-11-22) and then `tool` and `tool:<kind>`, a key could be left out,
+//   and so could a threshold.
+//   Shim: keyedNow() writes them under the current keys, each kind with the
+//   rules it ran with, a kind left out as [] and a threshold as "never".
+//   Remove when: upgrading from before 2026-11-25 is no longer supported, and
+//   policies saved in logs from before then are no longer read (only Chris's
+//   logs from 2026-11-22 on have `tool:` keys).
 // BACKCOMPAT(2026-11-23)
 //   Before: part rules were timed by `after`.
 //   Shim: upgraded() writes it as `eligible_after`, the same way.
@@ -286,7 +289,11 @@ function spanOf(text: string, name: string): { key: number; value: number; end: 
 //   Remove when: upgrading from before 2026-10-25 is no longer supported.
 //   Only the file is changed: a policy saved in the logs is read as it ran.
 // A policy in the current form, as a policy saved in the logs is read.
-export const policyNow = (v: unknown): Policy => parsePolicy((isObject(v) && upgraded(v)) || v)
+export function policyNow(v: unknown): Policy {
+  if (!isObject(v)) return parsePolicy(v)
+  const upgrade = upgraded(v)
+  return parsePolicy(keyedNow(upgrade ?? v, !!upgrade) ?? upgrade ?? v)
+}
 
 // A policy with summaries but no memoir threshold given the default's, or
 // none if it has a memoir threshold or no summaries.
@@ -298,11 +305,52 @@ function withMemoir(v: Record<string, unknown>): Record<string, unknown> | undef
   return { ...v, conversation_shaver_rules: { ...conv, user_and_assistant_text: { ...text, summary_threshold_tokens: summary, memoir_threshold_tokens: 15000 } } }
 }
 
+// A policy's part rules under their current keys, with every key and both
+// thresholds, or none if they have their current keys. `older`: the policy
+// was in an older form (upgraded), so even without an older key it ran with
+// every kind it left out untrimmed. Each kind gets the rules it ran with: up
+// to 2026-11-22 `tool` ruled every tool call but skills (`skill`) and tool
+// searches (`tool_search`), and a kind without a key wasn't trimmed; from
+// then, each kind of tool call keyed `tool:<kind>` took the `tool` rules it
+// could be given where it had no key of its own (a tool search, only its
+// drops). `tool:file_search`, keyed for one day from 2026-11-23, is left out:
+// its searches are shell calls, as they were again by the next. A missing
+// threshold was off. A policy with none of the current keys but `reasoning`
+// (which both forms have) is in an older form too, even with no older key:
+// one with only thresholds trimmed nothing.
+const isOlderKey = (k: string) => k === 'tool' || k === 'skill' || k === 'tool_search' || k.startsWith('tool:')
+function keyedNow(v: Record<string, unknown>, older: boolean): Record<string, unknown> | undefined {
+  const conv = isObject(v.conversation_shaver_rules) ? v.conversation_shaver_rules : {}
+  const current = Object.keys(KEYS).some((k) => k !== 'reasoning' && k in conv)
+  if (!older && current && !Object.keys(conv).some(isOlderKey)) return undefined
+  const rules = (k: string) => (Array.isArray(conv[k]) ? (conv[k] as Rule[]) : undefined)
+  const tool = rules('tool')
+  const fallback = Object.keys(conv).some((k) => k.startsWith('tool:'))
+  const text = isObject(conv.user_and_assistant_text) ? conv.user_and_assistant_text : {}
+  const rest = Object.fromEntries(Object.entries(conv).filter(([k]) => !isOlderKey(k) && k !== 'user_and_assistant_text'))
+  return {
+    ...v,
+    conversation_shaver_rules: {
+      file_read_calls: rules('tool:file_read') ?? tool ?? [],
+      file_edit_calls: rules('tool:file_edit') ?? tool ?? [],
+      shell_calls: rules('tool:command') ?? tool ?? [],
+      web_calls: rules('tool:web') ?? tool ?? [],
+      skill_calls: rules('tool:skill') ?? rules('skill') ?? (fallback ? tool : undefined) ?? [],
+      tool_search_calls: rules('tool:tool_search') ?? rules('tool_search') ?? (fallback ? tool?.filter((r) => r.action === 'drop') : undefined) ?? [],
+      other_tool_calls: tool ?? [],
+      reasoning: rules('reasoning') ?? [],
+      ...rest,
+      user_and_assistant_text: { summary_threshold_tokens: text.summary_threshold_tokens ?? 'never', memoir_threshold_tokens: text.memoir_threshold_tokens ?? 'never' },
+    },
+  }
+}
+
 export function loadPolicy(file: string): Policy | undefined {
   if (!existsSync(file)) return undefined
   const v = JSON.parse(readFileSync(file, 'utf8'))
   const upgrade = isObject(v) ? upgraded(v) : undefined
-  const now = isObject(v) ? (withMemoir(upgrade ?? v) ?? upgrade) : undefined
+  const memoir = isObject(v) ? withMemoir(upgrade ?? v) : undefined
+  const now = isObject(v) ? (keyedNow(memoir ?? upgrade ?? v, !!upgrade) ?? memoir ?? upgrade) : undefined
   if (!now) return parsePolicy(v)
   const policy = parsePolicy(now)
   copyFileSync(file, `${file}.old`)
