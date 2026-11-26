@@ -812,6 +812,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   let again: (() => Prepared | undefined) | undefined
   // The request prepared again as first, under rules a refusal turned on.
   let rejoin: (() => Prepared | undefined) | undefined
+  // Whether a prepared request sends the client's own system, tools and
+  // messages, cache breakpoints aside: then a refusal of what's in them is the
+  // client's doing, not the proxy's.
+  let unchanged: ((q: Prepared) => boolean) | undefined
   // The conversation whose waiting commands are answered if this request's
   // response ends the turn, and the request as forwarded.
   let turnEnd: { key: string; body: Canonical; render: Wire['render'] } | undefined
@@ -895,6 +899,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
             console.error('shaver: request not prepared again:', err)
           }
         }
+        unchanged = (q) => {
+          const bare = (b: Buffer) => {
+            const { system, tools, messages } = proto.canonical(JSON.parse(b.toString('utf8'))).body as Record<string, unknown>
+            return JSON.stringify({ system, tools, messages }, (k, v) => (k === 'cache_control' ? undefined : v))
+          }
+          try {
+            return bare(q.body) === bare(read)
+          } catch {
+            return false
+          }
+        }
         p = prep(c, false)
       }
     } catch (err) {
@@ -940,11 +955,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     attempts.push({ sent: shape, status: 400 })
     // A shave refused for thinking it unbound turns on asking the API to drop
     // such thinking, for the rest of the conversation (binding.ts, Refusals),
-    // and is sent again asking.
+    // and is sent again asking. So does a request the proxy left as it came,
+    // as when Claude Code compacts and keeps thinking from before: the client
+    // sends that thinking again, so the conversation's later requests need
+    // the setting too. Then it's logged as the client's refusal (cause:
+    // 'client'), not the shave's.
     if (p && sender === fetchBound && !p.refusals.dropUnbound && !dropUnbound.on && !dropUnbound.never && UNBOUND.test(text)) {
       p.refusals.dropUnbound = true
-      console.error(`${new Date().toISOString()} shaver: shaved request refused for ${p.key} for thinking it unbound; sent again asking the API to drop unbound thinking, and so for the rest of the conversation`)
-      failed(400, text, { sent: shape })
+      const own = unchanged?.(p) ?? false
+      console.error(`${new Date().toISOString()} shaver: ${own ? "client's request, sent unchanged," : 'shaved request'} refused for ${p.key} for thinking ${own ? 'the client' : 'it'} unbound; sent again asking the API to drop unbound thinking, and so for the rest of the conversation`)
+      failed(400, text, { sent: shape, ...(own && { cause: 'client' }) })
       up = await send(p.body, p)
       attempts.push({ sent: shape, status: up.status })
       if (up.status === 400) text = await up.text()

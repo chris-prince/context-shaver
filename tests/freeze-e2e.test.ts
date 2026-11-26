@@ -273,6 +273,7 @@ test('a shave refused for unbound thinking is sent again asking the API to drop 
     const [refused, again] = up.bodies.slice(-2)
     assert.ok(!refused.includes(A) && !again.includes(A), 'shaved both times')
     assert.ok(!asksDrop(refused) && asksDrop(again))
+    assert.deepEqual(failures(p.dir).map((f) => f.cause), [undefined], 'the shave\'s')
     assert.doesNotMatch(third.said, /shaving is paused/)
     // 4: asked from the start, sent once.
     msgs.push(...step('d', 'small'))
@@ -283,6 +284,36 @@ test('a shave refused for unbound thinking is sent again asking the API to drop 
     // Another conversation isn't asked: the refusal was this one's.
     assert.equal((await send(p, [text('user', 'another task'), ...step('x', A)])).status, 200)
     assert.ok(!asksDrop(up.bodies.at(-1)!), 'other conversation not asked')
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})
+
+// The failed events logged, of every conversation.
+const failures = (dir: string) => {
+  const logs = path.join(dir, 'logs')
+  return readdirSync(logs).flatMap((d) => readFileSync(path.join(logs, d, 'step_events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))).filter((x) => x.event === 'failed')
+}
+
+// Thinking the client itself unbound, as Claude Code sends it after compacting
+// with thinking from before the compaction, is refused before the proxy has
+// trimmed anything. It gets the same handling, since the client sends that
+// thinking again, but is logged as the client's refusal.
+test("a client's own request refused for unbound thinking is handled the same, and logged as the client's", async () => {
+  const up = await upstream(unbound)
+  const p = await proxy(up.url)
+  try {
+    const msgs: any[] = [text('user', 'This session is being continued from a previous conversation.'), ...step('s', 'small')]
+    const first = await send(p, msgs)
+    assert.equal(first.status, 200)
+    assert.deepEqual(attempts(lastFreeze(p.dir)), ['shaved 400', 'shaved 200'])
+    const [refused, again] = up.bodies.slice(-2)
+    assert.ok(!asksDrop(refused) && asksDrop(again))
+    assert.deepEqual(failures(p.dir).map((f) => f.cause), ['client'])
+    msgs.push(...step('t', 'small'))
+    assert.equal((await send(p, msgs)).status, 200)
+    assert.ok(asksDrop(up.bodies.at(-1)!), 'asked from then on')
   } finally {
     p.child.kill()
     up.close()

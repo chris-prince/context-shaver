@@ -771,7 +771,12 @@ Claude Code sign-in left the unbound blocks out itself, unbilled and
 unreported: the input tokens billed came to the request's with that thinking
 removed. So drop_block isn't asked before a refusal, where it would change
 nothing. `SHAVER_DROP_UNBOUND_THINKING=1` asks it from the start, and `=0`
-never, so the refusal freezes.
+never, so the refusal freezes. A client can unbind thinking itself: after its
+own compaction Claude Code can send thinking from before it after the summary,
+and Fable 5.2 refuses that with the same error. Where the proxy sent the
+system, tools and messages as they came (breakpoints aside), the refusal is
+handled the same, since the client sends that thinking again, but logged as
+the client's (`cause: "client"`), not as a refused shave.
 
 ## When the applied clock moves
 
