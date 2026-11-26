@@ -7,7 +7,7 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, policyNow, seedPolicy, skillRulesNow, textRules, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, thinkingJoins, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 import { RESPONSES } from '../src/responses.ts'
 
@@ -81,6 +81,11 @@ function turn(n: number, tool: string, input: Record<string, unknown>): ApiMsg[]
   ]
 }
 const msgs = [...turn(1, 'Write', { file_path: 'a.txt', content: long }), ...turn(2, 'Bash', { command: 'seq 1 3000' }), ...turn(3, 'Bash', { command: 'ls' })]
+// The messages with no thinking before the answers, so a call dropped leaves
+// its thinking beside text, which the API takes, not beside the answer's
+// thinking, which it refuses (applyAt): for tests of which rules reach what.
+const plainAnswers = (ms: readonly ApiMsg[]): ApiMsg[] =>
+  ms.map((m) => (m.role === 'assistant' && blocks(m).some((b) => b.type === 'text') ? { ...m, content: blocks(m).filter((b) => b.type !== 'thinking') } : m))
 
 test('prompts: user text, not tool results or reminders', () => {
   assert.equal(isPrompt(msgs[0]), true)
@@ -334,11 +339,12 @@ test('stubs completed requests and drops completed turns\' thinking, never the l
 })
 
 test('dropping removes calls with their results, and messages left empty', () => {
-  const s = apply(msgs, allCalls(dropAll.other_tool_calls!), { requests: 1, turns: 0 })
+  const plain = plainAnswers(msgs)
+  const s = apply(plain, allCalls(dropAll.other_tool_calls!), { requests: 1, turns: 0 })
   assert.deepEqual(counts(s), { 'tool:drop': 1 })
   // The call's message keeps its thinking; the result's message goes.
   assert.deepEqual(s.msgs[1].content, [{ type: 'thinking', thinking: 'hm', signature: 'sig' }])
-  assert.deepEqual(s.msgs.slice(2), msgs.slice(3))
+  assert.deepEqual(s.msgs.slice(2), plain.slice(3))
   assert.deepEqual(s.origin.slice(0, 3), [0, 1, 3])
   // With its thinking dropped too, the call's message goes as well. The
   // current turn keeps its thinking, and the latest request its call.
@@ -367,6 +373,47 @@ test('a pair whose drop would leave a system message after an assistant one is s
   assert.deepEqual(both.origin.slice(0, 3), [0, 3, 4])
 })
 
+// The API joins assistant messages side by side and, on some routes, refuses
+// thinking straight after thinking in what that makes, in any turn (DESIGN.md,
+// "The API constrains what can go"); every other shape below it takes.
+test('once the API refuses thinking joined to thinking, a call whose drop would join them is stubbed, and only that one', (t) => {
+  t.after(() => (thinkingJoins.refused = false))
+  const think = (t: string) => ({ type: 'thinking', thinking: t, signature: 'sig' })
+  const step = (n: number, lead: object[]): ApiMsg[] => [
+    { role: 'assistant', content: [...lead, { type: 'tool_use', id: `toolu_${n}`, name: 'Bash', input: { command: 'ls' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${n}`, content: long }] },
+  ]
+  // A tool loop, as Claude Code sends one: thinking alone before a call, then
+  // thinking and text, then text alone, then thinking again, then an answer.
+  const convo: ApiMsg[] = [
+    { role: 'user', content: 'prompt' },
+    ...step(1, [think('a')]),
+    ...step(2, [think('b'), { type: 'text', text: 'looking' }]),
+    ...step(3, [{ type: 'text', text: 'still looking' }]),
+    ...step(4, [think('d')]),
+    { role: 'assistant', content: [think('e'), { type: 'text', text: 'done' }] },
+  ]
+  const dropping = allCalls(dropAll.other_tool_calls!)
+  // Until a refusal, every due call goes.
+  assert.deepEqual(counts(apply(convo, dropping, { requests: 4, turns: 0 })), { 'tool:drop': 4 })
+  thinkingJoins.refused = true
+  const s = apply(convo, dropping, { requests: 4, turns: 0 })
+  // Call 1 leaves thinking before call 2's, and call 4 before the answer's:
+  // both stubbed. Call 2 leaves text before 3's; call 3 leaves text before 4's
+  // thinking: both go.
+  assert.deepEqual(counts(s), { 'tool:stub': 2, 'tool:drop': 2 })
+  const ids = s.msgs.flatMap((m) => blocks(m)).filter((b) => b.type === 'tool_use').map((b) => b.id)
+  assert.deepEqual(ids, ['toolu_1', 'toolu_4'])
+  // No assistant message ending in thinking sits before one that starts with it.
+  s.msgs.forEach((m, j) => {
+    const next = s.msgs[j + 1]
+    if (m.role === 'assistant' && next?.role === 'assistant') assert.ok(blocks(m).at(-1)?.type !== 'thinking' || blocks(next)[0]?.type !== 'thinking', `messages ${j} and ${j + 1}`)
+  })
+  // With the thinking dropped as well, every call goes whole, as before.
+  const both = apply([...convo, { role: 'user', content: 'next' }, { role: 'assistant', content: 'ok' }], { ...dropping, reasoning: [{ action: 'drop', eligible_after: '0 turns' }] }, { requests: 5, turns: 1 })
+  assert.equal(counts(both)['tool:drop'], 4)
+})
+
 test('of two pairs before a system message, one is kept so that it follows a user message', () => {
   // A response with text and a call, then a call alone, then a system message.
   // Dropping both leaves the system message after the text, so the second
@@ -385,7 +432,7 @@ test('of two pairs before a system message, one is kept so that it follows a use
 })
 
 test('a tool search is its own kind, dropped by its own rules', () => {
-  const convo = [1, 2, 3].flatMap((n) => turn(n, n === 1 ? 'ToolSearch' : 'Bash', { query: 'select:CronList' }))
+  const convo = plainAnswers([1, 2, 3].flatMap((n) => turn(n, n === 1 ? 'ToolSearch' : 'Bash', { query: 'select:CronList' })))
   const p: PartRules = { ...allCalls([{ action: 'drop', eligible_after: '0 requests' }]), tool_search_calls: [{ action: 'drop', eligible_after: '1 turn' }] }
   const kept = apply(convo, p, { requests: 5, turns: 1 })
   assert.deepEqual(counts(kept), { 'tool:drop': 2 })
@@ -394,7 +441,7 @@ test('a tool search is its own kind, dropped by its own rules', () => {
 })
 
 test("a kind's rules are its key's alone: other_tool_calls' don't reach a tool search", () => {
-  const convo = [1, 2, 3].flatMap((n) => turn(n, n === 1 ? 'ToolSearch' : 'Bash', { query: 'select:CronList' }))
+  const convo = plainAnswers([1, 2, 3].flatMap((n) => turn(n, n === 1 ? 'ToolSearch' : 'Bash', { query: 'select:CronList' })))
   const drop: Rules = [{ action: 'drop', eligible_after: '0 requests' }]
   assert.deepEqual(counts(apply(convo, { other_tool_calls: drop, shell_calls: drop }, { requests: 5, turns: 2 })), { 'tool:drop': 2 })
   assert.deepEqual(counts(apply(convo, { ...full({ ...allCalls(drop), tool_search_calls: [] }) } as PartRules, { requests: 5, turns: 2 })), { 'tool:drop': 2 })
@@ -404,7 +451,7 @@ test("a kind's rules are its key's alone: other_tool_calls' don't reach a tool s
 
 test('a call in the file_read, file_edit, command or web group is that kind, trimmed by its own rules', () => {
   const calls: [string, object][] = [['Read', { file_path: 'a.ts' }], ['Bash', { command: 'sed -n 1,9p a.ts' }], ['Bash', { command: 'npm test' }], ['Bash', { command: 'grep -n x a.ts' }], ['WebFetch', { url: 'u' }], ['Edit', { file_path: 'a.ts', old_string: 'a', new_string: 'b' }], ['CronList', {}]]
-  const convo = calls.flatMap(([name, input], i) => turn(i + 1, name, input))
+  const convo = plainAnswers(calls.flatMap(([name, input], i) => turn(i + 1, name, input)))
   const later: Rules = [{ action: 'drop', eligible_after: '1 turn' }]
   const p: PartRules = { ...allCalls([{ action: 'drop', eligible_after: '0 requests' }]), file_read_calls: later, shell_calls: later, web_calls: later }
   assert.deepEqual(byKind(apply(convo, p, { requests: 20, turns: 1 })), { 'file_edit:drop': 1, 'tool:drop': 1 })
@@ -462,7 +509,7 @@ test('a Read sent as a pair of reminders in a user message is a tool call; the r
 test('a tool call is stubbed, then dropped, as the conversation goes on', () => {
   // Stub once a request is behind the latest completed one; drop 2 requests later.
   const p: PartRules = allCalls([{ action: 'stub', eligible_after: '1 request' }, { action: 'drop', eligible_after: '3 requests' }])
-  const convo = [1, 2, 3, 4].flatMap((n) => turn(n, 'Bash', { command: 'seq 1 3000' }))
+  const convo = plainAnswers([1, 2, 3, 4].flatMap((n) => turn(n, 'Bash', { command: 'seq 1 3000' })))
   // What the first call's result is in each request, and the completed requests
   // when that changed. Each request is trimmed at the clock it is sent at, or,
   // through the gate on a warm cache, at the applied clock, as the server does.
@@ -497,8 +544,9 @@ test('the gate applies every due transition at once', () => {
   // A clock the gate held back catches up in one batch: a call never sent
   // stubbed goes straight to dropped. One sent stubbed moves on to dropped.
   const p: PartRules = allCalls([{ action: 'stub', eligible_after: '3 requests' }, { action: 'drop', eligible_after: '4 requests' }])
-  assert.deepEqual(transitions(apply(msgs, p, { requests: 0, turns: 0 }), apply(msgs, p, { requests: 5, turns: 2 })), { 'file_edit:drop': 1 })
-  assert.deepEqual(transitions(apply(msgs, p, { requests: 4, turns: 2 }), apply(msgs, p, { requests: 5, turns: 2 })), { 'file_edit:drop': 1 })
+  const plain = plainAnswers(msgs)
+  assert.deepEqual(transitions(apply(plain, p, { requests: 0, turns: 0 }), apply(plain, p, { requests: 5, turns: 2 })), { 'file_edit:drop': 1 })
+  assert.deepEqual(transitions(apply(plain, p, { requests: 4, turns: 2 }), apply(plain, p, { requests: 5, turns: 2 })), { 'file_edit:drop': 1 })
 })
 
 test('a skill goes whole, with its body, once its turn is completed', () => {

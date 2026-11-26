@@ -20,7 +20,11 @@ const result = (name: string, k: number) => name + ' ' + 'x'.repeat(k * 4000)
 const A = result('REFUSE', 140)
 
 type Up = { url: string; bodies: string[]; refuse: { on: boolean }; close(): void }
-async function upstream(): Promise<Up> {
+// The upstream's refusal of a request body, if it refuses it: by default, one
+// holding call c without a's result as sent.
+type Refusal = (raw: string) => string | undefined
+const withoutA: Refusal = (raw) => (raw.includes('"id":"c"') && !raw.includes(A) ? 'refused for the test' : undefined)
+async function upstream(refusal: Refusal = withoutA): Promise<Up> {
   const bodies: string[] = []
   const refuse = { on: true }
   const server = createServer((req, res) => {
@@ -28,9 +32,10 @@ async function upstream(): Promise<Up> {
     req.on('data', (c) => (raw += c))
     req.on('end', () => {
       bodies.push(raw)
-      if (refuse.on && raw.includes('"id":"c"') && !raw.includes(A)) {
+      const why = refuse.on ? refusal(raw) : undefined
+      if (why) {
         res.writeHead(400, { 'content-type': 'application/json' })
-        return res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'refused for the test' } }))
+        return res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: why } }))
       }
       const usage = { input_tokens: Math.round(raw.length / 4), output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
       res.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -183,6 +188,49 @@ test('a proxy restarted ends a freeze', async () => {
     assert.equal(f.unfrozen, 'restart')
     assert.deepEqual(attempts(f), ['shaved 200'])
     assert.doesNotMatch(r.said, /shaving is paused/)
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})
+
+// A drop that joins one message's thinking straight to the next's, refused as
+// some routes refuse it, turns on the rule that stubs such calls instead
+// (trim.ts, thinkingJoins): the request is trimmed again under it and sent at
+// once, with no freeze, and later requests are trimmed under it from the start.
+test("a drop refused for joining thinking to thinking is trimmed again with such calls stubbed, and not frozen", async () => {
+  const joined: Refusal = (raw) => {
+    const ms = JSON.parse(raw).messages
+    const at = ms.findIndex((m: any, j: number) => m.role === 'assistant' && ms[j + 1]?.role === 'assistant' && m.content.at(-1)?.type === 'thinking' && ms[j + 1].content[0]?.type === 'thinking')
+    return at < 0 ? undefined : `messages.${at}.content.0: thinking or redacted_thinking blocks in the latest assistant message cannot be modified`
+  }
+  const up = await upstream(joined)
+  const p = await proxy(up.url)
+  // A step of a tool loop: thinking, then a call, then its result.
+  const step = (id: string, content: string) => [
+    { role: 'assistant', content: [{ type: 'thinking', thinking: 'which next', signature: `sig-${id}` }, { type: 'tool_use', id, name: 'Read', input: { file: id } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] },
+  ]
+  try {
+    const msgs: any[] = [text('user', 'do it'), ...step('a', A)]
+    assert.equal((await send(p, msgs)).status, 200)
+    msgs.push(...step('b', result('second', 5)))
+    assert.equal((await send(p, msgs)).status, 200)
+    // 3: a's call is due; dropping it joins a's thinking to b's: refused, then
+    // sent with a stubbed.
+    msgs.push(...step('c', result('third', 3)))
+    const third = await send(p, msgs)
+    assert.equal(third.status, 200)
+    assert.deepEqual(attempts(lastFreeze(p.dir)), ['shaved 400', 'shaved 200'])
+    const sent = up.bodies.at(-1)!
+    assert.ok(sent.includes('"id":"a"') && !sent.includes(A), 'a stubbed, not dropped')
+    assert.doesNotMatch(third.said, /shaving is paused/)
+    // 4: b's call is due too, and stubbed from the start.
+    msgs.push(...step('d', 'small'))
+    const count = up.bodies.length
+    assert.equal((await send(p, msgs)).status, 200)
+    assert.equal(up.bodies.length, count + 1, 'sent once')
+    assert.equal(joined(up.bodies.at(-1)!), undefined)
   } finally {
     p.child.kill()
     up.close()

@@ -693,7 +693,21 @@ The API constrains what can go:
   stubbed instead, whatever the policy's stub rules say: a stub moves no
   message;
 - a message whose only content is thinking keeps it, since an empty message is
-  refused. One left empty by dropped calls is removed.
+  refused. One left empty by dropped calls is removed;
+- the API joins assistant messages side by side, and on some routes refuses
+  a join that puts one message's thinking straight before the next's:
+  "thinking or redacted_thinking blocks in the latest assistant message cannot
+  be modified", in any turn. A call dropped after a message's thinking makes
+  that when the next assistant message starts with thinking. Seen on Opus,
+  Sonnet and Haiku 5.5 by a user on 2026-11-26, where a call dropped with its
+  thinking kept, or beside text, was allowed. Not reproduced through a Claude
+  subscription sign-in the same day: every such join was allowed, on all
+  three models. Thinking blocks side by side as the model wrote them are
+  always allowed. So such calls are dropped until the API refuses one; the
+  request is then trimmed again with them stubbed, as for a system message,
+  and sent at once, and they're stubbed from then on until the proxy restarts.
+  Stubbing them always would cost about 0.7% of the prompt tokens sent,
+  measured over 23 Claude Code conversations on a route that takes the join.
 
 Each conversation has an applied clock, saved in
 `proxy-data/state/<key>.json`: the completed requests and turns the policy was

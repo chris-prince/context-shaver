@@ -101,7 +101,9 @@ export type Applied = {
 //   skill's body beside its result. The drops are made together, then the
 //   messages checked against where the API takes a system message (README,
 //   "What it trims"). A pair whose drop leaves one out of place, the pair just
-//   before it or just after, is kept and stubbed instead.
+//   before it or just after, is kept and stubbed instead; so, once the API
+//   has refused one, are the pairs whose drop leaves a message's thinking
+//   beside the next one's (thinkingJoins).
 //   So a drop is only refused for what the drops around it actually leave.
 // - Dropped reasoning is the message's thinking, unless that would leave it
 //   empty: an empty message is refused. One left empty by dropped calls is
@@ -173,6 +175,13 @@ function newerTokens(msgs: readonly ApiMsg[], items: ReadonlyMap<string, Item>, 
   return out
 }
 
+// Whether the API has refused, since the proxy started, a drop that joined
+// one message's thinking straight to the next's. Most routes take that join,
+// so drops make it until one doesn't; the server sets this on that refusal
+// (JOINED) and sends the request again trimmed under it.
+export const thinkingJoins = { refused: false }
+export const JOINED = /thinking or redacted_thinking blocks in the latest assistant message cannot be modified/
+
 function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Conventions, thinking: Thinking): Applied {
   const items = new Map(itemsOf(msgs, conv).map((it) => [it.id, it]))
   const newer = newerTokens(msgs, items, c, thinking)
@@ -185,6 +194,20 @@ function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Con
       const i = out.origin[j]
       if (!['user', 'system'].includes(out.msgs[j - 1]?.role ?? 'user')) pairsOf(msgs[i - 1], undroppable)
       if (!['assistant', 'system', undefined].includes(out.msgs[j + 1]?.role)) pairsOf(msgs[i + 1], undroppable)
+    })
+    // The API joins assistant messages side by side, and on some routes
+    // refuses a join that puts one message's thinking straight before the
+    // next's (DESIGN.md, "The API constrains what can go"). A call dropped
+    // after a message's thinking, with the next assistant message starting
+    // with its own, makes that. Once the API has refused one (thinkingJoins),
+    // the calls from the first message to the second are kept and stubbed
+    // instead.
+    if (thinkingJoins.refused) out.msgs.forEach((m, j) => {
+      const next = out.msgs[j + 1]
+      if (m.role !== 'assistant' || next?.role !== 'assistant') return
+      const bs = blocks(m)
+      if (!isThinking(bs[bs.length - 1]) || !isThinking(blocks(next)[0])) return
+      for (let i = out.origin[j]; i < out.origin[j + 1]; i++) pairsOf(msgs[i], undroppable)
     })
     if (undroppable.size === n) return out
   }

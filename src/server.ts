@@ -43,7 +43,7 @@ import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textR
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
-import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
+import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, thinkingJoins, JOINED, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
 import { arcsPastEnd, chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
@@ -779,6 +779,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   let p: Prepared | undefined
   // The request prepared again, shaped as the last that worked (Frozen).
   let again: (() => Prepared | undefined) | undefined
+  // The request prepared again as first, under rules a refusal turned on.
+  let rejoin: (() => Prepared | undefined) | undefined
   // The conversation whose waiting commands are answered if this request's
   // response ends the turn, and the request as forwarded.
   let turnEnd: { key: string; body: Canonical; render: Wire['render'] } | undefined
@@ -854,6 +856,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
             console.error('shaver: frozen request not prepared:', err)
           }
         }
+        rejoin = () => {
+          try {
+            return prep(proto.canonical(JSON.parse(read.toString('utf8'))), false)
+          } catch (err) {
+            console.error('shaver: request not prepared again:', err)
+          }
+        }
         p = prep(c, false)
       }
     } catch (err) {
@@ -894,9 +903,24 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     let text = await up.text()
     let shape = shapeOf(p)
     attempts.push({ sent: shape, status: 400 })
+    // A drop refused for joining thinking to thinking turns on the rule that
+    // keeps such calls, stubbed, until the proxy restarts (thinkingJoins), and
+    // the request is trimmed again under it and sent.
+    if (p && !thinkingJoins.refused && JOINED.test(text)) {
+      thinkingJoins.refused = true
+      console.error(`${new Date().toISOString()} shaver: shaved request refused for ${p.key} for thinking joined to thinking; trimmed again keeping such calls, stubbed, and kept so until the proxy restarts`)
+      failed(400, text, { sent: shape })
+      const q = rejoin?.()
+      if (q) {
+        up = await send(q.body)
+        attempts.push({ sent: shapeOf(q), status: up.status })
+        p = q
+        if (up.status === 400) text = await up.text()
+      }
+    }
     // A shave refused is sent as the last that worked, if that differs, and
     // the conversation's shaving frozen (Frozen).
-    const q = p?.freeze.differs && p.freeze.mode !== 'frozen' ? again?.() : undefined
+    const q = up.status === 400 && p?.freeze.differs && p.freeze.mode !== 'frozen' ? again?.() : undefined
     if (p && q) {
       console.error(`${new Date().toISOString()} shaver: shaved request refused for ${p.key}, sent as the last that worked, shaving frozen (${p.freeze.gap} tokens a request not saved): ${errorShape(text)}`)
       failed(400, text, { sent: shape })
