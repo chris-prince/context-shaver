@@ -575,9 +575,8 @@ export const wholeSeedOf = (model: string, tools: unknown, system: unknown) => h
 // marked there is an explicit breakpoint (OpenAI's prompt_cache_breakpoint,
 // which the proxy puts on as an anchor), which looks up only the entry at its
 // own end, however far back.
-export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking, automatic: boolean | 'items' = false): Position[] {
+export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking, automatic: boolean | 'items' = false, unbound = unboundIn(msgs, thinking)): Position[] {
   let prefix = seed
-  const unbound = unboundIn(msgs, thinking)
   const pos: Position[] = msgs.flatMap((m) =>
     blocks(m).map((b, i, bs) => {
       prefix = hash(prefix + m.role + JSON.stringify(b, uncontrolled))
@@ -714,11 +713,18 @@ export type Decision = {
 // nothing cached both write everything, so advancing always pays. A request
 // with no breakpoints in its messages (a side request branched off the
 // conversation) reads nothing of them whatever is cached, so says nothing of
-// the cache: it never advances.
+// the cache: it never advances. Both prompts count as unbound only the
+// thinking already unbound before the move: thinking the move itself would
+// unbind keeps its tokens after it, so a move that throws away more of the
+// turn's reasoning doesn't look the better for it. After the move that sizes
+// the prompt a little high.
 export function decide(before: readonly ApiMsg[], after: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, model: Model, thinking: Thinking = new Map(), automatic = false, horizon = K): Decision {
   const M = writeCost(model, automatic)
-  const a = positionsOf(before, seed, thinking, counting(model, automatic))
-  const b = positionsOf(after, seed, thinking, counting(model, automatic))
+  const unbound = unboundIn(before, thinking)
+  const signatures = new Set([...unbound].map((bl) => bl.signature))
+  const stillUnbound = new Set(after.flatMap(blocks).filter((bl) => bl.type === 'thinking' && signatures.has(bl.signature)))
+  const a = positionsOf(before, seed, thinking, counting(model, automatic), unbound)
+  const b = positionsOf(after, seed, thinking, counting(model, automatic), stillUnbound)
   const sum = (ps: Position[]) => ps.reduce((n, p) => n + p.size, 0)
   const savedChars = sum(a) - sum(b)
   const [ra, rb] = [readThrough(a, live, model.lookback), readThrough(b, live, model.lookback)]

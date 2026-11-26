@@ -55,3 +55,17 @@ test('decide counts no saving for dropping thinking that was already unbound', (
   const live = new Set(positionsOf(before, 's', t).map((p) => p.prefix))
   assert.equal(decide(before, after, live, 's', modelOf('claude-opus-5-5'), t).savedChars, 0)
 })
+
+// A move that unbinds thinking saves only what it cuts, not the thinking:
+// stubbing a result before bound thinking (2000 tokens) saves the result's
+// characters, as before unbound thinking counted nothing.
+test('decide counts no saving for thinking a move itself unbinds', () => {
+  const first = [ask('one'), result('x'.repeat(4000))]
+  const t = recorded(first)
+  const marked = (msgs: ApiMsg[]): ApiMsg[] => msgs.map((m, i) => (i === msgs.length - 1 ? { ...m, content: [{ ...(m.content as any[])[0], cache_control: { type: 'ephemeral' } }] } : m))
+  const before = marked([...first, reply, ask('two')])
+  const after = marked([ask('one'), result('[stub]'), reply, ask('two')])
+  const live = new Set(positionsOf(before, 's', t).map((p) => p.prefix))
+  const cut = JSON.stringify(result('x'.repeat(4000)).content[0]).length - JSON.stringify(result('[stub]').content[0]).length
+  assert.equal(decide(before, after, live, 's', modelOf('claude-opus-5-5'), t).savedChars, cut)
+})
