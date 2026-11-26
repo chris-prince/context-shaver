@@ -51,7 +51,28 @@ repo and commit it runs from. One from another repo is restarted from this one,
 keeping its logging in the same way. One from this repo at another commit (a
 pull without `--update`, say) is left running, since a restart would cut off a
 reply another session is streaming, with a notice to run `--restart` or
-`--update`. Uncommitted edits don't count. Whether or not requests are
+`--update`. Uncommitted edits don't count.
+
+`--when-idle`, with `--restart`, `--update` or `--stop`, has the old proxy
+drain first, so no reply or summary fork is cut off: it answers new requests
+`503` with `Retry-After: 5`, starts no summary fork, and exits once nothing it
+started is still open; then the new one starts. Claude Code and Codex both
+retried through a 3-minute drain this way (Codex gave up after 95s with
+`Retry-After: 1`). A proxy still busy after 2 minutes is stopped anyway, and
+one from before draining is stopped at once. Without an action, `--when-idle`
+restarts a proxy at another commit of this repo that way, rather than warning.
+A request is open until the proxy is done with it, so one whose client left
+mid-reply is still read to its end and journaled before the exit.
+
+`SHAVER_PRELAUNCH` names a program `claude-via-shaver` and `codex-via-shaver`
+run first, as `"$SHAVER_PRELAUNCH" --prelaunch claude` (or `codex`), so a
+checkout that sessions launch from through an alias or link can update
+itself: the program may move the checkout and run `run-proxy --when-idle`,
+and a launcher whose checkout it moved runs again, once, from the new one. The
+launch waits for it, up to 2 minutes while another session finishes a reply,
+so it should return quickly otherwise; one that fails fails no launch.
+
+Whether or not requests are
 logged, every 4xx or 5xx answer from the upstream goes to `proxy.log` by its
 shape: the error's type, code and the parameter it names, and its length. Its
 message stays out, since it can quote the request; with requests logged, the

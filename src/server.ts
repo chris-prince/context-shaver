@@ -240,7 +240,7 @@ const latestOf = (key: string) => currentOf(key).stats
 // answered.
 // Why an answered request sent no summary fork: summaryForkOf's reasons, with
 // the threshold the turns fell short of, or the proxy's own.
-type Skip = (ForkSkip & { threshold?: number }) | { skip: 'side-request' | 'no-breakpoint' | 'in-flight' | 'turn-continues' }
+type Skip = (ForkSkip & { threshold?: number }) | { skip: 'side-request' | 'no-breakpoint' | 'in-flight' | 'turn-continues' | 'draining' }
 type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[]; freeze: Freeze; predicted: Predicted; refusals: Refusals }
 
 // The cache read the proxy predicts for a request, in message characters out
@@ -779,15 +779,31 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     console.error('shaver: shutting down, as asked')
     return void res.end('stopping\n', () => process.exit(0))
   }
+  // bin/run-proxy --when-idle asks this instead, to restart without cutting
+  // off a reply or a summary fork; asked again, it's still the one drain.
+  if (req.method === 'POST' && url === '/shaver/shutdown' && req.headers['x-shaver'] === 'drain') {
+    if (!draining) console.error(`shaver: draining, as asked: ${open - 1} other requests open, ${summaryForking.size} summary forks running`)
+    draining = true
+    return void res.end('draining\n')
+  }
   // bin/run-proxy asks this to tell whether the proxy on its port runs from its
   // repo (one from elsewhere is restarted, keeping logging) and from its commit.
   if (req.method === 'GET' && url === '/shaver/procinfo' && req.headers['x-shaver'] === 'procinfo') {
-    return void res.end(`shaver repo: ${path.resolve(import.meta.dirname, '..')}\nshaver commit: ${commit}\nshaver logging: ${a['log-step-events'] ? 'on' : 'off'}\n`)
+    return void res.end(`shaver repo: ${path.resolve(import.meta.dirname, '..')}\nshaver commit: ${commit}\nshaver logging: ${a['log-step-events'] ? 'on' : 'off'}\nshaver drains: yes\n`)
   }
   // A WebSocket a client tries first (Codex's and OpenCode's OpenAI providers)
   // is refused with 426, which sends it straight to HTTP: Codex retried a
   // refused one for ~8s first. Codex over WebSockets sends only what's new.
   if (req.headers.upgrade) return void res.writeHead(426).end()
+  // While draining, a request is turned away to be retried, by when the proxy
+  // replacing this one is usually up. Codex waits exactly the Retry-After a
+  // fixed number of times, so 1s ran out after 95s; 5s outlasted a 3-minute
+  // drain in both Codex and Claude Code, which retries for about 3 minutes
+  // whatever it says.
+  if (draining) {
+    res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5', connection: 'close' })
+    return void res.end(proto.error(503, 'shaver proxy: restarting; retry shortly'))
+  }
   if (passthrough) return relay(req, res, received, original, upstream, url, proto, h)
   let p: Prepared | undefined
   // The request prepared again, shaped as the last that worked (Frozen).
@@ -1174,7 +1190,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
   // Where the protocol gives the reply, a fork asks as the user's next prompt
   // would, after a reply that ended the turn; so not while the turn goes on.
-  const check = p.summaryFork && (summaryForking.has(p.key) ? { skip: 'in-flight' as const } : reply?.ended === false ? { skip: 'turn-continues' as const } : p.summaryFork(textTokens(p.sent, next.tokens)))
+  const check = p.summaryFork && (draining ? { skip: 'draining' as const } : summaryForking.has(p.key) ? { skip: 'in-flight' as const } : reply?.ended === false ? { skip: 'turn-continues' as const } : p.summaryFork(textTokens(p.sent, next.tokens)))
   const due = check && !('skip' in check) ? check : undefined
   save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList, frozen: p.freeze.frozen, ...p.refusals })
   // A reply with no text leaves the instructions where they'd go without one.
@@ -1265,6 +1281,17 @@ function answeredBare(key: string, b: BareLine, log?: { dir: string; line: Recor
 
 // The conversations with a summary fork under way, which get no second one.
 const summaryForking = new Set<string>()
+// Requests handle is still on, and whether a drain was asked for
+// (bin/run-proxy --when-idle): then new requests are turned away (handle), no
+// summary fork starts, and the proxy exits once no request is open and no
+// fork runs, for run-proxy to start the one replacing it.
+let open = 0
+let draining = false
+function drained(): void {
+  if (!draining || open || summaryForking.size) return
+  console.error('shaver: drained, exiting')
+  process.exit(0)
+}
 
 // An error from a fork, marked with the step it failed at, and the response's
 // body when it had one.
@@ -1435,6 +1462,7 @@ async function summarize(p: Prepared, f: SummaryFork, target: string, headers: R
     if (logDir) writeLine(logDir, { event: 'summary', time, outcome: 'failed', stage: at, ...asked, ms: Date.now() - began, stop, error: error.slice(0, 4000), ...(body !== undefined && { answer: savedAnswer(logDir, time, body) }) })
   } finally {
     summaryForking.delete(key)
+    drained()
   }
 }
 
@@ -1654,6 +1682,10 @@ async function linesFor(proto: Protocol, h: Harness | undefined, key: string, bo
 }
 
 const server = createServer((req, res) => {
+  // A request is open until handle is done with it and its answer has gone
+  // out: one its client left is still read to its end and journaled (handle).
+  open++
+  const closed = new Promise((ok) => res.on('close', ok))
   handle(req, res).catch((err) => {
     if (abortedBy(err)) return res.end()
     console.error('shaver:', err)
@@ -1661,6 +1693,10 @@ const server = createServer((req, res) => {
       res.writeHead(502, { 'content-type': 'application/json' })
       res.end(protocolOf((req.url ?? '/').replace(/^\/via\/[^/?#]*/, '')).error(502, `shaver proxy: ${err}`))
     } else res.end()
+  }).finally(async () => {
+    await closed
+    open--
+    drained()
   })
 })
 // With port 0 the OS picks a free port as it binds; the line gives the one

@@ -10,19 +10,26 @@
 # upstream first, and restarts the proxy if it then runs another commit. With
 # --log, the proxy it starts logs every request under proxy-data/logs/; with
 # --no-log, it doesn't. With neither, a proxy that replaces a running one keeps
-# that one's logging. It runs the proxy on Node 24 or newer, through
+# that one's logging. With --when-idle, a proxy being stopped drains first: it
+# turns new requests away to be retried (503), finishes the replies and
+# summary forks it has, and exits, then the new one starts; one still busy
+# after 2 minutes is stopped anyway. --when-idle alone also restarts a proxy
+# that runs another commit of this repo once it has drained, rather than only
+# warning, for a SHAVER_PRELAUNCH program to run after updating the checkout
+# (claude-via-shaver). It runs the proxy on Node 24 or newer, through
 # bin/node-wrapper, which installs one if need be.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 port=${SHAVER_PORT:-18787}
-action= log=() logset=
+action= log=() logset= idle= stale=
 for arg; do
   case $arg in
     --restart | --stop | --update) action=$arg ;;
+    --when-idle) idle=1 ;;
     --log) log=(--log-step-events) logset=1 ;;
     --no-log) log=() logset=1 ;;
-    *) echo "usage: run-proxy [--restart | --stop | --update] [--log | --no-log]" >&2; exit 2 ;;
+    *) echo "usage: run-proxy [--restart | --stop | --update] [--when-idle] [--log | --no-log]" >&2; exit 2 ;;
   esac
 done
 # Fetch and fast-forward rather than pull, so no pull.* setting changes what
@@ -41,10 +48,11 @@ if [[ $action == --update ]]; then
 fi
 # True if anything accepts a connection, through bash's own /dev/tcp (no nc).
 up() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
-# Asks the proxy to exit (server.ts), so no lsof is needed to find its PID.
+# Asks the proxy to exit (server.ts), so no lsof is needed to find its PID; with
+# drain, once it has finished what it's doing.
 stop() {
   (exec 3<>"/dev/tcp/127.0.0.1/$port" &&
-    printf 'POST /shaver/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nx-shaver: shutdown\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' >&3 &&
+    printf 'POST /shaver/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nx-shaver: %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' "${1:-shutdown}" >&3 &&
     while read -r -t 5 _ <&3; do :; done) 2>/dev/null || true
 }
 # What the proxy on the port says about itself (server.ts), as lines of
@@ -72,9 +80,11 @@ if [[ -z $action ]] && up; then
     action=--restart
   # This repo's proxy, started before the checkout moved (a pull without
   # --update, say): --update restarts it, and otherwise it's left running, since
-  # a restart would cut off a reply another session is streaming.
+  # a restart would cut off a reply another session is streaming; with
+  # --when-idle it's restarted once it has drained.
   elif ran=$(sed -n 's/^commit: //p' <<<"$info"); [[ $ran != "$(git -C "$repo" rev-parse HEAD 2>/dev/null)" ]]; then
     if [[ -n ${updating-} ]]; then action=--restart
+    elif [[ -n $idle ]]; then action=--restart stale=1
     else
       # BACKCOMPAT(2026-10-28)
       #   Before: a running proxy didn't report its commit.
@@ -89,7 +99,21 @@ fi
 # A proxy that replaces a running one keeps its logging unless told otherwise.
 [[ -n $action && -z $logset && $(sed -n 's/^logging: //p' <<<"$info") == on ]] && log=(--log-step-events)
 if [[ -n $action ]] && up; then
-  stop
+  # BACKCOMPAT(2026-11-25)
+  #   Before: a running proxy couldn't drain.
+  #   Shim: --when-idle stops such a proxy at once, as --restart does.
+  #   Remove when: upgrading from before 2026-11-25 is no longer supported.
+  #   Only a proxy still running from before then lacks "drains: yes".
+  if [[ -n $idle ]] && grep -qx 'drains: yes' <<<"$info"; then
+    verb=Restarting
+    [[ $action == --stop ]] && verb=Stopping
+    [[ -n $stale ]] && verb=Updating
+    echo "$verb context-shaver. Waiting for current requests to drain..." >&2
+    stop drain
+    for _ in $(seq 240); do up || break; sleep 0.5; done
+    ! up || echo "run-proxy: the proxy on port $port still had requests open after 2 minutes; stopping it anyway" >&2
+  fi
+  up && stop
   for _ in $(seq 50); do up || break; sleep 0.1; done
   ! up || { echo "run-proxy: the proxy on port $port did not stop" >&2; exit 1; }
 fi

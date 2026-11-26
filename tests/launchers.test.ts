@@ -174,6 +174,37 @@ test('claude-via-shaver: ENABLE_TOOL_SEARCH is true where unset or empty, and a 
   }
 })
 
+// SHAVER_PRELAUNCH: run first, once, by its name for the launch; when it moves
+// the checkout, the launcher runs again from it, without running it again.
+
+test('claude-via-shaver: a prelaunch that moves the checkout is run once, then the launcher runs again from the new checkout', () => {
+  const root = checkout(['claude-via-shaver', 'node-wrapper'])
+  const git = (...args: string[]) => spawnSync('git', ['-C', path.join(root, 'co'), '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' })
+  git('init', '-q')
+  git('commit', '-q', '--allow-empty', '-m', 'pinned before')
+  const ran = path.join(root, 'prelaunched')
+  const prelaunch = script(path.join(root, 'prelaunch'), `echo "$*" >>'${ran}'\ngit -C '${root}/co' -c user.name=t -c user.email=t@t commit -q --allow-empty -m pinned`)
+  const claude = script(path.join(root, 'claude/claude'), 'echo "ran, SHAVER_PRELAUNCHED=${SHAVER_PRELAUNCHED-unset}"')
+  const { status, out } = run(root, 'claude-via-shaver', [], { SHAVER_REAL_CLAUDE_LOCATIONS: claude, SHAVER_PRELAUNCH: prelaunch })
+  assert.equal(status, 0)
+  assert.deepEqual(out, ['ran, SHAVER_PRELAUNCHED=unset'])
+  assert.deepEqual(fs.readFileSync(ran, 'utf8').trimEnd().split('\n'), ['--prelaunch claude'])
+})
+
+test('codex-via-shaver: a prelaunch that moves the checkout is run once, then the launcher runs again from the new checkout', () => {
+  const root = checkout(['codex-via-shaver', 'node-wrapper'])
+  const git = (...args: string[]) => spawnSync('git', ['-C', path.join(root, 'co'), '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' })
+  git('init', '-q')
+  git('commit', '-q', '--allow-empty', '-m', 'pinned before')
+  const ran = path.join(root, 'prelaunched')
+  const prelaunch = script(path.join(root, 'prelaunch'), `echo "$*" >>'${ran}'\ngit -C '${root}/co' -c user.name=t -c user.email=t@t commit -q --allow-empty -m pinned`)
+  const codex = script(path.join(root, 'codex/codex'), 'echo "ran, SHAVER_PRELAUNCHED=${SHAVER_PRELAUNCHED-unset}"')
+  const { status, out } = run(root, 'codex-via-shaver', [], { SHAVER_REAL_CODEX_LOCATIONS: codex, SHAVER_PRELAUNCH: prelaunch })
+  assert.equal(status, 0)
+  assert.deepEqual(out, ['ran, SHAVER_PRELAUNCHED=unset'])
+  assert.deepEqual(fs.readFileSync(ran, 'utf8').trimEnd().split('\n'), ['--prelaunch codex'])
+})
+
 // The loop guard: with no LOCATIONS, the harness is `codex` (or `claude`) as
 // the login shell runs it. Here $SHELL stands in for that shell, running a
 // wrapper that runs the launcher again, as a child or by exec.

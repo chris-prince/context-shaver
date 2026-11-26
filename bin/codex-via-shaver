@@ -27,6 +27,20 @@ me=$(readlink -f "$0")
 bin=$(dirname "$me")
 die() { echo "codex-via-shaver: $*" >&2; exit 1; }
 
+# SHAVER_PRELAUNCH names a program this runs first, as
+# `"$SHAVER_PRELAUNCH" --prelaunch codex`, so a launch through an alias or link
+# to this checkout can update it: it may move the checkout and restart a proxy
+# at another commit (run-proxy --when-idle). The launch waits for it, so it
+# should return quickly. After a move this runs again, once, from the new
+# checkout. A prelaunch that fails fails no launch.
+if [[ -n ${SHAVER_PRELAUNCHED:-} ]]; then
+  unset SHAVER_PRELAUNCHED
+elif [[ -n ${SHAVER_PRELAUNCH:-} && ${1:-} != --stand-in ]]; then
+  head=$(git -C "$bin" rev-parse HEAD 2>/dev/null) || head=
+  "$SHAVER_PRELAUNCH" --prelaunch codex </dev/null || true
+  [[ $(git -C "$bin" rev-parse HEAD 2>/dev/null || :) == "$head" ]] || SHAVER_PRELAUNCHED=1 exec "$me" "$@"
+fi
+
 if [[ -n ${SHAVER_REAL_CODEX_LOCATIONS:-} ]]; then
   # The first entry with a match wins; within a glob, the newest match.
   real=
