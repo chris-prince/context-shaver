@@ -13,3 +13,10 @@ Before converting chars to tokens, look for a logged count. For example, each
 summary's real `usage.output_tokens` is in the `"event":"summary"` lines of
 `step_events.jsonl`; estimating summary sizes from chars at 0.39 tokens/char
 once missed the real ≈0.47 (thinking included).
+
+## Commit messages
+
+1. One-line summary of what's new, in present tense ("Fixes …", "Adds …").
+2. A description: the old state first, then the new state or changes made.
+3. Optionally, a short list of key side points: impact numbers, nuances,
+   caveats.
