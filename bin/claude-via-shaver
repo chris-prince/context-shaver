@@ -2,7 +2,7 @@
 # Runs Claude Code through the context-shaver proxy, starting the proxy first if
 # nothing is listening on its port (bin/run-proxy). Arguments are passed to
 # Claude Code. Claude Code turns tool search off behind a proxy unless told the
-# proxy forwards it; this one does.
+# proxy forwards it; this one does, where ENABLE_TOOL_SEARCH isn't set already.
 #
 # An ANTHROPIC_BASE_URL already set, such as a company gateway, is kept as the
 # proxy's upstream for this session, named in the path (src/via.ts); one
@@ -95,5 +95,11 @@ else
 fi
 # The hint headers say what kind each request is (x-claude-code-request-class),
 # so the proxy tells side requests apart without reading their wording.
-export ANTHROPIC_BASE_URL ENABLE_TOOL_SEARCH=true CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
+export ANTHROPIC_BASE_URL CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
+# Claude Code turns its tool search off behind a proxy unless ENABLE_TOOL_SEARCH
+# is set, so it is set to true where unset, as Claude Code is without one. A
+# value already set is kept, so Claude Code searches for tools as it would
+# without the proxy; shaver info warns when the search is off, as every tool
+# is then sent in full and shaver can defer none.
+[[ -n ${ENABLE_TOOL_SEARCH:-} ]] || export ENABLE_TOOL_SEARCH=true
 exec "${real[@]}" "$@"

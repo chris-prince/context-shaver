@@ -57,6 +57,10 @@ export type Sent = {
   // out; null where it won't. None where that can't be said (models.ts's
   // figure stands) or before 2026-11-06.
   compactAt?: number | null
+  // Claude Code's ENABLE_TOOL_SEARCH as the user had it when launched, ''
+  // where unset (launch-vals.ts); none where not started by the launcher, or
+  // before 2026-11-25.
+  toolSearchEnv?: string
   // The context window its client works from, and whether that is guessed
   // from the model (autocompact.ts); none before 2026-11-06.
   window?: number
@@ -98,8 +102,10 @@ export type Stats = {
   provider?: string
   // The latest request's Sent.ttl; none before 2026-10-22.
   ttl?: number
-  // The latest request's Sent.compactAt, window and windowGuessed.
+  // The latest request's Sent.compactAt, toolSearchEnv, window and
+  // windowGuessed.
   compactAt?: number | null
+  toolSearchEnv?: string
   window?: number
   windowGuessed?: boolean
   // Whether the latest request was a prompt suggestion, which counts as no
@@ -422,6 +428,7 @@ export function observe(prev: Stats | undefined, r: Sent, inputTokens: number, o
     ...(r.provider && { provider: r.provider }),
     ...(r.ttl && { ttl: r.ttl }),
     ...(r.compactAt !== undefined && { compactAt: r.compactAt }),
+    ...(r.toolSearchEnv !== undefined && { toolSearchEnv: r.toolSearchEnv }),
     ...(r.window && { window: r.window }),
     ...(r.windowGuessed && { windowGuessed: true }),
     suggestion: !!r.suggestion,

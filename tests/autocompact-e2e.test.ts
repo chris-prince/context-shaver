@@ -62,7 +62,7 @@ async function until(done: () => boolean, what: string) {
 // One turn of two tool calls through the proxy, with the setting (its two
 // counts in tokens) or without it: the messages upstream got last, and the
 // step events.
-async function run(ft: { proximity: number; saves?: number } | undefined, compacting = false, launched = false): Promise<{ last: any[]; events: any[] }> {
+async function run(ft: { proximity: number; saves?: number } | undefined, compacting = false, launched = false): Promise<{ last: any[]; events: any[]; journal: any[] }> {
   const dir = mkdtempSync(path.join(tmpdir(), 'autocompact-e2e-'))
   const up = await upstream()
   const policy = path.join(dir, 'policy.json')
@@ -86,7 +86,7 @@ async function run(ft: { proximity: number; saves?: number } | undefined, compac
     const alt = path.join(dir, 'alt')
     mkdirSync(alt)
     writeFileSync(path.join(alt, 'settings.json'), JSON.stringify({ autoCompactWindow: 210_000 }))
-    base = `/harness/claude/launch-vals/${save(dir, { CLAUDE_CONFIG_DIR: alt })}`
+    base = `/harness/claude/launch-vals/${save(dir, { CLAUDE_CONFIG_DIR: alt, ENABLE_TOOL_SEARCH: 'auto:10' })}`
   }
   const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up.url, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'], env })
   let err = ''
@@ -113,7 +113,9 @@ async function run(ft: { proximity: number; saves?: number } | undefined, compac
       history.push({ role: 'assistant', content })
       if (content[0].type === 'tool_use') history.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: content[0].id, content: String(k).repeat(BIG) }, { type: 'text', text: 'n'.repeat(NOTE) }, ...(compacting && k === 1 ? [ASK] : [])] })
     }
-    return { last: up.asked.at(-1)!, events: lines(dir) }
+    const state = path.join(dir, 'state')
+    const journal = readdirSync(state).filter((f) => f.endsWith('.journal.jsonl')).flatMap((f) => readFileSync(path.join(state, f), 'utf8').split('\n').slice(0, -1).map((l) => JSON.parse(l)))
+    return { last: up.asked.at(-1)!, events: lines(dir), journal }
   } catch (e) {
     throw new Error(`${e}\n${err}`)
   } finally {
@@ -174,4 +176,10 @@ test("with force_trim_before_autocompact, the point follows the launch values th
   const { events } = await run({ proximity: 20_000 }, false, true)
   const [line] = events.filter((l) => l.event === 'autocompact-trim')
   assert.equal(line?.at, 177_000, JSON.stringify(events.filter((l) => l.event === 'request').map((l) => l.compactAt)))
+})
+
+test("the user's ENABLE_TOOL_SEARCH, from the launch values, is journaled once, and not without them", async () => {
+  const set = (journal: any[]) => journal.filter((l) => l.set && 'toolSearchEnv' in l.set).map((l) => l.set.toolSearchEnv)
+  assert.deepEqual(set((await run(undefined, false, true)).journal), ['auto:10'])
+  assert.deepEqual(set((await run(undefined)).journal), [])
 })

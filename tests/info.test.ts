@@ -56,6 +56,13 @@ test("shaver info's costs are the session's, with a note first saying what they 
   const warned = infoText('k', 'v', s, false, cost(1), sums, 0, { valid: 0, missed: 2, ignoredMarks: 1 }, others)
   const one = (t: string) => t.slice(t.indexOf('WARNINGS')).replace(/\n    /g, ' ')
   assert.match(one(warned), /^WARNINGS\n\n  - Model not known to shaver: m Costs omit 1 conv, which may have been trimmed inefficiently\.\n  - Since shaver started, the journal missed 2 requests; see proxy\.log\.\n  - The server ignored the explicit breakpoints on 1 request, .*; see scripts\/audit\.ts\.\n```$/)
+  // Claude Code's tool search being off is warned of, last, with the user's
+  // value as journaled: as set, unset, or unknown without the launcher.
+  const off = (v?: string) => one(infoText('k', 'v', { ...s, ...(v !== undefined && { toolSearchEnv: v }) }, false, cost(1), sums, 0, { valid: 0, searchOff: true }, others))
+  assert.match(off('auto:10'), /\n  - Tool deferral disabled\. Set ENABLE_TOOL_SEARCH=true and restart Claude to fix it\. Your current value is: auto:10\n```$/)
+  assert.match(off(''), /Your current value is: unset\n```$/)
+  assert.match(off(), /Your current value is: unknown\n```$/)
+  assert.doesNotMatch(warned, /ENABLE_TOOL_SEARCH/)
   // Without a cost, only the session's own missing price is warned of.
   assert.match(one(infoText('k', 'v', s, false, undefined, sums, 0, { valid: 0 }, others)), /^WARNINGS\n\n  - Model not known to shaver: m Costs aren't shown, and shaver may trim inefficiently!\n```$/)
   // The breakdown and speedup are the session's too: the summaries' spend

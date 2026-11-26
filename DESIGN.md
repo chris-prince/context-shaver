@@ -13,11 +13,17 @@ then runs `claude` with `ANTHROPIC_BASE_URL` pointing at
 it. The proxy is left running for later sessions, with its output in
 `proxy-data/proxy.log`. It starts the proxy with the repo's `policy.json` (see
 [Policy](#policy)), and with logging off; to log (see [Logs](#logs)), start the
-proxy first with `bin/run-proxy --log`. It also sets `ENABLE_TOOL_SEARCH=true`,
-replacing any value already set: Claude Code turns its tool search off when the
-base URL isn't Anthropic's, and `auto` or `auto:N` keeps it off until the tools
-reach a share of the context window. Either way every tool's definition goes on
-every request (about 26k more tokens).
+proxy first with `bin/run-proxy --log`. It also sets `ENABLE_TOOL_SEARCH=true`
+where it isn't set: Claude Code turns its tool search off when the base URL
+isn't Anthropic's, and every tool's definition then goes on every request
+(about 26k more tokens). A value already set is kept, so Claude Code searches
+for tools as it would without the proxy. `auto:N` turns the search on only if
+the tools it could defer reach N% of the context window, decided when a
+conversation starts and kept for it, so on a 1M window `auto:10` keeps it off.
+With the search off, shaver can defer no tools either; `shaver info` warns of
+it. The value as the user had it (`''` where unset) goes in the launch values,
+and each conversation's journal records it as `toolSearchEnv`, logging on or
+off.
 
 If the proxy can't be started (Node can't be installed, say, or its port is
 taken by something else), `claude-via-shaver` says so, pauses 3 seconds for it
@@ -474,7 +480,7 @@ Write) or that the model must see to invoke (Skill). Of the older
 forms, a flat `tool_list` or `tools_not_deferred` (tools to keep with every
 other deferred) becomes Claude Code's rules, since only it deferred tools then,
 and a rule's `defer`, true or false, its action. With tool search
-off (no `ENABLE_TOOL_SEARCH` on Claude Code) nothing is deferred. Changing the
+off (on Claude Code, an `ENABLE_TOOL_SEARCH` that keeps it off) nothing is deferred. Changing the
 rules rewrites the cache of open sessions once.
 
 `shaver optimize` offers tool rules before the skill lines: the policy's own

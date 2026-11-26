@@ -1,6 +1,7 @@
 // What a harness was launched with that says where it compacts
 // (autocompact.ts), as its launcher sees it: the environment variables that
-// bear on it and, for Codex, the -p and -c values that do. The proxy can't
+// bear on it and, for Codex, the -p and -c values that do; and for Claude
+// Code, its ENABLE_TOOL_SEARCH, set or not. The proxy can't
 // read them from its own environment, as it is a long-running process another
 // launcher may have started, and a wrapper the launcher stands in for may have
 // set them for this harness alone.
@@ -43,6 +44,11 @@ export function launchVals(harness: string, env: Record<string, string | undefin
   }
   // Where the harness's project settings are, for those that read them.
   if (harness === 'claude' || harness === 'opencode') vals.cwd = cwd
+  // Claude Code's ENABLE_TOOL_SEARCH as the user had it, before the launcher
+  // sets it where unset, so a session's tool search can be traced later
+  // (stats.ts, toolSearchEnv): '' where unset or empty, which the launcher
+  // treats alike.
+  if (harness === 'claude') vals.ENABLE_TOOL_SEARCH = env.ENABLE_TOOL_SEARCH ?? ''
   if (harness === 'codex') {
     Object.assign(vals, codexFlags(args))
     // Codex reads a -c catalog path relative to where it was started.

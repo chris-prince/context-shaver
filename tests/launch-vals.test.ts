@@ -11,7 +11,10 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'launch-vals-'))
 
 test('only the variables that bear on compaction are kept, and only those set', () => {
   const env = { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '500000', CLAUDE_CONFIG_DIR: '/c', DISABLE_AUTO_COMPACT: '', ANTHROPIC_API_KEY: 'k', CODEX_HOME: '/x' }
-  assert.deepEqual(launchVals('claude', env, [], '/w'), { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '500000', CLAUDE_CONFIG_DIR: '/c', cwd: '/w' })
+  assert.deepEqual(launchVals('claude', env, [], '/w'), { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '500000', CLAUDE_CONFIG_DIR: '/c', cwd: '/w', ENABLE_TOOL_SEARCH: '' })
+  // Claude Code's ENABLE_TOOL_SEARCH is kept as the user had it, unset as ''.
+  assert.equal(launchVals('claude', { ENABLE_TOOL_SEARCH: 'auto:10' }, [], '/w').ENABLE_TOOL_SEARCH, 'auto:10')
+  assert.equal(launchVals('codex', { ENABLE_TOOL_SEARCH: 'auto:10' }, [], '/w').ENABLE_TOOL_SEARCH, undefined)
   assert.deepEqual(launchVals('codex', env, [], '/w'), { CODEX_HOME: '/x' })
   assert.deepEqual(launchVals('other', env, [], '/w'), {})
   // OpenCode reads these two relative to where it was started.

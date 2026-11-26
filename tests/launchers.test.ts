@@ -159,6 +159,21 @@ test('SHAVER_REAL_CODEX_LOCATIONS: with no match, the launch stops and says so',
   assert.match(err, /has no executable Codex/)
 })
 
+// claude-via-shaver: ENABLE_TOOL_SEARCH is set to true only where unset; a
+// value already set is kept, with nothing said.
+
+test('claude-via-shaver: ENABLE_TOOL_SEARCH is true where unset or empty, and a value already set is kept, with nothing said', () => {
+  const root = checkout(['claude-via-shaver', 'node-wrapper'])
+  const claude = script(path.join(root, 'claude/claude'), 'printf "%s\\n" "$ENABLE_TOOL_SEARCH"')
+  const ran = (env: Record<string, string>) => run(root, 'claude-via-shaver', [], { SHAVER_REAL_CLAUDE_LOCATIONS: claude, ...env })
+  for (const [given, sent] of [[undefined, 'true'], ['', 'true'], ['true', 'true'], ['1', '1'], ['auto:10', 'auto:10'], ['auto', 'auto'], ['false', 'false']] as const) {
+    const { status, out, err } = ran(given === undefined ? {} : { ENABLE_TOOL_SEARCH: given })
+    assert.equal(status, 0)
+    assert.deepEqual(out, [sent], `given ${given}`)
+    assert.equal(err, '', `given ${given}`)
+  }
+})
+
 // The loop guard: with no LOCATIONS, the harness is `codex` (or `claude`) as
 // the login shell runs it. Here $SHELL stands in for that shell, running a
 // wrapper that runs the launcher again, as a child or by exec.

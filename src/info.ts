@@ -155,7 +155,13 @@ const sidesOf = (others: Other[]) => others.reduce((n, o) => n + (o.sides ?? 0),
 // What the proxy knows that the state files don't: the summary records that
 // still fit the messages, and the requests no journal line was written for.
 // Without a running proxy, no summary fork is in flight and none were missed.
-export type Live = { valid: number; inFlight?: boolean; missed?: number; ignoredMarks?: number }
+// `searchOff`: Claude Code's tool search is off on this request, so it sends
+// every tool in full and none can be deferred.
+export type Live = { valid: number; inFlight?: boolean; missed?: number; ignoredMarks?: number; searchOff?: boolean }
+
+// The user's ENABLE_TOOL_SEARCH as journaled (stats.ts, toolSearchEnv):
+// unset, or unknown where Claude Code wasn't started by the launcher.
+const toolSearchValue = (v: string | undefined) => (v === undefined ? 'unknown' : v === '' ? 'unset' : v)
 
 // `shaver info`'s text: the stats, or with none journaled yet, `estimated`
 // ones; the cost with the summary forks' spend, summed over the session
@@ -180,6 +186,7 @@ export function infoText(key: string, version: string, s: Stats, estimated: bool
     ...(c ? unpricedOf(others) : []),
     ...(live.missed ? [`Since shaver started, the journal missed ${counted(live.missed, 'request')}; see proxy.log.`] : []),
     ...(live.ignoredMarks ? [`The server ignored the explicit breakpoints on ${counted(live.ignoredMarks, 'request')}, reading the cache only as far as without them; see scripts/audit.ts.`] : []),
+    ...(live.searchOff ? [`Tool deferral disabled. Set ENABLE_TOOL_SEARCH=true and restart Claude to fix it. Your current value is: ${toolSearchValue(s.toolSearchEnv)}`] : []),
   ]
   const text = render(s, key, estimated, session, forks, noteOf(others), elsewhereOf(others, s), warnings)
   return '```\n' + `Shaver Version: ${version}\n` + text + '\n```'

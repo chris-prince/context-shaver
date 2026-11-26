@@ -420,6 +420,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   described.defs.shaves = { tools: hash(JSON.stringify(toolRules ?? [])), skills: hash(JSON.stringify(skillList?.rules ?? [])) }
   if (marked) described.ttl = marked
   if (ac) described.compactAt = ac.at
+  if (req.launch?.ENABLE_TOOL_SEARCH !== undefined) described.toolSearchEnv = req.launch.ENABLE_TOOL_SEARCH
   if (ac?.window) described.window = ac.window
   if (ac?.guessed) described.windowGuessed = true
   if (covers) described.covers = covers
@@ -528,7 +529,8 @@ function stats(proto: Protocol, h: Harness | undefined, key: string, body: Canon
   // `shaver optimize`'s requests are one-time work, so they aren't counted.
   const sums = loadSummaries(key)
   const valid = validChain(sums.chain, sent.messages, idsOf(key, sent.messages, false).turns).length
-  const live = { valid, inFlight: summaryForking.has(key), missed, ignoredMarks: ignoredMarks(journalOf(key)) }
+  const searchOff = h?.name === 'claude' && !searchOn(body, proto.searchTool)
+  const live = { valid, inFlight: summaryForking.has(key), missed, ignoredMarks: ignoredMarks(journalOf(key)), searchOff }
   const others = othersOf(stateDir, key, currentOf)
   if (s) return infoText(key, version, s, false, c, sums, load(key)?.summarized ?? 0, live, others)
   const described = describe(sent, { tools: 0, reasoning: 0 }, new Date().toISOString(), false, h?.conventions ?? NO_CONVENTIONS, h?.alwaysLoaded)
