@@ -204,7 +204,7 @@ test("a drop refused for joining thinking to thinking is trimmed again with such
   const joined: Refusal = (raw) => {
     const ms = JSON.parse(raw).messages
     const at = ms.findIndex((m: any, j: number) => m.role === 'assistant' && ms[j + 1]?.role === 'assistant' && m.content.at(-1)?.type === 'thinking' && ms[j + 1].content[0]?.type === 'thinking')
-    return at < 0 ? undefined : `messages.${at}.content.0: thinking or redacted_thinking blocks in the latest assistant message cannot be modified`
+    return at < 0 ? undefined : `messages.${at}.content.0: \`thinking\` or \`redacted_thinking\` blocks in the latest assistant message cannot be modified. These blocks must remain as they were in the original response.`
   }
   const up = await upstream(joined)
   const p = await proxy(up.url)

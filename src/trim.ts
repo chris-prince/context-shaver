@@ -178,8 +178,9 @@ function newerTokens(msgs: readonly ApiMsg[], items: ReadonlyMap<string, Item>, 
 // The API's refusal of a drop that joined one message's thinking straight to
 // the next's. Most routes take that join, so drops make it until one
 // conversation's is refused; the server then trims it again with `joins` on,
-// for the rest of that conversation, and sends it.
-export const JOINED = /thinking or redacted_thinking blocks in the latest assistant message cannot be modified/
+// for the rest of that conversation, and sends it. The API quotes the block
+// types in backticks ("`thinking` or `redacted_thinking` blocks …").
+export const JOINED = /`?thinking`? or `?redacted_thinking`? blocks in the latest assistant message cannot be modified/
 
 function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Conventions, thinking: Thinking, joins: boolean): Applied {
   const items = new Map(itemsOf(msgs, conv).map((it) => [it.id, it]))
