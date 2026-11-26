@@ -41,3 +41,37 @@ test('a result is whole unless dropped, stubbed or culled', () => {
   const msgs = [result('a', file(1, 3)), result('b', '[CULLED 900 B FROM CTX]'), result('c', [{ type: 'text', text: '[CULLED 12 B FROM CTX]' }])]
   assert.deepEqual([...wholeIn(msgs)], ['a'])
 })
+
+test("a code-mode cell's outputs are read as lines, each judged alone, and its patch's lines count as quotes", () => {
+  // Codex code mode: one result per cell, each command's output a line of JSON.
+  const cell = (...outs: string[]) => [{ type: 'input_text', text: 'Script completed\nWall time 0.2 seconds\nOutput:\n' }, ...outs.map((o) => ({ type: 'input_text', text: JSON.stringify({ chunk_id: 'x', exit_code: 0, output: o }) }))]
+  const js = (src: string): ApiMsg => ({ role: 'assistant', content: [{ type: 'tool_use', id: 'p', name: 'exec', input: src }] })
+  const reqs = grow(
+    [{ role: 'user', content: 'go' }],
+    [call('a', { cmd: 'x' }), result('a', cell(file(1, 10)))],
+    [call('b', { cmd: 'x' }), result('b', cell(file(3, 6), 'new output of another command, long enough to count'))],
+    [js(`text(await tools.apply_patch(${JSON.stringify(`*** Begin Patch\n-${line(7)}\n+changed\n*** End Patch`)}))`)],
+  )
+  const u = usesOf(reqs)
+  assert.deepEqual(u.rereads, [{ at: 1, id: 'b', of: 'a', alone: false, chars: JSON.stringify(file(3, 6)).length }])
+  assert.deepEqual(u.uses, [{ at: 2, ids: ['a'] }])
+})
+
+test('a code-mode cell printing some outputs as they are and others as JSON keeps both', () => {
+  const reqs = grow(
+    [{ role: 'user', content: 'go' }],
+    [call('a', { cmd: 'x' }), result('a', [{ type: 'input_text', text: 'Script completed\nOutput:\n' }, { type: 'input_text', text: file(1, 10) + '\n' + JSON.stringify({ chunk_id: 'x', output: file(20, 25) }) }])],
+    [call('b', { cmd: 'x' }), result('b', file(2, 5))],
+  )
+  assert.deepEqual(usesOf(reqs).rereads, [{ at: 1, id: 'b', of: 'a', alone: true }])
+})
+
+test('a JSON line without a chunk_id is read as it is', () => {
+  const log = (k: number) => JSON.stringify({ event: 'step', output: `${line(k)}\n${line(k + 1)}` })
+  const reqs = grow(
+    [{ role: 'user', content: 'go' }],
+    [call('a', { command: 'cat a.jsonl' }), result('a', [1, 3, 5].map(log).join('\n'))],
+    [call('b', { command: 'cat b.ts' }), result('b', file(1, 4))],
+  )
+  assert.deepEqual(usesOf(reqs).rereads, [])
+})

@@ -421,7 +421,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
       }
       for (const x of rereadAt.get(n) ?? []) {
         if (!inWindow || logged!.has(x.of) || !now.has(x.of)) continue
-        const chars = uses.results.get(x.id)!.chars
+        const chars = x.chars ?? uses.results.get(x.id)!.chars
         const c = x.alone ? request(chars, q.output ?? REREAD_OUTPUT) : ratio * chars * write
         out.cost -= c
         out.costs[out.costs.length - 1] -= c

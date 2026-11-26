@@ -26,14 +26,40 @@ export type Result = { id: string; at: number; chars: number }
 export type Use = { at: number; ids: string[] }
 // The response to request `at` fetched result `id` again, all of it in the
 // earlier result `of`; `alone`: the response made no other call.
-export type Reread = { at: number; id: string; of: string; alone: boolean }
+export type Reread = { at: number; id: string; of: string; alone: boolean; chars?: number }
 export type Uses = { results: Map<string, Result>; uses: Use[]; rereads: Reread[] }
 
+// A result's text, as sent.
+const joined = (c: unknown): string => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : '')
 // A result's text, its lines each without a Read's line number (`  12→`).
-const text = (c: unknown): string => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : '')
+const text = (c: unknown): string => chunksOf(joined(c)).join('\n')
+// A Codex code-mode cell prints a command's result whole, as a line of JSON
+// with its `chunk_id` and its `output` escaped, when the script prints the
+// result rather than its output. A result's parts: the text printed as it is,
+// if any line of it counts, then each such command's output; or the result
+// whole.
+function chunksOf(s: string): string[] {
+  if (!s.includes('"chunk_id"')) return [s]
+  const outs: string[] = []
+  const rest: string[] = []
+  for (const l of s.split('\n')) {
+    let o: { chunk_id?: unknown; output?: unknown } | undefined
+    try { o = l.trim().startsWith('{') ? JSON.parse(l) : undefined } catch {}
+    if (typeof o?.chunk_id === 'string' && typeof o.output === 'string') outs.push(o.output)
+    else rest.push(l)
+  }
+  if (!outs.length) return [s]
+  return rest.some((l) => l.trim().length >= MIN_LINE) ? [rest.join('\n'), ...outs] : outs
+}
+// A code-mode cell's source holds its calls' text (a patch, say) as string
+// literals, escaped: their contents, with the source itself, and a patch's
+// lines without their markers (` `, `-`, `+`).
+const LITERAL = /"(?:[^"\\\n]|\\.)*"/g
+const unmarked = (v: string) => (v.startsWith('*** Begin Patch') ? v.replace(/^[-+ ]/gm, '') : v)
+const literalsIn = (s: string) => [s, ...(s.match(LITERAL) ?? []).flatMap((l) => { try { const v = JSON.parse(l); return typeof v === 'string' && v.includes('\n') ? [unmarked(v)] : [] } catch { return [] } })]
 const linesOf = (s: string, numbered: boolean) => s.split('\n').map((l) => (numbered ? l.replace(/^\s*\d+[→\t]/, '') : l).trim()).filter((l) => l.length >= MIN_LINE)
 const strings = (v: unknown): string[] => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : [])
-const quoted = (b: Block): string[] => (b.type === 'text' ? [String(b.text ?? '')] : b.type === 'thinking' ? [String(b.thinking ?? '')] : b.type === 'tool_use' ? strings(b.input) : [])
+const quoted = (b: Block): string[] => (b.type === 'text' ? [String(b.text ?? '')] : b.type === 'thinking' ? [String(b.thinking ?? '')] : b.type === 'tool_use' ? strings(b.input).flatMap(literalsIn) : [])
 
 // `reqs`: each request's messages, untrimmed.
 export function usesOf(reqs: readonly (readonly ApiMsg[])[]): Uses {
@@ -67,15 +93,22 @@ export function usesOf(reqs: readonly (readonly ApiMsg[])[]): Uses {
         if (b.type !== 'tool_result') continue
         const id = String(b.tool_use_id)
         if (results.has(id)) continue
-        const s = text(b.content)
-        const lines = new Set(linesOf(s, /^\s*\d+→/m.test(s)))
+        const chunks = chunksOf(joined(b.content))
+        const s = chunks.join('\n')
+        const numbered = /^\s*\d+→/m.test(s)
+        const lines = new Set(linesOf(s, numbered))
         results.set(id, { id, at: n, chars: JSON.stringify(b).length })
-        if (n && lines.size >= MIN_LINES) {
+        // Each part of a code-mode cell is judged alone, as a command fetched
+        // again among new ones is still fetched again, and credited at its own
+        // size.
+        for (const chunk of n ? chunks : []) {
+          const cl = new Set(linesOf(chunk, numbered))
+          if (cl.size < MIN_LINES) continue
           // The newest earlier result holding every line, found among those
           // holding its rarest one.
-          const rarest = [...lines].reduce((a, l) => ((holders.get(l)?.length ?? 0) < (holders.get(a)?.length ?? 0) ? l : a))
-          const of = (holders.get(rarest) ?? []).findLast((r) => [...lines].every((l) => held.get(r)!.has(l)))
-          if (of) rereads.push({ at: n - 1, id, of, alone: callsIn.get(id) === 1 })
+          const rarest = [...cl].reduce((a, l) => ((holders.get(l)?.length ?? 0) < (holders.get(a)?.length ?? 0) ? l : a))
+          const of = (holders.get(rarest) ?? []).findLast((r) => [...cl].every((l) => held.get(r)!.has(l)))
+          if (of) rereads.push({ at: n - 1, id, of, alone: callsIn.get(id) === 1 && chunks.length === 1, ...(chunks.length > 1 && { chars: JSON.stringify(chunk).length }) })
         }
         held.set(id, lines)
         for (const l of lines) holders.get(l)?.push(id) ?? holders.set(l, [id])
