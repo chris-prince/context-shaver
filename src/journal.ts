@@ -134,16 +134,37 @@ export function record(file: string, prev: Stats | undefined, next: Stats, usage
 
 // A request's cache read, in tokens: what the proxy predicted, the read if
 // the server ignored its explicit breakpoints (where they'd read further),
-// and what the API reported. Predictions are in message characters, so they
-// convert at the request's own ratio, its tokens past the tool definitions
-// over its message characters; the definitions count as read.
-export type CacheRead = { predicted: number; unmarked?: number; read: number }
-export function cacheRead(p: { chars: number; total: number; unmarked?: number }, s: Stats, read: number): CacheRead {
+// the read with no lookback limit (where it'd read further), and what the API
+// reported; with `reach`, the items back from its breakpoint the predicted
+// read's entry is, where it isn't on it. Predictions are in message
+// characters, so they convert at the request's own ratio, its tokens past the
+// tool definitions over its message characters; the definitions count as read.
+export type CacheRead = { predicted: number; unmarked?: number; unbounded?: number; reach?: number; read: number }
+export function cacheRead(p: { chars: number; total: number; unmarked?: number; unbounded?: number; reach?: number }, s: Stats, read: number): CacheRead {
   const defs = s.defs ? (s.tokens[s.defs.key] ?? 0) : 0
   const ratio = p.total ? (s.inputTokens - defs) / p.total : 0
   const tokens = (chars: number) => Math.round(defs + chars * ratio)
-  return { predicted: tokens(p.chars), ...(p.unmarked !== undefined && { unmarked: tokens(p.unmarked) }), read }
+  return {
+    predicted: tokens(p.chars),
+    ...(p.unmarked !== undefined && { unmarked: tokens(p.unmarked) }),
+    ...(p.unbounded !== undefined && { unbounded: tokens(p.unbounded) }),
+    ...(p.reach && { reach: p.reach }),
+    read,
+  }
 }
+
+// Whether a read shows the lookback reaches further than counted: with none,
+// the proxy would predict at least IGNORED_GAP tokens more, and the read
+// covers most of that. A cache miss only reads less, so it can't look like
+// this; an entry another conversation wrote can.
+export const pastLookback = (c: CacheRead) =>
+  c.unbounded !== undefined && c.unbounded - c.predicted >= IGNORED_GAP && c.read - c.predicted >= (c.unbounded - c.predicted) / 2
+
+// Whether a read that relied on the lookback fell short of it: the entry the
+// proxy counted on is `reach` items back, and the read is IGNORED_GAP tokens
+// or more below the prediction. One alone may be a cache miss; many for a
+// model are a sign the lookback is shorter than counted.
+export const shortOfLookback = (c: CacheRead) => !!c.reach && c.predicted - c.read >= IGNORED_GAP
 
 // Whether a read shows the server ignored the explicit breakpoints: they'd
 // read at least IGNORED_GAP tokens further than lookback alone, and the read

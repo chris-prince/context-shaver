@@ -7,7 +7,7 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, policyNow, seedPolicy, skillRulesNow, textRules, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, reachOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 import { RESPONSES } from '../src/responses.ts'
 
@@ -1082,4 +1082,12 @@ test('a user message holding only due notes is cut to a stub, and a note beside 
     // Beside a prompt, the note goes and the prompt stays as it was.
     assert.ok(out.some((m) => m.role === 'user' && blocks(m).length === 1 && blocks(m)[0].text === 'prompt 2'))
   }
+})
+
+test('a read reaches back from its breakpoint by the items between, joined ones not counted', () => {
+  const p = (breakpoint: boolean, joined = false) => ({ prefix: '', size: 1, breakpoint, joined })
+  const pos = [p(false), p(false), p(false, true), p(false), p(true)]
+  assert.equal(reachOf(pos, 4), 0, 'entry on the breakpoint')
+  assert.equal(reachOf(pos, 3), 1)
+  assert.equal(reachOf(pos, 1), 2, 'the joined item between is not counted')
 })

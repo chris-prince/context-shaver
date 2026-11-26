@@ -43,7 +43,7 @@ import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textR
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
-import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, prefixesOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, unboundIn, type Decision, type Thinking } from './trim.ts'
+import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, prefixesOf, reachOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, unboundIn, type Decision, type Thinking } from './trim.ts'
 import { arcsPastEnd, chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
@@ -247,8 +247,11 @@ type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; pro
 
 // The cache read the proxy predicts for a request, in message characters out
 // of `total`; and, where it carries an explicit breakpoint that reads further
-// than lookback alone would, the read if the server ignored it (`unmarked`).
-type Predicted = { chars: number; total: number; unmarked?: number }
+// than lookback alone would, the read if the server ignored it (`unmarked`);
+// the read with no lookback limit, where that's more (`unbounded`); and the
+// items back from its breakpoint the read's entry is, where it isn't on it
+// (`reach`).
+type Predicted = { chars: number; total: number; unmarked?: number; unbounded?: number; reach?: number }
 
 // How a request stands to the freeze: `frozen`, sent as the last that worked;
 // `retry`, a shave tried while frozen; or neither. `gap` is the tokens the shave
@@ -426,6 +429,12 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   const touched = entriesOf(pos, r)
   const charsTo = (r: number) => pos.slice(0, r + 1).reduce((n, q) => n + q.size, 0)
   const predicted: Predicted = { chars: charsTo(r), total: charsTo(pos.length - 1) }
+  // How far back the read relies on the lookback, and what it would read
+  // with none, so the audit can tell when the lookback counted is off.
+  const reach = r < 0 ? 0 : reachOf(pos, r)
+  if (reach) predicted.reach = reach
+  const unbounded = charsTo(readThrough(pos, live, Infinity))
+  if (unbounded > predicted.chars) predicted.unbounded = unbounded
   if (pos.some((q) => q.exact)) {
     const unmarked = charsTo(readThrough(pos.map((q) => (q.exact ? { ...q, breakpoint: false } : q)), live, model.lookback))
     if (unmarked < predicted.chars) predicted.unmarked = unmarked

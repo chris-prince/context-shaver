@@ -615,6 +615,15 @@ export function readThrough(pos: readonly Position[], live: ReadonlySet<string>,
   return r
 }
 
+// How far back from its breakpoint a read through position `r` found its
+// entry, in the units lookback counts: 0 when the entry is on the breakpoint.
+export function reachOf(pos: readonly Position[], r: number): number {
+  const b = pos.findIndex((p, i) => i >= r && p.breakpoint)
+  let n = 0
+  for (let j = b; j > r; j--) n += pos[j].joined ? 0 : 1
+  return b < 0 ? 0 : n
+}
+
 // Claude Code's breakpoints are all on the last few messages, so a frontier
 // move, which changes messages before them, finds no entry in reach and
 // rewrites everything after the system prompt. The proxy adds one more where

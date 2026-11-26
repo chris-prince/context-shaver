@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { describe, observe, type Stats } from '../src/stats.ts'
-import { bareLines, cacheRead, diff, ignoredMark, ignoredMarks, journalKeys, LastCalls, history, newestCall, latest, record, recordBare, recordFork, recordResent, replay, sideKey, forks } from '../src/journal.ts'
+import { bareLines, cacheRead, diff, ignoredMark, ignoredMarks, pastLookback, shortOfLookback, journalKeys, LastCalls, history, newestCall, latest, record, recordBare, recordFork, recordResent, replay, sideKey, forks } from '../src/journal.ts'
 import { callIdsOf } from '../src/items.ts'
 import type { ApiMsg } from '../src/items.ts'
 
@@ -267,4 +267,18 @@ test('cache predictions convert at the request\'s own token ratio, tool definiti
   for (const cache of [{ predicted: 40_000, unmarked: 10_000, read: 10_000 }, { predicted: 40_000, unmarked: 10_000, read: 39_000 }, { predicted: 40_000, read: 10_000 }])
     appendFileSync(file, JSON.stringify({ cache }) + '\n')
   assert.equal(ignoredMarks(file), 1)
+})
+
+test('a cache read is judged past the lookback only when it covers most of what no lookback limit would add, and short of it only when it relied on the lookback', () => {
+  // Lookback alone 10K, no limit 40K.
+  const c = (read: number) => ({ predicted: 10_000, unbounded: 40_000, read })
+  assert.equal(pastLookback(c(39_000)), true, 'read reaches the entry past the lookback')
+  assert.equal(pastLookback(c(12_000)), false, 'read stops near the lookback')
+  assert.equal(pastLookback({ predicted: 10_000, unbounded: 12_000, read: 12_000 }), false, 'too little past the lookback to tell')
+  assert.equal(pastLookback({ predicted: 10_000, read: 40_000 }), false, 'nothing past the lookback, nothing to judge')
+  assert.equal(shortOfLookback({ predicted: 30_000, reach: 15, read: 2_000 }), true, 'relied on the lookback, read little')
+  assert.equal(shortOfLookback({ predicted: 30_000, read: 2_000 }), false, 'entry on its breakpoint: a plain miss')
+  assert.equal(shortOfLookback({ predicted: 30_000, reach: 15, read: 28_000 }), false, 'read about as predicted')
+  const s = { inputTokens: 11_000, tokens: { defs: 1_000 }, defs: { key: 'defs' } } as unknown as Stats
+  assert.deepEqual(cacheRead({ chars: 8_000, total: 20_000, unbounded: 16_000, reach: 7 }, s, 2_000), { predicted: 5_000, unbounded: 9_000, reach: 7, read: 2_000 })
 })

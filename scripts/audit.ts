@@ -15,7 +15,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { blocks, isPrompt, isSkillBody, READ, type ApiMsg } from '../src/items.ts'
-import { ignoredMark, linesOf } from '../src/journal.ts'
+import { ignoredMark, linesOf, pastLookback, shortOfLookback } from '../src/journal.ts'
 import { messagesOf, objectsOf } from '../src/log.ts'
 
 const { values } = parseArgs({ options: { since: { type: 'string' }, all: { type: 'boolean' } } })
@@ -157,6 +157,37 @@ function ignoredBreakpoints(cs: Conversation[]): Finding[] {
   return found
 }
 
+// Requests whose cache read shows the lookback reaches further than the model
+// counts it (src/journal.ts, pastLookback); and, by model and day, reads that
+// relied on the lookback falling short of it for most such requests
+// (shortOfLookback), as one alone may be a cache miss. The reaches of the reads
+// that held and of those that fell short bracket the real lookback.
+const SHORT_MIN = 5
+function lookbackOff(cs: Conversation[]): Finding[] {
+  const found: Finding[] = []
+  const days = new Map<string, { held: number[]; short: number[] }>()
+  for (const c of cs) {
+    let time = ''
+    let model = ''
+    for (const d of linesOf(path.join(state, `${c.key}.journal.jsonl`))) {
+      if (d.set?.time) time = d.set.time
+      if (d.set?.model) model = d.set.model
+      if (!d.cache || Date.parse(time) < since) continue
+      const { predicted, unbounded, reach, read } = d.cache
+      if (pastLookback(d.cache)) found.push({ time, text: `${c.key.slice(0, 48)} ${time.slice(0, 19)}  ${model}: read ${read} tokens; ${predicted} within its lookback, ${unbounded} with none` })
+      if (!reach) continue
+      const day = days.get(`${model} ${time.slice(0, 10)}`) ?? { held: [], short: [] }
+      days.set(`${model} ${time.slice(0, 10)}`, day)
+      ;(shortOfLookback(d.cache) ? day.short : day.held).push(reach)
+    }
+  }
+  const span = (rs: number[]) => (rs.length ? `${Math.min(...rs)}–${Math.max(...rs)}` : 'none')
+  for (const [k, { held, short }] of days)
+    if (short.length >= SHORT_MIN && short.length >= held.length)
+      found.push({ time: `${k.slice(-10)}T00:00:00Z`, text: `${k}: ${short.length} of ${held.length + short.length} reads relying on the lookback fell short; reaches that read ${span(held)}, that fell short ${span(short)}` })
+  return found
+}
+
 // Summary forks whose answers depart from their instructions, which the proxy
 // gets past but which mean the instructions or their parsing (src/summary.ts)
 // have stopped fitting: rejected, for any reason; arcs written past the
@@ -235,6 +266,23 @@ more than the proxy thought.
   rejects it (src/breakpoints.ts), or marking turned off for it.
 - If a few requests ignore it among many that don't, it may be cache noise on
   the server; add the window to resolved, with why.`,
+  },
+  {
+    name: 'The lookback is about what is counted',
+    run: lookbackOff,
+    todo: `A model's lookback (src/models.ts) is how far back from a breakpoint the
+proxy counts on the server finding a cache entry.
+- Read past it: the server read an entry further back than the lookback. If it
+  happens for one model across conversations, its lookback can rise: the
+  proxy is pricing trims as colder than they are. An entry another
+  conversation wrote can also read this way, so check that it's the same
+  conversation's.
+- Fell short, by model and day: most reads that relied on the lookback read
+  well less than predicted. Compare the reaches: if those that read are all
+  below those that fell short, the lookback is about the largest that read;
+  lower it, and check with scripts/probe-codex-model-details.ts. If the
+  reaches overlap, it's more likely cache misses; add the window to resolved,
+  with why.`,
   },
   {
     name: 'Summary forks answer as their instructions ask',
