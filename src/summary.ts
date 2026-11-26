@@ -16,7 +16,7 @@
 import { blocks, isPrompt, MEMOIR_FOOT, MEMOIR_HEAD, SUMMARY_HEAD, type ApiMsg, type Block } from './items.ts'
 import { hash, isNote, preambleEnd } from './log.ts'
 import { notesOfBlock, type Note } from './notes.ts'
-import { sizeOf, type Applied, type Thinking } from './trim.ts'
+import { sizeOf, unboundIn, type Applied, type Thinking } from './trim.ts'
 
 // An arc of a record: the turn it starts at and its title, as the summary fork
 // headed it, and when that turn's prompt was sent and the minutes to the arc's
@@ -196,7 +196,8 @@ export function summaryForkOf(a: Applied, msgs: readonly ApiMsg[], chain: readon
     return k < 0 ? Infinity : k ? turns[k].index : preambleEnd(msgs)
   }
   const covered = (t: number, j: number) => a.origin[j] >= at(t) && a.origin[j] < turns.at(-1)!.index
-  const charsFrom = (t: number) => a.msgs.reduce((n, m, j) => (covered(t, j) ? n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking), 0) : n), 0)
+  const unbound = unboundIn(a.msgs, thinking)
+  const charsFrom = (t: number) => a.msgs.reduce((n, m, j) => (covered(t, j) ? n + blocks(m).reduce((k, b) => k + sizeOf(b, thinking, unbound), 0) : n), 0)
   if (current <= start || current <= offered) return { skip: 'no-new-turn' }
   if (preambleEnd(msgs) < 0) return { skip: 'no-preamble' }
   const from = recorded ? start : Math.max(start, offered)

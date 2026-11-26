@@ -43,7 +43,7 @@ import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textR
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
-import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, type Decision, type Thinking } from './trim.ts'
+import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, prefixesOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, unboundIn, type Decision, type Thinking } from './trim.ts'
 import { arcsPastEnd, chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
@@ -115,7 +115,8 @@ const version = (() => {
 // A conversation's applied clock; the cache entries its answered requests
 // wrote or read, by prefix hash, with when (trim.ts, positionsOf); and the
 // tokens each thinking block it was answered with bills, by the signature's
-// hash (trim.ts, sizeOf); the tokens each tool call's call and output items
+// hash (trim.ts, sizeOf), and the messages it came after, as hashed (trim.ts,
+// unboundIn); the tokens each tool call's call and output items
 // billed, by call id, where the API counted them (Codex; trim.ts, tokensOf);
 // how many of its records it sends (summary.ts), how many of those as the
 // memoir, and the turn the last summary fork was offered at; the skill rules
@@ -123,7 +124,7 @@ const version = (() => {
 // shaving is frozen (Frozen); and which of the API's refusals of thinking its
 // route has given (Refusals). Its stats, for `shaver info`, are in its journal.
 type SkillList = { rules: SkillRule[]; at: number }
-type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; calls?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList; frozen?: Frozen } & Refusals
+type State = { applied: Clock; entries?: Record<string, number>; thinking?: Record<string, number>; thinkingAfter?: Record<string, string>; calls?: Record<string, number>; summarized?: number; merged?: number; offered?: number; skillList?: SkillList; frozen?: Frozen } & Refusals
 
 // Refusals that change how a conversation is shaved from then on, since they
 // come from its route, which stays: `joins`, a drop that joined thinking to
@@ -142,9 +143,10 @@ const RETRY_STEP = 10_000
 const started = new Date().toISOString()
 
 // The token counts trim.ts sizes items by: thinking by signature hash, and
-// tool calls by `call:` and their id (trim.ts, Thinking).
+// tool calls by `call:` and their id, with what each block came after
+// (trim.ts, Thinking).
 const recordedOf = (s: State | undefined): Thinking =>
-  new Map([...Object.entries(s?.thinking ?? {}), ...Object.entries(s?.calls ?? {}).map(([id, n]) => [`call:${id}`, n] as const)])
+  Object.assign(new Map([...Object.entries(s?.thinking ?? {}), ...Object.entries(s?.calls ?? {}).map(([id, n]) => [`call:${id}`, n] as const)]), { after: new Map(Object.entries(s?.thinkingAfter ?? {})) })
 
 // The skill rules a conversation's list is shortened by: while its cache is
 // warm the ones it has, so new ones don't rewrite it, unless lines from
@@ -177,7 +179,7 @@ function save(key: string, s: State): void {
   for (const [h, t] of [...Object.entries(was?.entries ?? {}), ...Object.entries(s.entries ?? {})]) if (Date.now() - t <= ttlMs) entries[h] = Math.max(t, entries[h] ?? 0)
   const joins = s.joins || was?.joins || undefined
   const dropUnbound = s.dropUnbound || was?.dropUnbound || undefined
-  writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify({ ...s, entries, thinking: { ...was?.thinking, ...s.thinking }, calls: { ...s.calls, ...was?.calls }, joins, dropUnbound }))
+  writeFileSync(path.join(stateDir, `${key}.json`), JSON.stringify({ ...s, entries, thinking: { ...was?.thinking, ...s.thinking }, thinkingAfter: { ...was?.thinkingAfter, ...s.thinkingAfter }, calls: { ...s.calls, ...was?.calls }, joins, dropUnbound }))
 }
 
 // A conversation's internal IDs (summary.ts, turnsOf): the last one given,
@@ -241,7 +243,7 @@ const latestOf = (key: string) => currentOf(key).stats
 // Why an answered request sent no summary fork: summaryForkOf's reasons, with
 // the threshold the turns fell short of, or the proxy's own.
 type Skip = (ForkSkip & { threshold?: number }) | { skip: 'side-request' | 'no-breakpoint' | 'in-flight' | 'turn-continues' | 'draining' }
-type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[]; freeze: Freeze; predicted: Predicted; refusals: Refusals }
+type Prepared = { body: Buffer; key: string; proto: Protocol; model: string; provider?: string; applied: Clock; entries: Record<string, number>; touched: string[]; thinking: Record<string, number>; thinkingAfter: Record<string, string>; summarized: number; merged: number; offered?: number; skillList?: SkillList; summaryFork?: (tokens: number[]) => SummaryFork | Skip; stats?: Stats; sent: Sent; suggestion: boolean; logDir?: string; logLine?: Record<string, unknown>; counted?: (attribution: unknown) => Counted | undefined; messages: ApiMsg[]; freeze: Freeze; predicted: Predicted; refusals: Refusals }
 
 // The cache read the proxy predicts for a request, in message characters out
 // of `total`; and, where it carries an explicit breakpoint that reads further
@@ -477,7 +479,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
         return 'skip' in f && f.tokens !== undefined ? { ...f, threshold: after } : f
       }
     : undefined
-  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, freeze: freezing, predicted, refusals,...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
+  const p: Prepared = { body: Buffer.from(JSON.stringify(render(body))), key, proto, model: body.model, provider: body.provider, applied, entries, touched, thinking: s?.thinking ?? {}, thinkingAfter: s?.thinkingAfter ?? {}, summarized: records, merged, offered: s?.offered, skillList, summaryFork, stats: latestOf(key), sent: described, suggestion, messages: body.messages, freeze: freezing, predicted, refusals,...(counted && { counted: (at: unknown) => counted(body.messages, at) }) }
   if (a['log-step-events']) {
     p.logDir = path.join(logRoot, key)
     if (forced) writeLine(p.logDir, { event: 'autocompact-trim', time, at, beforeTokens: forced.before, afterTokens: forced.after, requests: clock.requests, turns: clock.turns })
@@ -1184,7 +1186,14 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
     return answeredBare(p.key, { time: p.sent.time, model: p.model, ...(p.provider && { provider: p.provider }), why: 'no usage' }, p.logLine && { dir: p.logDir!, line: p.logLine })
   }
   const c = attribution !== undefined ? p.counted?.(attribution) : undefined
-  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds }, dropped, u.output_tokens_details?.thinking_tokens)
+  // Thinking sent unbound was dropped as if the API had said so (trim.ts,
+  // unboundIn), and a Messages response's thinking is bound to what was sent,
+  // unless that ends in a reply the response goes on.
+  const unbound = unboundIn(p.messages, Object.assign(new Map(), { after: new Map(Object.entries(p.thinkingAfter)) }))
+  const lost = [...new Set([...(dropped ?? []), ...p.messages.flatMap((m, i) => (blocks(m).some((b) => unbound.has(b)) ? [i] : []))])]
+  const after = p.proto.name === 'messages' && p.messages.at(-1)?.role === 'user' ? prefixesOf(p.messages) : undefined
+  const thinkingAfter = after ? Object.fromEntries(content.signatures.filter(Boolean).map((sg) => [hash(sg), after])) : {}
+  const next = observe(p.stats, p.sent, inputTokens, u.output_tokens ?? 0, c && { defs: c.head, messages: c.messages, kinds: c.kinds }, lost, u.output_tokens_details?.thinking_tokens)
   const was = currentOf(p.key)
   record(journalOf(p.key), was.stats, next, u, cacheRead(p.predicted, next, u.cache_read_input_tokens ?? 0))
   current.set(p.key, { stats: next, cost: add(was.cost, was.stats, next, u, ttlMs) })
@@ -1192,7 +1201,7 @@ function answered(p: Prepared, usage: UsageReader, target: string, headers: Reco
   // would, after a reply that ended the turn; so not while the turn goes on.
   const check = p.summaryFork && (draining ? { skip: 'draining' as const } : summaryForking.has(p.key) ? { skip: 'in-flight' as const } : reply?.ended === false ? { skip: 'turn-continues' as const } : p.summaryFork(textTokens(p.sent, next.tokens)))
   const due = check && !('skip' in check) ? check : undefined
-  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList, frozen: p.freeze.frozen, ...p.refusals })
+  save(p.key, { applied: p.applied, entries, thinking: { ...p.thinking, ...thinkingOf(u, content), ...(c && billedThinking(p.messages, c.reasoning)) }, thinkingAfter: { ...p.thinkingAfter, ...thinkingAfter }, calls: c && Object.fromEntries(c.calls), summarized: p.summarized, merged: p.merged, offered: due?.current ?? p.offered, skillList: p.skillList, frozen: p.freeze.frozen, ...p.refusals })
   // A reply with no text leaves the instructions where they'd go without one.
   if (due) void summarize(p, due, target, headers, reply?.text.some((t) => t.trim()) ? reply.text : undefined)
   if (p.logDir && p.logLine) writeLine(p.logDir, { ...withReceivedDelta(p.logDir, p.logLine), ...usageFields(u), ...(attribution !== undefined && { attribution }), ...(served && { served }), ...(transformations && { inputTransformations: transformations }), ...(check && { summaryCheck: due ? 'sent' : check }) })

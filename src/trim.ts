@@ -463,9 +463,45 @@ export const K = 40
 // which tokensOf takes in place of their size.
 export const TEXT_TOKENS = 0.39
 const SIGNATURE_TOKENS = 0.13
-export type Thinking = ReadonlyMap<string, number>
+export type Thinking = ReadonlyMap<string, number> & { after?: ReadonlyMap<string, string> }
 
-export function sizeOf(b: Block, thinking: Thinking): number {
+// A thinking block is bound while the messages before it are those of the
+// prompt it was generated after, as sent. The API drops an unbound one
+// unsaid and bills it nothing on a Claude Code sign-in, and elsewhere refuses
+// it or drops it as asked (binding.ts), so in a request that's answered it
+// costs nothing (local/notes.md, Past Work, "Mid-turn trims lose the turn's
+// thinking"). `after` holds, by signature hash, the prefixesOf hash of the
+// messages each block the proxy saw generated came after.
+//
+// BACKCOMPAT(2026-11-25)
+//   Before: states kept no such hashes, and every thinking block counted.
+//   Shim: a block with none recorded is counted as bound.
+//   Remove when: conversations from before 2026-11-25 are no longer resumed.
+export function unboundIn(msgs: readonly ApiMsg[], thinking: Thinking): Set<Block> {
+  const out = new Set<Block>()
+  const after = thinking.after
+  if (!after?.size) return out
+  let prefix = ''
+  for (const m of msgs) {
+    if (m.role === 'assistant')
+      for (const b of blocks(m)) {
+        const was = b.type === 'thinking' && typeof b.signature === 'string' ? after.get(hash(b.signature)) : undefined
+        if (was !== undefined && was !== prefix) out.add(b)
+      }
+    prefix = prefixOf(prefix, m)
+  }
+  return out
+}
+
+// The hash naming the messages through `m`, given that of those before it:
+// '' for none. A breakpoint is no part of it, nor whether a lone text block is
+// sent as a string.
+export const prefixOf = (before: string, m: ApiMsg) => hash(before + m.role + JSON.stringify(blocks(m), uncontrolled))
+export const prefixesOf = (msgs: readonly ApiMsg[]) => msgs.reduce(prefixOf, '')
+
+// `unbound`, the blocks unboundIn finds, count nothing.
+export function sizeOf(b: Block, thinking: Thinking, unbound?: ReadonlySet<Block>): number {
+  if (unbound?.has(b)) return 0
   // A breakpoint is no part of the prompt, as it's no part of the prefix.
   const n = JSON.stringify(b, uncontrolled).length
   if (b.type !== 'thinking' || typeof b.signature !== 'string') return n
@@ -541,13 +577,14 @@ export const wholeSeedOf = (model: string, tools: unknown, system: unknown) => h
 // own end, however far back.
 export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thinking, automatic: boolean | 'items' = false): Position[] {
   let prefix = seed
+  const unbound = unboundIn(msgs, thinking)
   const pos: Position[] = msgs.flatMap((m) =>
     blocks(m).map((b, i, bs) => {
       prefix = hash(prefix + m.role + JSON.stringify(b, uncontrolled))
       const breakpoint = b.cache_control !== undefined
-      if (automatic) return { prefix, size: sizeOf(b, thinking), breakpoint, joined: automatic !== 'items' && (m.role !== 'user' || i < bs.length - 1), ...(breakpoint && { exact: true }) }
+      if (automatic) return { prefix, size: sizeOf(b, thinking, unbound), breakpoint, joined: automatic !== 'items' && (m.role !== 'user' || i < bs.length - 1), ...(breakpoint && { exact: true }) }
       const joined = (b.type === 'tool_use' || b.type === 'tool_result') && bs[i - 1]?.type === b.type
-      return { prefix, size: sizeOf(b, thinking), breakpoint, joined }
+      return { prefix, size: sizeOf(b, thinking, unbound), breakpoint, joined }
     }),
   )
   if (automatic && pos.length) pos[pos.length - 1] = { ...pos[pos.length - 1], breakpoint: true, exact: false }

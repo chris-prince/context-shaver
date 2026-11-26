@@ -14,19 +14,22 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { BETA } from '../src/binding.ts'
 import { loadPolicy } from '../src/policy.ts'
+import { hash } from '../src/log.ts'
+import { prefixesOf } from '../src/trim.ts'
 
 const ROOT = path.join(import.meta.dirname, '..')
 const DROPPED = [{ type: 'thinking_dropped', path: 'messages.1.content.0', reason: 'prefix_binding_mismatch' }]
 
 type Seen = { beta: string; body: any }
-type Up = { url: string; seen: Seen[]; refuse: { on: boolean }; thinking: { tokens?: number }; close(): void }
+type Up = { url: string; seen: Seen[]; refuse: { on: boolean }; thinking: { tokens?: number; signature?: string }; close(): void }
 // An upstream that reports one block dropped when asked to drop, and, told to
 // refuse, refuses block_binding as a model without it would; given a thinking
-// count, reports it as the thinking-token-count beta does.
+// count, reports it as the thinking-token-count beta does; given a signature,
+// answers with a thinking block that has it.
 async function upstream(): Promise<Up> {
   const seen: Seen[] = []
   const refuse = { on: false }
-  const thinking: { tokens?: number } = {}
+  const thinking: { tokens?: number; signature?: string } = {}
   const server = createServer((req, res) => {
     let raw = ''
     req.on('data', (c) => (raw += c))
@@ -42,9 +45,16 @@ async function upstream(): Promise<Up> {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       const event = (type: string, data: object) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`)
       event('message_start', { message: { id: 'm', type: 'message', role: 'assistant', model: body.model, content: [], usage, ...(binding && { input_transformations: DROPPED }) } })
-      event('content_block_start', { index: 0, content_block: { type: 'text', text: '' } })
-      event('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'ok' } })
-      event('content_block_stop', { index: 0 })
+      const sig = thinking.signature
+      if (sig) {
+        event('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } })
+        event('content_block_delta', { index: 0, delta: { type: 'signature_delta', signature: sig } })
+        event('content_block_stop', { index: 0 })
+      }
+      const at = sig ? 1 : 0
+      event('content_block_start', { index: at, content_block: { type: 'text', text: '' } })
+      event('content_block_delta', { index: at, delta: { type: 'text_delta', text: 'ok' } })
+      event('content_block_stop', { index: at })
       event('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1, ...(thinking.tokens !== undefined && { output_tokens_details: { thinking_tokens: thinking.tokens } }) } })
       event('message_stop', {})
       res.end()
@@ -261,6 +271,30 @@ test('a deferred tool or billing header change keeps the cache warm', async () =
     await post([read, deferred], '2.1.330', last([...one, prompt('two')]))
     const [, second] = requests(p.dir)
     assert.ok(second.predictedCachedChars > 4000, `predicted ${second.predictedCachedChars} cached`)
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})
+
+// What each thinking block was generated after is saved with the
+// conversation's state (trim.ts, unboundIn): the messages as sent upstream,
+// for a prompt that ends in the user's message, and nothing for one that ends
+// in a reply the response goes on.
+test('a response\'s thinking is saved as bound to the messages sent before it', async () => {
+  const up = await upstream()
+  const p = await proxy(up.url, false)
+  const after = () => {
+    const f = readdirSync(path.join(p.dir, 'state')).find((f) => /^claude-.*[0-9a-f]\.json$/.test(f))!
+    return JSON.parse(readFileSync(path.join(p.dir, 'state', f), 'utf8')).thinkingAfter
+  }
+  try {
+    up.thinking.signature = 'sig-one'
+    assert.equal(await send(p, 'claude-opus-5-5', [prompt('one'), thought, result]), 200)
+    assert.deepEqual(after(), { [hash('sig-one')]: prefixesOf(up.seen[0].body.messages) })
+    up.thinking.signature = 'sig-two'
+    assert.equal(await send(p, 'claude-opus-5-5', [prompt('one'), thought, result, { role: 'assistant', content: [{ type: 'text', text: 'so far' }] }]), 200)
+    assert.deepEqual(Object.keys(after()), [hash('sig-one')])
   } finally {
     p.child.kill()
     up.close()
