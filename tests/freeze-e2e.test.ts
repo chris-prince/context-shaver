@@ -55,7 +55,7 @@ async function upstream(refusal: Refusal = withoutA): Promise<Up> {
 }
 
 type Proxy = { url: string; dir: string; child: ChildProcess }
-async function proxy(up: string, dir = mkdtempSync(path.join(tmpdir(), 'freeze-e2e-'))): Promise<Proxy> {
+async function proxy(up: string, dir = mkdtempSync(path.join(tmpdir(), 'freeze-e2e-')), more: Record<string, string> = {}): Promise<Proxy> {
   const policy = path.join(dir, 'policy.json')
   // Tool results dropped a request after they're sent, forced near compaction;
   // no summaries.
@@ -73,8 +73,9 @@ async function proxy(up: string, dir = mkdtempSync(path.join(tmpdir(), 'freeze-e
   const home = path.join(dir, 'home')
   mkdirSync(path.join(home, '.claude'), { recursive: true })
   writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ autoCompactWindow: 200_000 }))
-  const env = { ...process.env, HOME: home, SHAVER_BUG_REPORT_URL: 'https://example.test/bugs' }
+  const env: Record<string, string | undefined> = { ...process.env, HOME: home, SHAVER_BUG_REPORT_URL: 'https://example.test/bugs', ...more }
   delete env.CLAUDE_CONFIG_DIR
+  if (!('SHAVER_DROP_UNBOUND_THINKING' in more)) delete env.SHAVER_DROP_UNBOUND_THINKING
   const child = spawn(process.execPath, [path.join(ROOT, 'src/server.ts'), '--port', '0', '--upstream', up, '--dir', dir, '--policy', policy, '--log-step-events'], { stdio: ['ignore', 'ignore', 'pipe'], env })
   const url = await new Promise<string>((ok, fail) => {
     let err = ''
@@ -196,8 +197,9 @@ test('a proxy restarted ends a freeze', async () => {
 
 // A drop that joins one message's thinking straight to the next's, refused as
 // some routes refuse it, turns on the rule that stubs such calls instead
-// (trim.ts, thinkingJoins): the request is trimmed again under it and sent at
-// once, with no freeze, and later requests are trimmed under it from the start.
+// for that conversation (server.ts, Refusals): the request is trimmed again
+// under it and sent at once, with no freeze, and its later requests are
+// trimmed under it from the start.
 test("a drop refused for joining thinking to thinking is trimmed again with such calls stubbed, and not frozen", async () => {
   const joined: Refusal = (raw) => {
     const ms = JSON.parse(raw).messages
@@ -231,6 +233,74 @@ test("a drop refused for joining thinking to thinking is trimmed again with such
     assert.equal((await send(p, msgs)).status, 200)
     assert.equal(up.bodies.length, count + 1, 'sent once')
     assert.equal(joined(up.bodies.at(-1)!), undefined)
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})
+
+// A shave refused for thinking it unbound, as API-key routes refuse it, turns
+// on asking the API to drop unbound thinking for that conversation (binding.ts):
+// the request is sent again asking, with no freeze, and its later requests ask
+// from the start, while another conversation's don't. With
+// SHAVER_DROP_UNBOUND_THINKING=0 it freezes as any refusal does.
+const unbound: Refusal = (raw) => {
+  const b = JSON.parse(raw)
+  const thinks = b.messages.some((m: any) => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'thinking'))
+  return thinks && !raw.includes(A) && !b.thinking?.block_binding ? 'messages.3.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to "drop_block".' : undefined
+}
+const step = (id: string, content: string) => [
+  { role: 'assistant', content: [{ type: 'thinking', thinking: 'which next', signature: `sig-${id}` }, { type: 'tool_use', id, name: 'Read', input: { file: id } }] },
+  { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] },
+]
+const asksDrop = (raw: string) => JSON.parse(raw).thinking?.block_binding?.prefix_mismatch_behavior === 'drop_block'
+
+test('a shave refused for unbound thinking is sent again asking the API to drop it, and not frozen', async () => {
+  const up = await upstream(unbound)
+  const p = await proxy(up.url)
+  try {
+    const msgs: any[] = [text('user', 'do it'), ...step('a', A)]
+    assert.equal((await send(p, msgs)).status, 200)
+    msgs.push(...step('b', result('second', 5)))
+    assert.equal((await send(p, msgs)).status, 200)
+    assert.ok(up.bodies.every((b) => !asksDrop(b)), 'not asked before a refusal')
+    // 3: a's result is dropped, unbinding later thinking: refused, then sent
+    // again asking.
+    msgs.push(...step('c', result('third', 3)))
+    const third = await send(p, msgs)
+    assert.equal(third.status, 200)
+    assert.deepEqual(attempts(lastFreeze(p.dir)), ['shaved 400', 'shaved 200'])
+    const [refused, again] = up.bodies.slice(-2)
+    assert.ok(!refused.includes(A) && !again.includes(A), 'shaved both times')
+    assert.ok(!asksDrop(refused) && asksDrop(again))
+    assert.doesNotMatch(third.said, /shaving is paused/)
+    // 4: asked from the start, sent once.
+    msgs.push(...step('d', 'small'))
+    const count = up.bodies.length
+    assert.equal((await send(p, msgs)).status, 200)
+    assert.equal(up.bodies.length, count + 1, 'sent once')
+    assert.ok(asksDrop(up.bodies.at(-1)!))
+    // Another conversation isn't asked: the refusal was this one's.
+    assert.equal((await send(p, [text('user', 'another task'), ...step('x', A)])).status, 200)
+    assert.ok(!asksDrop(up.bodies.at(-1)!), 'other conversation not asked')
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+})
+
+test('with SHAVER_DROP_UNBOUND_THINKING=0 a shave refused for unbound thinking freezes', async () => {
+  const up = await upstream(unbound)
+  const p = await proxy(up.url, undefined, { SHAVER_DROP_UNBOUND_THINKING: '0' })
+  try {
+    const msgs: any[] = [text('user', 'do it'), ...step('a', A)]
+    await send(p, msgs)
+    msgs.push(...step('b', result('second', 5)))
+    await send(p, msgs)
+    msgs.push(...step('c', result('third', 3)))
+    assert.equal((await send(p, msgs)).status, 200)
+    assert.deepEqual(attempts(lastFreeze(p.dir)), ['shaved 400', 'frozen 200'])
+    assert.ok(up.bodies.every((b) => !asksDrop(b)))
   } finally {
     p.child.kill()
     up.close()

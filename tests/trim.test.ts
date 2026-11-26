@@ -7,7 +7,7 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, policyNow, seedPolicy, skillRulesNow, textRules, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, thinkingJoins, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 import { RESPONSES } from '../src/responses.ts'
 
@@ -376,8 +376,7 @@ test('a pair whose drop would leave a system message after an assistant one is s
 // The API joins assistant messages side by side and, on some routes, refuses
 // thinking straight after thinking in what that makes, in any turn (DESIGN.md,
 // "The API constrains what can go"); every other shape below it takes.
-test('once the API refuses thinking joined to thinking, a call whose drop would join them is stubbed, and only that one', (t) => {
-  t.after(() => (thinkingJoins.refused = false))
+test('once the API refuses thinking joined to thinking, a call whose drop would join them is stubbed, and only that one', () => {
   const think = (t: string) => ({ type: 'thinking', thinking: t, signature: 'sig' })
   const step = (n: number, lead: object[]): ApiMsg[] => [
     { role: 'assistant', content: [...lead, { type: 'tool_use', id: `toolu_${n}`, name: 'Bash', input: { command: 'ls' } }] },
@@ -396,8 +395,7 @@ test('once the API refuses thinking joined to thinking, a call whose drop would 
   const dropping = allCalls(dropAll.other_tool_calls!)
   // Until a refusal, every due call goes.
   assert.deepEqual(counts(apply(convo, dropping, { requests: 4, turns: 0 })), { 'tool:drop': 4 })
-  thinkingJoins.refused = true
-  const s = apply(convo, dropping, { requests: 4, turns: 0 })
+  const s = apply(convo, dropping, { requests: 4, turns: 0 }, undefined, undefined, true)
   // Call 1 leaves thinking before call 2's, and call 4 before the answer's:
   // both stubbed. Call 2 leaves text before 3's; call 3 leaves text before 4's
   // thinking: both go.
@@ -410,7 +408,7 @@ test('once the API refuses thinking joined to thinking, a call whose drop would 
     if (m.role === 'assistant' && next?.role === 'assistant') assert.ok(blocks(m).at(-1)?.type !== 'thinking' || blocks(next)[0]?.type !== 'thinking', `messages ${j} and ${j + 1}`)
   })
   // With the thinking dropped as well, every call goes whole, as before.
-  const both = apply([...convo, { role: 'user', content: 'next' }, { role: 'assistant', content: 'ok' }], { ...dropping, reasoning: [{ action: 'drop', eligible_after: '0 turns' }] }, { requests: 5, turns: 1 })
+  const both = apply([...convo, { role: 'user', content: 'next' }, { role: 'assistant', content: 'ok' }], { ...dropping, reasoning: [{ action: 'drop', eligible_after: '0 turns' }] }, { requests: 5, turns: 1 }, undefined, undefined, true)
   assert.equal(counts(both)['tool:drop'], 4)
 })
 

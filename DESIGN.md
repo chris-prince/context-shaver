@@ -699,13 +699,13 @@ The API constrains what can go:
   "thinking or redacted_thinking blocks in the latest assistant message cannot
   be modified", in any turn. A call dropped after a message's thinking makes
   that when the next assistant message starts with thinking. Seen on Opus,
-  Sonnet and Haiku 5.5 by a user on 2026-11-26, where a call dropped with its
+  Sonnet and Haiku 5.5 by a user on 2026-11-25, where a call dropped with its
   thinking kept, or beside text, was allowed. Not reproduced through a Claude
   subscription sign-in the same day: every such join was allowed, on all
   three models. Thinking blocks side by side as the model wrote them are
   always allowed. So such calls are dropped until the API refuses one; the
   request is then trimmed again with them stubbed, as for a system message,
-  and sent at once, and they're stubbed from then on until the proxy restarts.
+  and sent at once, and they're stubbed for the rest of that conversation.
   Stubbing them always would cost about 0.7% of the prompt tokens sent,
   measured over 23 Claude Code conversations on a route that takes the join.
 
@@ -736,6 +736,21 @@ once a fix is out. Each request line has a `freeze` record:
 it, and `attempts`, each sent shape (`shaved`, `frozen` or `original`) and
 the status it got, with each refusal also on a `failed` line.
 `proxy.log` has a line for each freeze, retry and unfreeze.
+
+Two refusals are handled before a freeze, each by a setting kept for the rest
+of the conversation, restarts included, in its state (`joins`,
+`dropUnbound`): they come from its route, which stays, and one proxy can carry
+conversations on routes that differ. A join of thinking to thinking turns on stubbing such calls
+(above). Thinking no longer bound to what came before it, as a trim leaves the
+thinking after its first change, "The block is bound to a different
+conversation", turns on asking the API to drop such blocks (`src/binding.ts`,
+`drop_block`), and the request is sent again asking. On 2026-11-25 an API key
+refused every trim before thinking so, on Fable 5.2 and Opus 5.5, while a
+Claude Code sign-in left the unbound blocks out itself, unbilled and
+unreported: the input tokens billed came to the request's with that thinking
+removed. So drop_block isn't asked before a refusal, where it would change
+nothing. `SHAVER_DROP_UNBOUND_THINKING=1` asks it from the start, and `=0`
+never, so the refusal freezes.
 
 ## When the applied clock moves
 

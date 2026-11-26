@@ -102,21 +102,21 @@ export type Applied = {
 //   messages checked against where the API takes a system message (README,
 //   "What it trims"). A pair whose drop leaves one out of place, the pair just
 //   before it or just after, is kept and stubbed instead; so, once the API
-//   has refused one, are the pairs whose drop leaves a message's thinking
-//   beside the next one's (thinkingJoins).
+//   refused one in this conversation (`joins`), are the pairs whose drop
+//   leaves a message's thinking beside the next one's (JOINED).
 //   So a drop is only refused for what the drops around it actually leave.
 // - Dropped reasoning is the message's thinking, unless that would leave it
 //   empty: an empty message is refused. One left empty by dropped calls is
 //   removed; the API joins the neighbours that leaves in the same role.
 //
 // `thinking` sizes reasoning for token rules (sizeOf).
-export function apply(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map()): Applied {
-  return applyAt(msgs, policy, heldTo(clock, msgs), conv, thinking)
+export function apply(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map(), joins = false): Applied {
+  return applyAt(msgs, policy, heldTo(clock, msgs), conv, thinking, joins)
 }
 
 // The messages trimmed as far as the policy ever takes them: every rule due.
-export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: PartRules, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map()) =>
-  applyAt(msgs, policy, { requests: Infinity, turns: Infinity }, conv, thinking)
+export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: PartRules, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map(), joins = false) =>
+  applyAt(msgs, policy, { requests: Infinity, turns: Infinity }, conv, thinking, joins)
 
 // Each item's tokens in the messages as they came: its blocks sized by sizeOf
 // (thinking at its recorded tokens), at TEXT_TOKENS a character. A tool call's
@@ -175,14 +175,13 @@ function newerTokens(msgs: readonly ApiMsg[], items: ReadonlyMap<string, Item>, 
   return out
 }
 
-// Whether the API has refused, since the proxy started, a drop that joined
-// one message's thinking straight to the next's. Most routes take that join,
-// so drops make it until one doesn't; the server sets this on that refusal
-// (JOINED) and sends the request again trimmed under it.
-export const thinkingJoins = { refused: false }
+// The API's refusal of a drop that joined one message's thinking straight to
+// the next's. Most routes take that join, so drops make it until one
+// conversation's is refused; the server then trims it again with `joins` on,
+// for the rest of that conversation, and sends it.
 export const JOINED = /thinking or redacted_thinking blocks in the latest assistant message cannot be modified/
 
-function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Conventions, thinking: Thinking): Applied {
+function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Conventions, thinking: Thinking, joins: boolean): Applied {
   const items = new Map(itemsOf(msgs, conv).map((it) => [it.id, it]))
   const newer = newerTokens(msgs, items, c, thinking)
   const undroppable = new Set<unknown>()
@@ -199,10 +198,10 @@ function applyAt(msgs: readonly ApiMsg[], policy: PartRules, c: Clock, conv: Con
     // refuses a join that puts one message's thinking straight before the
     // next's (DESIGN.md, "The API constrains what can go"). A call dropped
     // after a message's thinking, with the next assistant message starting
-    // with its own, makes that. Once the API has refused one (thinkingJoins),
-    // the calls from the first message to the second are kept and stubbed
-    // instead.
-    if (thinkingJoins.refused) out.msgs.forEach((m, j) => {
+    // with its own, makes that. Once the API has refused one in this
+    // conversation (`joins`), the calls from the first message to the second
+    // are kept and stubbed instead.
+    if (joins) out.msgs.forEach((m, j) => {
       const next = out.msgs[j + 1]
       if (m.role !== 'assistant' || next?.role !== 'assistant') return
       const bs = blocks(m)

@@ -3,7 +3,8 @@
 // the 5.0s, asks for unbound thinking to be dropped, with the beta, and no
 // other request does; what the API reports dropped is logged; a model that
 // refuses the setting gets the request again without it, and not the setting
-// again. With it off, nothing changes.
+// again. Unset, nothing changes before the API refuses unbound thinking
+// (freeze-e2e.test.ts has that refusal).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'

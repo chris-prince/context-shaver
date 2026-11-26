@@ -1,17 +1,23 @@
-// With SHAVER_DROP_UNBOUND_THINKING=1 (temporary, while preserved thinking is
-// new), a Messages request asks the API to drop thinking blocks no longer
-// bound to the conversation before them, rather than refuse the request.
+// Once the API refuses a conversation's shaved request for thinking no longer
+// bound to the conversation before it, that conversation's Messages requests
+// ask the API to drop such blocks instead (the server keeps this in its state).
+// SHAVER_DROP_UNBOUND_THINKING=1 asks from the start for every conversation,
+// and =0 never.
 //
 // Each thinking block of a model with preserved thinking is bound to the
 // system, tools and messages that came before it as the API saw them. Shaving
 // changes those, so the thinking after a trim, a stub or a summary no longer
-// matches. Unset, Fable 5.2 and Mythos 5.x answer that with a 400, and Opus,
-// Sonnet and Haiku 5.5 may, or let the blocks through, billed. With
-// thinking.block_binding.prefix_mismatch_behavior "drop_block" and the
-// thinking-binding-controls beta, the API drops them, unbilled, and lists them
-// in input_transformations. A block still bound is left alone, so the setting
-// goes on every request that holds thinking: what the API saw before is the
-// proxy's doing, not the client's, so its request can't tell.
+// matches. What the API does then depends on the route, not only the model: on
+// 2026-11-25, with an API key, Fable 5.2 and Opus 5.5 both answered a 400
+// ("bound to a different conversation"); through a Claude Code sign-in, Opus
+// 5.5 left the blocks out itself, unbilled and unreported, as drop_block
+// would. With thinking.block_binding.prefix_mismatch_behavior "drop_block" and
+// the thinking-binding-controls beta, the API drops them, unbilled, and lists
+// them in input_transformations. A block still bound is left alone, so once
+// asked, the setting goes on every request that holds thinking: what the API
+// saw before is the proxy's doing, not the client's, so its request can't
+// tell. It isn't asked before a refusal, since a route that drops the blocks
+// itself gains nothing from it and the beta could change.
 //
 // Models are excluded, not listed, so new ones get it: Claude 3, 4.x and the
 // 5.0s don't check the binding, and what they do with the setting isn't
@@ -19,7 +25,13 @@
 // and not the setting again until the proxy restarts.
 
 export const BETA = 'thinking-binding-controls-2026-08-01'
-export const on = process.env.SHAVER_DROP_UNBOUND_THINKING === '1'
+const setting = process.env.SHAVER_DROP_UNBOUND_THINKING
+// Whether drop_block is asked: always with =1, never with =0, and otherwise
+// where the conversation has had UNBOUND.
+export const drop = { on: setting === '1', never: setting === '0' }
+
+// The API's refusal of a thinking block no longer bound to the conversation.
+export const UNBOUND = /The block is bound to a different conversation/
 
 // Models that refused the setting since the proxy started.
 const refused = new Set<string>()
@@ -66,13 +78,16 @@ export function withBeta(headers: Record<string, string>): Record<string, string
 const asked = new WeakSet<Response>()
 export const dropAsked = (r: Response) => asked.has(r)
 
-// Sends a Messages request, with drop_block where bound sets it, when on. A
-// 400 that names the setting or the beta sends it again as given.
-export async function fetchBound(url: string, init: { method?: string; headers: Record<string, string>; body?: Buffer | string; signal?: AbortSignal }): Promise<Response> {
-  const b = on && init.body !== undefined ? bound(Buffer.from(init.body)) : undefined
+// Sends a Messages request, with drop_block where bound sets it, when the
+// conversation asks it (`ask`) or =1 does, and =0 doesn't forbid it. A 400
+// that names the setting or the beta sends it again as given, unless it's the
+// unbound-thinking refusal, which names them too.
+export async function fetchBound(url: string, init: { method?: string; headers: Record<string, string>; body?: Buffer | string; signal?: AbortSignal }, ask = false): Promise<Response> {
+  const b = !drop.never && (drop.on || ask) && init.body !== undefined ? bound(Buffer.from(init.body)) : undefined
   if (!b) return fetch(url, init)
   const r = await fetch(url, { ...init, headers: withBeta(init.headers), body: b.body })
-  if (r.status !== 400 || !/block_binding|thinking-binding-controls/.test(await r.clone().text())) return asked.add(r), r
+  const text = r.status === 400 ? await r.clone().text() : ''
+  if (r.status !== 400 || UNBOUND.test(text) || !/block_binding|thinking-binding-controls/.test(text)) return asked.add(r), r
   refused.add(b.model)
   console.error(`${new Date().toISOString()} shaver: ${b.model} refused drop_block for unbound thinking; sent without it, and not sent it again until the proxy restarts`)
   return fetch(url, init)
