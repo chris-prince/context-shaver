@@ -24,12 +24,12 @@ type Tool = { type?: string; name?: string; tools?: Tool[]; [k: string]: unknown
 const CALLS = new Set(['function_call', 'custom_tool_call'])
 const OUTPUTS = new Set(['function_call_output', 'custom_tool_call_output'])
 
-// An explicit cache breakpoint, on an input_text part: the cache keeps an
-// entry at its end, which a later request with one there reads however far
-// back. A block the core marked (trim.ts, anchored) is sent with one; a tool's
-// output only as an array of parts, so a string one becomes one part (the same
-// prompt, probed on a function_call_output; a custom_tool_call_output's isn't
-// probed).
+// An explicit cache breakpoint, on an input_text part: a request that writes
+// past it leaves an entry at its end, which a later request with one there
+// reads however far back. A block the core marked (trim.ts, anchored) is sent
+// with one; a tool's output only as an array of parts, so a string one becomes
+// one part (the same prompt, probed on a function_call_output on 2026-11-19
+// and on a custom_tool_call_output on 2026-11-26).
 const BREAKPOINT = { mode: 'explicit' }
 const marked = (b: Block, part: Part): Part => (b.cache_control !== undefined && part.type === 'input_text' ? { ...part, prompt_cache_breakpoint: BREAKPOINT } : part)
 function markedOutput(it: Item): Item {
@@ -382,10 +382,11 @@ export const RESPONSES: Protocol = {
   limits: /^x-codex-(?!turn-state)/,
   automatic: true,
   // A prompt's text or a tool's output with text. A breakpoint finds only an
-  // entry at its own end, and reading past one makes none, so it goes where
-  // Codex's requests end, on a user message's last block: a run of outputs
-  // ends one request, not each output (probe-codex-model-details.ts
-  // breakpoints, 2026-11-19).
+  // entry at its own end, and reading past one makes none, so the one at the
+  // last live entry goes where Codex's requests end, on a user message's last
+  // block: a run of outputs ends one request, not each output
+  // (probe-codex-model-details.ts breakpoints, 2026-11-19). The one at the
+  // settled boundary goes on such a block too.
   markable: (b, m) => m.role === 'user' && blocks(m).at(-1) === b && (b.type === 'text' || (b.type === 'tool_result' && (typeof b.content === 'string' || (Array.isArray(b.content) && b.content.some((p) => p?.type === 'input_text'))))),
   defers: true,
   // Run by the backend, which loads the tools it finds itself: Codex answers

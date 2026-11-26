@@ -594,7 +594,7 @@ export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thi
 // The entries a request writes or reads, by prefix: one at each breakpoint
 // (with automatic caching, its end), and `r`, the one it reads through. An
 // explicit breakpoint's entry is made only where the request writes past it,
-// not where it reads through it (probe-codex-breakpoints.ts).
+// not where it reads through it (probe-codex-model-details.ts, breakpoints).
 export const entriesOf = (pos: readonly Position[], r: number) => pos.filter((p, i) => (p.breakpoint && !(p.exact && i <= r)) || i === r).map((p) => p.prefix)
 
 // What positionsOf counts the lookback in, for a model with or without automatic caching.
@@ -627,25 +627,38 @@ export function readThrough(pos: readonly Position[], live: ReadonlySet<string>,
 // placed on the messages sent (anchored). The API takes 4 breakpoints: when
 // the request has no spare, the caller frees the system prompt's first one
 // (freedSystem). The caller keeps the request as it came when the prediction
-// says the move reads less.
-export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], seed: string, thinking: Thinking): string | undefined {
+// says the move reads less. With `markable` (automatic caching, below), it
+// goes on the last block before the difference that the protocol can mark.
+export type Markable = (b: Block, m: ApiMsg) => boolean
+export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], seed: string, thinking: Thinking, markable?: Markable): string | undefined {
   const [a, b] = [positionsOf(msgs, seed, thinking), positionsOf(final, seed, thinking)]
   const first = a.findIndex((p, i) => p.prefix !== b[i]?.prefix)
-  const bs = msgs.flatMap(blocks)
+  const bs = msgs.flatMap((m) => blocks(m).map((bl) => [bl, m] as const))
   let k = (first < 0 ? a.length : first) - 1
-  while (k >= 0 && isThinking(bs[k])) k--
+  while (k >= 0 && (markable ? !markable(...bs[k]) : isThinking(bs[k][0]))) k--
   return a[k]?.prefix
 }
 
-// With automatic caching the lookback from a request's end reaches only so far
-// (models.ts): a trim whose first change is further back rewrites everything
-// after the system prompt. Where the protocol can mark a block (protocol.ts,
-// markable), the anchor is an explicit breakpoint, which reads only the entry
-// at its own end, however far back. The cache made each entry where a request
-// ended, marked or not, so unlike settledEnd's the anchor needn't stay put for
-// its entry to be there: on each set of messages it goes on the last block the
-// protocol can mark whose prefix is a live entry, the furthest they can read.
-export type Markable = (b: Block, m: ApiMsg) => boolean
+// With automatic caching a request reads the newest entry within the model's
+// lookback of its end (models.ts), and the lookback differs from one upstream
+// to the next and from week to week: a trim whose first change is further
+// back rewrites everything after the system prompt. Where the protocol can
+// mark a block (protocol.ts, markable), every request carries two explicit
+// breakpoints, so that what it reads doesn't rest on the lookback. An explicit
+// breakpoint reads only the entry at its own end, however far back; a request
+// makes an entry there where it writes past it, not where it reads through
+// it, beside the one at its end; and the lookback from the end works as
+// without it (probe-codex-model-details.ts, breakpoints and boundaries).
+//   One is at settledEnd of the messages sent, the kept and the trimmed
+//   alike: a trim's request writes past it, since its first change is at or
+//   before it, and that entry is the one the next trim reads, right before
+//   its own first change. No request need have ended there.
+//   The other is at the last block the protocol can mark whose prefix is a
+//   live entry (liveEnd), the furthest the messages can read: on a trim the
+//   boundary the last trim wrote, and otherwise mostly the last request's
+//   end, which the lookback would find too unless the request adds more than
+//   it reaches.
+// Where the two are one block, it's marked once.
 export function liveEnd(msgs: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, thinking: Thinking, markable: Markable): string | undefined {
   const a = positionsOf(msgs, seed, thinking)
   const bs = msgs.flatMap((m) => blocks(m).map((bl) => [bl, m] as const))

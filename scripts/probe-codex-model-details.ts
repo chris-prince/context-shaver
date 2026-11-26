@@ -41,11 +41,27 @@
 //       onRead   O4 marked, O5 changed: read through O4, as a request of Codex's ended there
 //       split    P's text in two parts, the first marked: no request ended there
 //       onSplit  as split, O1 changed: read through it only if marking it made an entry
+//   boundaries: whether a trim can leave an entry at a breakpoint of its own,
+//     far back, for the requests and the trim after it to read (trim.ts,
+//     liveEnd). The session is breakpoints' and is held the same way; each
+//     variant is the prompt a request of the proxy's would send, in order:
+//       same     the request again: read all
+//       W-write  O1 changed, O3 marked: a prompt new from O1 on, so read little; it writes past O3
+//       W-again  the same, unmarked: read all, as W-write left an entry at its end
+//       W-ext    one item more: read through W-write's end, by the lookback
+//       W-extM   two items more, O3 marked: read through W-ext's end if the lookback still reads beside a breakpoint
+//       T-write  a trim: O5 changed too, O3 and O7 marked: read through O3 if writing past it left an entry
+//       T-ext    the request after the trim: O7 marked, one item more: read through T-write's end
+//       T-ext2   the next: O7 and T-ext's end marked, one item more: read through T-ext's end
+//       F-none   T-ext's prompt unmarked with --lookback + 5 items more: read little, as it's past the lookback
+//       F-bound  as many other items more, O7 marked: read through O7 if T-write left an entry there
+//       F-both   as many others, O7 and T-ext's end marked: read through T-ext's end
 //
-// Usage: bin/node-wrapper scripts/probe-codex-model-details.ts lookback|ttl|breakpoints --model M [options]
+// Usage: bin/node-wrapper scripts/probe-codex-model-details.ts lookback|ttl|breakpoints|boundaries --model M [options]
 //   lookback     [--runs 80] [--k 70,55,51,49,45,21,19,10] [--sizes 250,1000] [--pads 0,3]
 //   ttl          [--gaps 1,20,40,70]       minutes
 //   breakpoints  [--runs 100] [--lookback 78]   O1 to O5 must be more than --lookback items from the end
+//   boundaries   [--runs 100] [--lookback 78]   O7 too; --lookback is at least the model's
 //   --upstream URL   default https://chatgpt.com/backend-api/codex (ChatGPT sign-in)
 //   --codex PATH     default codex, as the user's shell has it (alias, function or PATH)
 //   --wrapper-var NAME --real-codex PATH
@@ -70,8 +86,8 @@ const opt = (name: string, def: string) => {
 const model = opt('model', '')
 const wrapperVar = opt('wrapper-var', '')
 const realCodex = opt('real-codex', '')
-if (!['lookback', 'ttl', 'breakpoints'].includes(mode) || !model || !wrapperVar !== !realCodex) {
-  console.error('usage: probe-codex-model-details.ts lookback|ttl|breakpoints --model M [--runs 80] [--k 70,...] [--sizes 250,1000] [--gaps 1,20,...] [--lookback 78] [--upstream URL] [--codex PATH] [--wrapper-var NAME --real-codex PATH]')
+if (!['lookback', 'ttl', 'breakpoints', 'boundaries'].includes(mode) || !model || !wrapperVar !== !realCodex) {
+  console.error('usage: probe-codex-model-details.ts lookback|ttl|breakpoints|boundaries --model M [--runs 80] [--k 70,...] [--sizes 250,1000] [--gaps 1,20,...] [--lookback 78] [--upstream URL] [--codex PATH] [--wrapper-var NAME --real-codex PATH]')
   process.exit(2)
 }
 const upstream = opt('upstream', 'https://chatgpt.com/backend-api/codex').replace(/\/$/, '')
@@ -92,7 +108,7 @@ const edits = new Map<string, number>()
 // name can be served by more than one backend, each answering under a name of
 // its own, and the cache can differ between them.
 const served = new Map<string, number>()
-// For breakpoints: the session whose next request is held for the variants,
+// For breakpoints and boundaries: the session whose next request is held for the variants,
 // sent from the forwarder as Codex waits, as a wrapper's provider may last
 // only as long as Codex runs.
 let holding: { session: string; variants: (target: string, headers: Record<string, string>, body: { input: Item[] }) => Promise<void> } | undefined
@@ -389,7 +405,7 @@ if (mode === 'lookback') {
   else console.log(`\nThe limit counts none of runs, tokens or items alone: the edges agree in none.`)
   console.log(`Answered as ${[...served].map(([m, n]) => `${m} (${n})`).join(', ') || 'nothing'}.`)
   console.log(`Elapsed ${minutes(Date.now() - t0)}.`)
-} else if (mode === 'breakpoints') {
+} else if (mode === 'breakpoints' || mode === 'boundaries') {
   const runs = Number(opt('runs', '100'))
   const lookback = Number(opt('lookback', '78'))
   const cwd = files(250)
@@ -407,7 +423,8 @@ if (mode === 'lookback') {
       const p = T.input.findIndex((it) => it.type === 'message' && it.role === 'user' && it.content?.some((q) => q.text?.startsWith('For N from 11')))
       if (p < 0) stop("the second prompt isn't in the request")
       const o = T.input.flatMap((it, i) => (isOutput(it) && i > p ? [i] : []))
-      if (o.length < 5 || T.input.length - o[4] <= lookback) stop(`too few outputs more than ${lookback} items from the end: give more --runs`)
+      const far = mode === 'breakpoints' ? 5 : 7
+      if (o.length < far || T.input.length - o[far - 1] <= lookback) stop(`too few outputs more than ${lookback} items from the end: give more --runs`)
       const markP = (b: { input: Item[] }) => void (b.input[p].content!.at(-1)!.prompt_cache_breakpoint = MARK)
       const change = (b: { input: Item[] }, i: number) => mark(b.input[i])
       const asArray = (b: { input: Item[] }, i: number, marked = false) => {
@@ -423,8 +440,32 @@ if (mode === 'lookback') {
         const k = Math.floor(t.length / 2)
         it.content = [...it.content!.slice(0, -1), { type: 'input_text', text: t.slice(0, k), prompt_cache_breakpoint: MARK }, { type: 'input_text', text: t.slice(k) }]
       }
-      const [o1, o2, o3, o4, o5] = o
-      const variants: [string, (b: { input: Item[] }) => void][] = [
+      // For boundaries: a change named by its tag, so that variants with the
+      // same changes send the same prompt; a short user item at the end, as a
+      // later request would have added, marked or not; and n of them.
+      const tagged = (b: { input: Item[] }, i: number, tag: string) => {
+        const it = b.input[i]
+        if (typeof it.output === 'string') it.output += `\n(changed ${tag})`
+        else if (Array.isArray(it.output)) (it.output as Part[]).at(-1)!.text += `\n(changed ${tag})`
+        else stop('an output is neither a string nor parts')
+      }
+      const add = (b: { input: Item[] }, tag: string, marked = false) => void b.input.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: `Reply OK. (${tag})`, ...(marked && { prompt_cache_breakpoint: MARK }) }] })
+      const many = (b: { input: Item[] }, tag: string) => { for (let i = 0; i < lookback + 5; i++) add(b, `${tag}${i}`) }
+      const [o1, o2, o3, o4, o5, , o7] = o
+      const boundaries: [string, (b: { input: Item[] }) => void][] = [
+        ['same', () => {}],
+        ['W-write', (b) => (tagged(b, o1, 'w'), asArray(b, o3, true))],
+        ['W-again', (b) => tagged(b, o1, 'w')],
+        ['W-ext', (b) => (tagged(b, o1, 'w'), add(b, 'x1'))],
+        ['W-extM', (b) => (tagged(b, o1, 'w'), asArray(b, o3, true), add(b, 'x1'), add(b, 'x2'))],
+        ['T-write', (b) => (tagged(b, o1, 'w'), asArray(b, o3, true), tagged(b, o5, 't'), asArray(b, o7, true))],
+        ['T-ext', (b) => (tagged(b, o1, 'w'), tagged(b, o5, 't'), asArray(b, o7, true), add(b, 'y1'))],
+        ['T-ext2', (b) => (tagged(b, o1, 'w'), tagged(b, o5, 't'), asArray(b, o7, true), add(b, 'y1', true), add(b, 'y2'))],
+        ['F-none', (b) => (tagged(b, o1, 'w'), tagged(b, o5, 't'), add(b, 'y1'), many(b, 'z'))],
+        ['F-bound', (b) => (tagged(b, o1, 'w'), tagged(b, o5, 't'), asArray(b, o7, true), add(b, 'y1'), many(b, 'q'))],
+        ['F-both', (b) => (tagged(b, o1, 'w'), tagged(b, o5, 't'), asArray(b, o7, true), add(b, 'y1', true), many(b, 'r'))],
+      ]
+      const breakpoints: [string, (b: { input: Item[] }) => void][] = [
         ['same', () => {}],
         ['mark', markP],
         ['miss', (b) => change(b, o1)],
@@ -437,8 +478,9 @@ if (mode === 'lookback') {
         ['split', split],
         ['onSplit', (b) => (split(b), change(b, o1))],
       ]
+      const variants = mode === 'breakpoints' ? breakpoints : boundaries
       const from = (i: number) => `item ${i}, ${T.input.length - i} from the end, ${through(i)} tokens through it`
-      console.log(`session ${id}: ${T.input.length} items; P ${from(p)}; ${[o1, o2, o3, o4, o5].map((i, n) => `O${n + 1} ${from(i)}`).join('; ')}\n`)
+      console.log(`session ${id}: ${T.input.length} items; P ${from(p)}; ${(mode === 'breakpoints' ? [1, 2, 3, 4, 5] : [1, 3, 5, 7]).map((n) => `O${n} ${from(o[n - 1])}`).join('; ')}\n`)
       console.log('variant   status    input   cached   share')
       for (const [name, f] of variants) {
         const b = structuredClone(T)

@@ -91,10 +91,28 @@ const CODEX_V2 = { at: 244_800, kept: 'prompts' as const, summary: 3500, summari
 // OpenAI's long prompts: past 272K input tokens, input, reads and writes
 // double and output is 1.5x (OpenRouter's listings, 2026-11-16).
 const OPENAI_LONG = { over: 272_000, times: 2, output: 1.5 }
+// The lookback the Codex models are counted on for: 20 input items, about the
+// least a probe has measured on any of them. How far their cache looks back
+// has differed by upstream and by week (below, each model's probes: sol's 78
+// items on 2026-11-19 were 20 a week later, and astra's 79 were 19 to 22), and counting
+// on more than is there costs more than counting on less: a trim planned to
+// read a prefix the cache doesn't find rewrites it. Replayed over sol
+// sessions from 2026-11-26, with the anchor only where it's thought to read
+// more and no boundary marked, counting on 78 where the cache looked back 20
+// or 40 cost 4% and 3% more than counting on what it did, and counting on 20
+// where it looked back 40 or 78 cost 1% and 0.2% more. With a request's two
+// explicit breakpoints (trim.ts, liveEnd), which read whatever the lookback
+// is, counting on 20 came within 0.4% of counting on the real one, for real
+// ones of 5 to 78 items; so the lookback is counted on mostly where the
+// breakpoints are off or refused (breakpoints.ts). It isn't 0: counting on
+// none cost 0.6% to 1.6% more, and an unmarked request would always look cold
+// (server.ts, prepare).
+const CODEX_LOOKBACK = 20
 // Luna's lookback counts input items, as sol's does (probed on 2026-11-19):
 // read with 79 items after the cached prefix, nothing with 80, at 16.3K tokens
 // after it unpadded and 7.3K with 3 padding items a run, at 36 and 19 runs.
-const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long: OPENAI_LONG }, lookback: 79, lookbackCounts: 'items' as const, ttl: 1800, compaction: CODEX_V2 }
+// Not probed since.
+const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long: OPENAI_LONG }, lookback: CODEX_LOOKBACK, lookbackCounts: 'items' as const, ttl: 1800, compaction: CODEX_V2 }
 // Sol's window is 272K too (`codex debug models`, Codex 0.163.0). Its lookback
 // counts input items: probed on 2026-11-19 through Codex 0.165.0
 // (probe-codex-model-details.ts lookback --pads), with 0, 1 and 3 padding
@@ -104,9 +122,11 @@ const LUNA = { price: { input: 0.1, output: 0.5, read: 0.01, write: 0.125, long:
 // These were served by Bedrock (a response's model global.openai.gpt-6.1-sol).
 // Served by OpenAI's own API, reads past the newest entry came and went (read
 // at 36 to 40 items in one session, nothing at 33 to 48 in others) and a miss
-// still read the first 11,435 tokens, where no lookback fits; 78 items stands
-// for it too, about the 38 two-item runs used before.
-const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: 78, lookbackCounts: 'items' as const, ttl: 1800, compaction: CODEX_V2 }
+// still read the first 11,435 tokens, where no lookback fits. Probed again on
+// 2026-11-26, through Codex 0.165.0 and served by Bedrock as before, it read
+// with 15, 17, 19 and 20 items after the cached prefix and nothing with 21 to
+// 82, over ten sessions of 9 to 80 runs.
+const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI_LONG }, lookback: CODEX_LOOKBACK, lookbackCounts: 'items' as const, ttl: 1800, compaction: CODEX_V2 }
 // Prices from OpenRouter's listings (2026-11-16): reads at 0.05x input on
 // terra, 0.1x on astra, writes at 1.25x. The TTL was probed on 2026-11-16
 // through OpenRouter (check-prices.ts --lifetime): entries read after 1, 15
@@ -114,14 +134,17 @@ const SOL = { price: { input: 2, output: 10, read: 0.1, write: 2.5, long: OPENAI
 // does (probed on 2026-11-19, with 0 and 3 padding items a run): astra read
 // with 79 items after the cached prefix, nothing with 86; terra with 38 and
 // 25, nothing with 42 and 38, so about 37 (the two sessions disagree by one).
+// On 2026-11-26 astra, served by Bedrock (global.openai.gpt-6-astra), read
+// with 19 items after it and nothing with 23 to 83; terra, answering as
+// gpt-6.1-terra, with 29 and 40 and nothing with 47 to 81, in one session.
 // Past its lookback terra still read the session's opening, about 21.5K
-// tokens, a read this table doesn't model. Terra's window is
+// tokens (14.9K on 2026-11-26), a read this table doesn't model. Terra's window is
 // 500K where Codex's model catalog lists it (`codex debug models`, Codex
 // 0.169.0), so Codex compacts it at 450K; a ChatGPT sign-in's catalog doesn't
 // list terra or astra yet. The compaction's summary and time are sol's, not
 // measured on these.
-const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG }, lookback: 37, compaction: { ...CODEX_V2, at: 450_000 } } // at: 90% of 500K
-const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG }, lookback: 79 }
+const TERRA = { ...SOL, price: { input: 1, output: 5, read: 0.05, write: 1.25, long: OPENAI_LONG }, compaction: { ...CODEX_V2, at: 450_000 } } // at: 90% of 500K
+const ASTRA = { ...SOL, price: { input: 10, output: 50, read: 1, write: 12.5, long: OPENAI_LONG } }
 // The 6.2 models' prices are OpenRouter's listing (2026-11-24); sol's are
 // 6.1's. Lookback, TTL and compaction are 6.1's, not probed.
 const ASTRA_6_2 = { ...ASTRA, price: { input: 8, output: 40, read: 0.4, write: 10, long: OPENAI_LONG } }

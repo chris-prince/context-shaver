@@ -263,8 +263,8 @@ type Freeze = { mode?: 'frozen' | 'retry'; gap: number; differs: boolean; unfroz
 // bare (journal.ts).
 //
 // Where the cache writes an entry at each request's end by itself (automatic),
-// the anchor is an explicit breakpoint where the protocol can mark one and
-// that's turned on (breakpoints.ts), and otherwise there is none.
+// the anchors are explicit breakpoints where the protocol can mark one and
+// that's turned on (breakpoints.ts), and otherwise there are none.
 // `side` and `compaction` are whether the harness's headers say it's a side
 // request, and its compaction, where they say (harness.ts). `freeze` sends it
 // shaped as the last request that worked, as when frozen (Frozen).
@@ -363,10 +363,20 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     }
   }
   // One more breakpoint where the messages stop matching them settled
-  // (anchored), unless it leaves less read from the cache; with automatic
-  // caching, at the last live entry of the messages it goes on (liveEnd), only
-  // where that reads more.
-  const endOf = (base: typeof keep) => (auto ? undefined : settledEnd(base.msgs, summarized(fullyTrimmed(msgs, conversationRules, conv, thinking, joins), msgs, chain.slice(0, records), merged, turns).msgs, seed, thinking))
+  // (anchored), unless it leaves less read from the cache. With automatic
+  // caching, where the protocol can mark one, two explicit ones on whichever
+  // messages it goes on, the kept and the trimmed alike, whatever the lookback
+  // would read (trim.ts, liveEnd): at their last live entry, and where they
+  // stop matching them settled.
+  // The messages settled are built once for each set of records applied: with
+  // automatic caching every candidate's boundary is found against them.
+  const settled = new Map<string, ApiMsg[]>()
+  const endOf = (base: typeof keep) => {
+    if (auto && !markable) return undefined
+    const k = `${records} ${merged}`
+    if (!settled.has(k)) settled.set(k, summarized(fullyTrimmed(msgs, conversationRules, conv, thinking, joins), msgs, chain.slice(0, records), merged, turns).msgs)
+    return settledEnd(base.msgs, settled.get(k)!, seed, thinking, markable)
+  }
   let end = endOf(keep)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
   const spare = 4 - [body.system, body.tools, msgs].reduce((n: number, v) => n + marks(v), 0)
@@ -375,11 +385,9 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     const ps = positionsOf(m, seed, thinking, counting(model, auto))
     return ps.slice(0, readThrough(ps, live, model.lookback) + 1).reduce((n, q) => n + q.size, 0)
   }
-  const anchor = (m: ApiMsg[]) => {
-    if (markable) {
-      const x = anchored(m, liveEnd(m, live, seed, thinking, markable), seed, thinking, true)
-      return reads(x) > reads(m) ? x : m
-    }
+  const anchor = (base: typeof keep) => {
+    const m = base.msgs
+    if (markable) return anchored(anchored(m, liveEnd(m, live, seed, thinking, markable), seed, thinking, true), endOf(base), seed, thinking, true)
     if (auto || (spare <= 0 && !freed)) return m
     const x = anchored(m, end, seed, thinking)
     return reads(x) >= reads(m) ? x : m
@@ -394,7 +402,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   if (forced) [sent, applied, next] = [forced.next, clock, forced.next]
   else if (clock.requests > held.requests || clock.turns > held.turns) {
     next = summarized(apply(msgs, conversationRules, clock, conv, thinking, joins),msgs, chain.slice(0, records), merged, turns)
-    d = decide(anchor(keep.msgs), anchor(next.msgs), live, seed, model, thinking, auto, horizon)
+    d = decide(anchor(keep), anchor(next), live, seed, model, thinking, auto, horizon)
     if (d.advanced) [sent, applied] = [next, clock]
   }
   // Frozen, it's sent as the last that worked was, but tried shaved once the
@@ -410,7 +418,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
     ;[sent, applied, next, records, merged, forced, d, covers] = [still, held, still, before, mergedBefore, undefined, undefined, undefined]
     end = endOf(still)
   }
-  body.messages = anchor(sent.msgs)
+  body.messages = anchor(sent)
   if (freed && marks(body.messages) > marks(sent.msgs)) body.system = freed
   // The entries this request writes or reads.
   const pos = positionsOf(body.messages, seed, thinking, counting(model, auto))

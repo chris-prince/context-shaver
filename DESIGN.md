@@ -348,8 +348,10 @@ lookback counts user or tool-result runs (20 on GPT-5.6), or input items where
 the model's `lookbackCounts` says so, as luna's, sol's, terra's and astra's do. `positionsOf` models that
 as one breakpoint at the end, which is the request's one entry: only where a
 request ended, not at each user message's end. Summary forks work on both: each
-protocol builds its own summary fork request and reads its answer. The anchor
-breakpoint is Messages-only. Tool deferral works in Claude Code, whose
+protocol builds its own summary fork request and reads its answer. Messages
+and Responses requests get anchor breakpoints, placed differently ([When the
+applied clock moves](#when-the-applied-clock-moves)); Chat Completions
+requests get none. Tool deferral works in Claude Code, whose
 `ToolSearch` loads deferred tools, and in Codex with an API key, where the
 proxy adds a `tool_search` tool the backend runs. Codex answers searches only
 for the tools it deferred, and ChatGPT's backend, which Codex signed in with
@@ -833,32 +835,57 @@ without it. `decide` prices both candidates with it.
 
 On Responses (Codex) the cache is automatic: each request leaves one entry,
 at its end, and a later one reads the newest entry within the model's
-lookback (78 input items on sol, `models.ts`). Unless
-`SHAVER_CODEX_BREAKPOINTS=0` (`breakpoints.ts`), the anchor is an explicit
-breakpoint, OpenAI's `prompt_cache_breakpoint` on an `input_text` part, on
-the last block of a user message (`responses.ts`, `markable`): a prompt's
-text or a tool's output, sent as an array of parts, which is the same prompt
-as its string. An explicit breakpoint reads only the entry at its own end,
-however far back, and a request makes one there only where it writes past
-it, not where it reads through it (`probe-codex-model-details.ts
-breakpoints`). So, unlike Claude Code's,
-the anchor needn't stay put to keep its entry: the entries are where Codex's
-requests ended, and the proxy knows which are live. On each set of messages,
-the kept and the trimmed alike, it goes on the last block it can mark whose
-prefix is a live entry (`liveEnd`), only where that reads more than the
-lookback does. `positionsOf` marks it `exact`, and `readThrough` and the
-entries recorded follow. It reads more only when what a trim keeps ends more
-than the lookback before the trimmed prompt's end, which happens in long
-conversations: it saved nothing on short ones backtested
-(`backtest-shaver.ts`; `--no-codex-breakpoints` turns it off there).
+lookback. The lookback isn't one number: probed through the same Codex, sol
+read an entry 78 input items back on 2026-11-19 and, a week later, one 20
+back but not 21; astra then read one 19 back but not 23, and terra 40 but not
+47. So the proxy counts on 20 for all of them (`models.ts`,
+`CODEX_LOOKBACK`), about the least any probe measured, and doesn't depend on
+it where it can mark. Unless `SHAVER_CODEX_BREAKPOINTS=0`
+(`breakpoints.ts`), every request carries up to two explicit breakpoints,
+OpenAI's `prompt_cache_breakpoint` on an `input_text` part, each on the last
+block of a user message (`responses.ts`, `markable`): a prompt's text or a
+tool's output, sent as an array of parts, which is the same prompt as its
+string. An explicit breakpoint reads only the entry at its own end, however
+far back, and a request makes one there only where it writes past it, not
+where it reads through it (`probe-codex-model-details.ts`, `breakpoints` and
+`boundaries`).
 
-It's on by default, and has been seen to work for gpt-6.1-sol, gpt-6.1-terra
-and gpt-6-luna. Codex's ChatGPT backend refuses it for gpt-6-luna. A 400 to a
-request with a breakpoint, however it's worded, sends the same request again
-without it (`breakpoints.ts`); if that's accepted, the field was what was
-refused, so a refusal costs one request, and that model isn't marked again
-until the proxy restarts. If it's refused too, the first refusal goes to the
-freeze, as any other does.
+The first goes on the last block it can mark whose prefix is a live entry
+(`liveEnd`): where an earlier request ended, or where one wrote past the
+second. The second goes where Claude Code's anchor does, on the last block it
+can mark before the messages first differ from them settled (`settledEnd`),
+but found on the messages sent, the kept and the trimmed alike, not on the
+messages as kept. So a request that trims writes past its new boundary, which
+leaves an entry there, and reads through the first breakpoint whatever is
+still cached before its first change. The requests after it read through the
+boundary however many items they have added since, and the next trim, which
+changes nothing before that boundary, reads through it too and writes past
+its own. Where both are the same block, the request carries one.
+`positionsOf` marks them `exact`, and `readThrough` and the entries recorded
+follow; `decide` prices both candidates with theirs.
+
+Both go on every request, whatever the lookback would have read. Replayed on
+shaved Codex runs from 2026-11-26 with the lookback at 20 items, both
+breakpoints cost 8% less than the proxy as it was then (the first breakpoint
+alone, only where it was thought to read more, counting on 78 items) on sol,
+and 14% less on astra. With the lookback anywhere from 5 to 78 items, sol's
+cost stayed within 2% of that, and what the proxy believed the lookback to be
+changed it by 0.4% at most; as it was then, believing 78 where it was 20 cost
+4% more.
+`backtest-shaver.ts` places them as `prepare` does; `--no-codex-breakpoints`
+turns them off there.
+
+They're on by default, and have been seen to work for gpt-6.1-sol,
+gpt-6.1-terra, gpt-6-luna and gpt-6-astra. Codex's ChatGPT backend refuses
+them for gpt-6-luna. A 400 to a request with a breakpoint, however it's
+worded, sends the same request again without them (`breakpoints.ts`); if
+that's accepted, the field was what was refused, so a refusal costs one
+request, the first the proxy sends that model, and that model isn't marked
+again until the proxy restarts. If it's refused too, the first refusal goes to the freeze, as
+any other does. An unmarked request reads only an entry within the lookback
+of its end, so a trim reads one only where an earlier request ended before
+its first change and no more than 20 items before its end, and otherwise
+rewrites everything.
 
 ## Heavy compaction
 

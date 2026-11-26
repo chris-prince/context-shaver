@@ -148,7 +148,7 @@ export type Protocol = {
   // where breakpoints are marked (trim.ts, positionsOf).
   automatic: boolean
   // With automatic caching, the blocks that can carry an explicit breakpoint
-  // as well, for the anchor (trim.ts, liveEnd); render sends a block the core
+  // as well, for the anchors (trim.ts, liveEnd); render sends a block the core
   // marked as the protocol marks one.
   markable?: Markable
   // Whether tools can be deferred (defer.ts), for a harness that loads them

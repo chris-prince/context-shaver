@@ -1,8 +1,9 @@
-// SHAVER_CODEX_BREAKPOINTS end to end: with it on, a Codex request whose
-// trim keeps a prefix past the lookback goes upstream with an explicit
-// breakpoint at that prefix's end; with it off, the same requests go with
-// none, trimmed alike; and an upstream that refuses the field gets the same
-// trimmed request without it, and no breakpoint after.
+// SHAVER_CODEX_BREAKPOINTS end to end: with it on, every Codex request goes
+// upstream with explicit breakpoints, at its last live entry and where it
+// stops matching its messages settled, so a trim reads the prefix it keeps
+// however far back; with it off, the same requests go with none, trimmed
+// alike; and an upstream that refuses the field gets the same request without
+// it, and no breakpoint after.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -92,7 +93,7 @@ async function send(p: Proxy, input: object[], key = 'breakpoints-test') {
 
 // A turn of 50 calls, then a second prompt, by which, its turn over, each
 // output is due to be stubbed: the trimmed prompt keeps its 103 items, so the
-// prefix before the first stubbed output is past sol's lookback of 78 items.
+// prefix before the first stubbed output is past sol's lookback of 20 items.
 // With `twice`, a second such conversation after it, through the same proxy.
 async function conversation(on: boolean, refusing?: Refusing, twice = false) {
   const up = await upstream(refusing)
@@ -117,14 +118,23 @@ const marked = (body: any) =>
   body.input.flatMap((item: any, i: number) => (Array.isArray(item.content ?? item.output) ? (item.content ?? item.output) : []).filter((c: any) => c.prompt_cache_breakpoint).map(() => i))
 const stubbed = (body: any) => body.input.filter((item: any) => item.type === 'function_call_output' && !JSON.stringify(item.output).includes('x'.repeat(4000))).length
 
-test('on: the trimmed request is marked at the end of what it keeps, which is past the lookback', async () => {
+test('on: each request is marked at its last live entry and at its settled boundary, the trimmed one at the end of what it keeps, which is past the lookback', async () => {
   const seen = await conversation(true)
   const last = seen.at(-1)
   assert.equal(stubbed(last), 50)
-  assert.deepEqual(marked(last), [0])
+  // The prompt, where the last request's boundary made an entry, and its own
+  // boundary: all of it, as nothing more is due.
+  assert.deepEqual(marked(last), [0, 102])
   assert.deepEqual(last.input[0].content, [{ type: 'input_text', text: 'look around (breakpoints-test)', prompt_cache_breakpoint: { mode: 'explicit' } }])
-  // Within the lookback, nothing is marked.
-  for (const body of seen.slice(0, -1)) assert.deepEqual(marked(body), [])
+  // Before it, the boundary is the prompt, the last block before the first
+  // output, which will be stubbed; the last live entry is the output the
+  // request before ended with, marked as an array of one part.
+  assert.deepEqual(marked(seen[0]), [0])
+  assert.deepEqual(marked(seen[1]), [0])
+  seen.slice(2, -1).forEach((body, n) => {
+    assert.deepEqual(marked(body), [0, 2 * n + 2])
+    assert.deepEqual(body.input[2 * n + 2].output, [{ type: 'input_text', text: `${n} ${'x'.repeat(4000)}`, prompt_cache_breakpoint: { mode: 'explicit' } }])
+  })
 })
 
 test('off: the same requests go unmarked, trimmed alike', async () => {
@@ -133,21 +143,20 @@ test('off: the same requests go unmarked, trimmed alike', async () => {
   for (const body of seen) assert.deepEqual(marked(body), [])
 })
 
-// However the refusal's words go, the same trimmed request goes again without
-// the breakpoint, and the model is marked no more.
+// However the refusal's words go, the same request goes again without the
+// breakpoint, and the model is marked no more.
 for (const refusing of ['named', 'unnamed'] as const)
-  test(`refused, ${refusing}: the same trimmed request goes again without the breakpoint, and the model is marked no more`, async () => {
+  test(`refused, ${refusing}: the same request goes again without the breakpoint, and the model is marked no more`, async () => {
     const seen = await conversation(true, refusing, true)
-    // The first conversation's last request refused, then resent; the second's
-    // last, which would be marked as the first's was, goes unmarked.
-    assert.equal(seen.length, 51 + 1 + 51)
-    const [refused, resent, next] = [seen[50], seen[51], seen.at(-1)]
+    // The first conversation's first request refused, then resent; every one
+    // after goes unmarked, the trimmed ones too.
+    assert.equal(seen.length, 1 + 51 + 51)
+    const [refused, resent] = seen
     assert.deepEqual(marked(refused), [0])
     // The prompt as it was: a breakpoint taken out leaves the part as it came.
     assert.deepEqual(resent, JSON.parse(JSON.stringify(refused, (k, v) => (k === 'prompt_cache_breakpoint' ? undefined : v))))
-    assert.equal(stubbed(resent), 50)
-    assert.deepEqual(marked(next), [])
-    assert.equal(stubbed(next), 50)
+    for (const body of seen.slice(1)) assert.deepEqual(marked(body), [])
+    for (const trimmed of [seen[51], seen.at(-1)]) assert.equal(stubbed(trimmed), 50)
   })
 
 test('refused without the breakpoint too: the freeze takes it, and the model is still marked', async () => {
@@ -157,9 +166,12 @@ test('refused without the breakpoint too: the freeze takes it, and the model is 
   assert.equal(seen.length, 2 * (51 + 2))
   for (const at of [50, 103]) {
     const [refused, resent, frozen] = seen.slice(at, at + 3)
-    assert.deepEqual(marked(refused), [0])
+    assert.deepEqual(marked(refused), [0, 102])
     assert.deepEqual(marked(resent), [])
     assert.equal(stubbed(resent), 50)
     assert.equal(stubbed(frozen), 0)
+    // Untrimmed, its boundary is the prompt still, and its last live entry
+    // the output the request before ended with.
+    assert.deepEqual(marked(frozen), [0, 98])
   }
 })

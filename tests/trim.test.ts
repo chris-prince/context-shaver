@@ -861,6 +861,58 @@ test('with automatic caching, the anchor goes on the last live block before the 
   assert.deepEqual(anchored(msgs, end, 's', new Map()), msgs)
 })
 
+test('with automatic caching, a trim writes an entry at its settled boundary, which the next trim reads however far back', () => {
+  // 30 turns and the next one's prompt, call and result.
+  const whole = [...Array.from({ length: 30 }, (_, i) => bpTurn(i)).flat(), ...bpTurn(30).slice(0, 3)]
+  const pos = (msgs: readonly ApiMsg[]) => positionsOf(msgs, 's', new Map(), 'items')
+  // The first `n` turns' results stubbed; all of them, the messages settled.
+  const stubbedTo = (n: number, msgs = whole) => msgs.map((m, k) => (k % 4 === 2 && k < 4 * n ? { ...m, content: [{ type: 'tool_result', tool_use_id: `t${(k - 2) / 4}`, content: stub(5000) }] } : m))
+  const final = stubbedTo(31)
+  const marked = (msgs: ApiMsg[], live: ReadonlySet<string>) => anchored(anchored(msgs, liveEnd(msgs, live, 's', new Map(), markable), 's', new Map(), true), settledEnd(msgs, final, 's', new Map(), markable), 's', new Map(), true)
+  const marks = (msgs: ApiMsg[]) => msgs.flatMap((m, k) => (blocks(m).some((b) => b.cache_control) ? [k] : []))
+  // The entries before any trim: one where each request ended, the last at turn 29's result.
+  const untrimmed = whole.slice(0, 120)
+  const live = new Set(untrimmed.flatMap((m, k) => (m.role === 'user' ? [pos(untrimmed.slice(0, k + 1)).at(-1)!.prefix] : [])))
+  // The first trim, on turn 30's prompt, stubs turns 0 to 9. Its boundary is
+  // turn 10's prompt: the call after it is the last block before turn 10's
+  // result, which a later trim stubs, but Responses can't mark an answer's block.
+  const first = stubbedTo(10, whole.slice(0, 121))
+  assert.equal(settledEnd(first, final, 's', new Map()), pos(first)[41].prefix)
+  assert.equal(settledEnd(first, final, 's', new Map(), markable), pos(first)[40].prefix)
+  // Sent marked there and on its last live entry, the first prompt, it reads
+  // that prompt and writes entries at the boundary and at its end.
+  const sent = marked(first, live)
+  assert.deepEqual(marks(sent), [0, 40])
+  const p1 = pos(sent)
+  assert.equal(readThrough(p1, live, 20), 0)
+  assert.deepEqual(entriesOf(p1, 0), [p1[0].prefix, p1[40].prefix, p1[120].prefix])
+  const after = new Set([...live, ...entriesOf(p1, 0)])
+  // The request after it has the same boundary, which it reads through:
+  // marked there and at the trim's end, it writes only its own end.
+  const grown = stubbedTo(10)
+  const between = marked(grown, after)
+  assert.deepEqual(marks(between), [40, 120])
+  const pb = pos(between)
+  assert.equal(readThrough(pb, after, 20), 120)
+  assert.deepEqual(entriesOf(pb, 120), [pb[120].prefix, pb[122].prefix])
+  // The next trim stubs turns 10 to 19: its last live entry is the first
+  // trim's boundary, 82 blocks from its end, and its own boundary turn 20's prompt.
+  const later = new Set([...after, pb[122].prefix])
+  const second = marked(stubbedTo(20), later)
+  assert.deepEqual(marks(second), [40, 80])
+  const p2 = pos(second)
+  assert.equal(readThrough(p2, later, 20), 40)
+  assert.deepEqual(entriesOf(p2, 40), [p2[40].prefix, p2[80].prefix, p2[122].prefix])
+  // Had the first trim gone without its boundary's mark, no entry would be
+  // there, as no request ended there: the second reads only the first prompt.
+  const without = new Set([...later].filter((e) => e !== p1[40].prefix))
+  assert.equal(readThrough(pos(marked(stubbedTo(20), without)), without, 20), 0)
+  // The cost model sees it: the second trim rewrites only what follows the boundary.
+  const sol = modelOf('gpt-6.1-sol')
+  const rewrites = (live: ReadonlySet<string>) => decide(marked(grown, live), marked(stubbedTo(20), live), live, 's', sol, new Map(), true).rewriteChars
+  assert.equal(rewrites(without) - rewrites(later), p2.slice(1, 41).reduce((n, p) => n + p.size, 0))
+})
+
 test('with automatic caching counted in items, a request reads back only that many blocks', () => {
   const turn = (i: number): ApiMsg[] => [
     { role: 'user', content: [{ type: 'text', text: `q${i}` }] },

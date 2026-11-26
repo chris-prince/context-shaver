@@ -45,8 +45,8 @@
 // never made just before it; one a horizon would have avoided isn't, so
 // horizons that trim more are still charged the client's own. Summary
 // records aren't applied after a horizon's own compaction.
-// A Codex request is anchored with an explicit breakpoint, as the proxy
-// anchors it by default; --no-codex-breakpoints leaves it unanchored, as
+// A Codex request is anchored with explicit breakpoints, as the proxy anchors
+// it by default; --no-codex-breakpoints leaves it unanchored, as
 // SHAVER_CODEX_BREAKPOINTS=0 does.
 // Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-shaver.ts [--validate] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--no-codex-breakpoints] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -331,13 +331,18 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     }
     sentRecords = records
     sentMerged = merged
-    const end = q.auto ? undefined : settledEnd(keep.msgs, summarized(fullyTrimmed(q.msgs, rules, conv, thinking), q.msgs, chain.slice(0, records), merged).msgs, 's', thinking)
+    // The messages settled, once for each set of records applied: with automatic caching every candidate's boundary is found against them.
+    const settled = new Map<string, ApiMsg[]>()
+    const endOf = (m: ApiMsg[]) => {
+      if (q.auto && !q.markable) return undefined
+      const k = `${records} ${merged}`
+      if (!settled.has(k)) settled.set(k, summarized(fullyTrimmed(q.msgs, rules, conv, thinking), q.msgs, chain.slice(0, records), merged).msgs)
+      return settledEnd(m, settled.get(k)!, 's', thinking, q.markable)
+    }
+    const end = endOf(keep.msgs)
     const anchor = (m: ApiMsg[]) => {
-      // As prepare places it: with automatic caching, at the last live entry (liveEnd), only where that reads more.
-      if (q.markable) {
-        const x = anchored(m, liveEnd(m, live, 's', thinking, q.markable), 's', thinking, true)
-        return reads(x) > reads(m) ? x : m
-      }
+      // As prepare places them: with automatic caching, two explicit ones, at the last live entry (liveEnd) and where the messages stop matching them settled.
+      if (q.markable) return anchored(anchored(m, liveEnd(m, live, 's', thinking, q.markable), 's', thinking, true), endOf(m), 's', thinking, true)
       if (q.auto) return m
       const x = anchored(m, end, 's', thinking)
       return reads(x) >= reads(m) ? x : m
@@ -364,10 +369,10 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
       forced = trace ? real.forced : would
       if (trace && (would || real.forced)) trace(n, q, { advanced: would, forced: true, savedChars: Math.round(saves), rewriteChars: 0, extraChars: 0 })
       if (forced) {
-        body = anchor(full.msgs)
         applied = clock
         sentRecords = records = chain.length
         sentMerged = merged = allMerged
+        body = anchor(full.msgs)
         if (q.time >= fromTime && q.time < until) out.trims++
       }
     }
