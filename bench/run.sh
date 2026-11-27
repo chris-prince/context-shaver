@@ -42,6 +42,9 @@
 #                      codex,opencode (optional). Each gets a home in the run,
 #                      with its config and skills but none of its history,
 #                      signed in through the real auth file.
+#   BENCH_HARNESS      codex to run the turns with Codex (codex.sh), not Claude
+#                      Code (optional). Its home and sessions are <run>/codex.
+#                      Not for live runs or setups that resume a transcript.
 #   BENCH_FIRST_REQUEST_TIMEOUT
 #                      seconds to wait for the run's first request to reach the
 #                      scratch proxy before stopping it (default 180)
@@ -149,7 +152,12 @@ homes() {
 
 # The homes hold copies of the user's config and sign-ins, so they don't
 # outlive the run; the agent's proxy has recorded the test harnesses' requests.
-unhome() { rm -rf "$W/home" "$W/bin"; }
+unhome() { rm -rf "$W/home" "$W/bin" "$W/codex/auth.json"; }
+case ${BENCH_HARNESS:-claude} in
+  claude) CODEX= ;;
+  codex) CODEX=1; . "$B/codex.sh" ;;
+  *) echo "BENCH_HARNESS: $BENCH_HARNESS isn't claude or codex" >&2; exit 1 ;;
+esac
 
 fresh() { # <policy>
   rm -rf "$W" "$PCODE" "$PROJ"
@@ -161,6 +169,7 @@ fresh() { # <policy>
   else checkout "$PCODE" "$BENCH_COMMIT" "${BENCH_PATCH:-}"; fi
   [[ -z ${BENCH_PROXY_PATCH:-} ]] || git -C "$PCODE" am -q "$BENCH_PROXY_PATCH"
   homes
+  [[ -z $CODEX ]] || codex_home "$W/codex"
   [[ -z ${BENCH_SETUP:-} ]] || "$BENCH_SETUP" "$W" "$PROJ" "$SID"
   [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${BENCH_PROXY_CONV_KEY:-} && -f $PROJ/$SID.jsonl ]] && adopt "$1"
   return 0
@@ -198,8 +207,11 @@ live_proxy() { # <policy>
 }
 
 proxy() { # <dir> <policy> [upstream]
+  # A copy, outside the run, as a newer proxy upgrades an older policy file in
+  # place.
+  cp "$2" "$PCODE/run-policy.json"
   "$PCODE/bin/node-wrapper" "$PCODE/src/server.ts" --port $PORT \
-    --dir "$1" --policy "$2" --log-step-events ${3:+--upstream "$3"} >"$W/proxy.log" 2>&1 &
+    --dir "$1" --policy "$PCODE/run-policy.json" --log-step-events ${3:+--upstream "$3"} >"$W/proxy.log" 2>&1 &
   echo $! >"$W/proxy.pid"
   for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$PORT/" && return; sleep 0.1; done
   echo "proxy did not start" >&2; exit 1
@@ -219,6 +231,10 @@ agent() { # <prompt>
   local base=http://127.0.0.1:$PORT
   [[ -z ${BENCH_CLAUDE_UPSTREAM:-} || -n ${DUMMY:-} || -n ${probing:-} ]] ||
     base+=/via/$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$BENCH_CLAUDE_UPSTREAM")
+  local cmd=(claude -p "${session[@]}" --model "${BENCH_MODEL:-claude-opus-5-5}" --strict-mcp-config
+    ${MAX_TURNS:+--max-turns $MAX_TURNS} --permission-mode bypassPermissions ${deny[@]+"${deny[@]}"}
+    --output-format stream-json --verbose)
+  [[ -z $CODEX ]] || codex_cmd "$W/codex" "$(codex_base $PORT)" "$W/codex-thread"
   # The prompt goes on stdin, out of process listings, where a pkill -f or ps
   # pattern could match it.
   (cd "$RUN" && env -u CLAUDECODE ANTHROPIC_BASE_URL=$base TMPDIR=$W/tmp ${ALLOW_LIVE_TESTING:+SHAVER_PORT=$PORT} ${cmds[@]+"${cmds[@]}"} \
@@ -226,9 +242,7 @@ agent() { # <prompt>
       -D BENCH=/private/tmp/shaver-bench \
       -D PROJECTS="$HOME/.claude/projects/$(esc "$REAL")" \
       -D SCRATCH="/private/tmp/claude-$(id -u)" -D OWN_SCRATCH="/private/tmp/claude-$(id -u)/$(esc "$RUN")" \
-    claude -p "${session[@]}" --model claude-opus-5-5 --strict-mcp-config \
-      ${MAX_TURNS:+--max-turns $MAX_TURNS} --permission-mode bypassPermissions ${deny[@]+"${deny[@]}"} \
-      --output-format stream-json --verbose <<<"$1")
+    "${cmd[@]}" <<<"$1")
 }
 
 # True once the proxy has logged one of the run's requests, and with DUMMY=1
@@ -243,6 +257,7 @@ case $1 in
 run)
   name=$2 policy=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
   [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${DUMMY:-} ]] && { echo "DUMMY doesn't go with ALLOW_LIVE_TESTING" >&2; exit 1; }
+  [[ -n ${ALLOW_LIVE_TESTING:-} && -n $CODEX ]] && { echo "BENCH_HARNESS doesn't go with ALLOW_LIVE_TESTING" >&2; exit 1; }
   [[ -n ${ALLOW_LIVE_TESTING:-} && -n ${BENCH_PROXY_COMMIT:-} ]] && { echo "BENCH_PROXY_COMMIT doesn't go with ALLOW_LIVE_TESTING: a live run goes through a proxy the agent starts from its own checkout, at BENCH_COMMIT" >&2; exit 1; }
   fresh "$policy"
   before=$(git -C "$REAL" status --porcelain; git -C "$REAL" rev-parse HEAD)
@@ -284,6 +299,7 @@ run)
       sleep 1
     done
     wait $apid || true
+    [[ -z $CODEX ]] || codex_thread "$out" "$W/codex-thread"
     [[ $out == "$W/agent.jsonl" ]] || cat "$out" >>"$W/agent.jsonl"
     reached || break
   done
