@@ -10,6 +10,7 @@
 import type { Model } from './models.ts'
 import { blocks, CLAUDE_CODE, GROUP_KINDS, heldTo, isGroupKind, isSkillBody, isThinking, itemsOf, READ, READ_RESULT, readPairs, readsOf, requestsOf, turnsOf, type ApiMsg, type Block, type Clock, type Conventions, type Item, type Kind } from './items.ts'
 import { hash, isNote, preambleEnd } from './log.ts'
+import { checked, checks, perRequest } from './memo.ts'
 import { joinedNotes, notesOfBlock } from './notes.ts'
 import { afterOf, noteRulesFor, rulesFor, treatment, type Action, type PartRules } from './policy.ts'
 
@@ -509,33 +510,36 @@ export const prefixesOf = (msgs: readonly ApiMsg[]) => msgs.reduce(prefixOf, '')
 // each block keeps its JSON's length, a thinking block its signature's hash,
 // and the prefix hashes through it, by the one before each was found from:
 // a block kept by a trim is in the request and in its trimmed copies, under
-// a prefix of each, and holding one would have them undo each other. The
-// last PREFIXES are kept. No block is changed once parsed (a trim makes new
-// ones, and a breakpoint is no part of any), so none goes stale.
-const lengths = new WeakMap<Block, number>()
+// a prefix of each, and holding one would have them undo each other. No
+// block is changed once parsed (a trim makes new ones, and a breakpoint is no
+// part of any), so none goes stale. They're kept for a request only (memo.ts,
+// newRequest). The memos' checks are in memo.ts.
+let lengths = new WeakMap<Block, number>()
+let signatures = new WeakMap<Block, string>()
+let prefixes = new WeakMap<Block, Map<string, string>>()
+perRequest.push(() => ((lengths = new WeakMap()), (signatures = new WeakMap()), (prefixes = new WeakMap())))
+const lengthOf = (b: Block) => JSON.stringify(b, uncontrolled).length
 const jsonLength = (b: Block) => {
   let n = lengths.get(b)
-  if (n === undefined) lengths.set(b, (n = JSON.stringify(b, uncontrolled).length))
-  return n
+  const hit = n !== undefined
+  if (!hit) lengths.set(b, (n = lengthOf(b)))
+  return checks.on ? checked('length', b, '', hit, n!, () => lengthOf(b), () => JSON.stringify(b, uncontrolled)) : n!
 }
-const signatures = new WeakMap<Block, string>()
 const signatureHash = (b: Block & { signature: string }) => {
   let h = signatures.get(b)
-  if (h === undefined) signatures.set(b, (h = hash(b.signature)))
-  return h
+  const hit = h !== undefined
+  if (!hit) signatures.set(b, (h = hash(b.signature)))
+  return checks.on ? checked('signature', b, '', hit, h!, () => hash(b.signature), () => b.signature) : h!
 }
-const PREFIXES = 4
-const prefixes = new WeakMap<Block, Map<string, string>>()
+const prefixWorked = (before: string, role: string, b: Block) => hash(before + role + JSON.stringify(b, uncontrolled))
 const prefixThrough = (before: string, role: string, b: Block) => {
   let ps = prefixes.get(b)
   if (!ps) prefixes.set(b, (ps = new Map()))
-  let prefix = ps.get(role + before)
-  if (prefix === undefined) {
-    prefix = hash(before + role + JSON.stringify(b, uncontrolled))
-    if (ps.size >= PREFIXES) ps.delete(ps.keys().next().value!)
-    ps.set(role + before, prefix)
-  }
-  return prefix
+  const key = role + '\0' + before
+  let prefix = ps.get(key)
+  const hit = prefix !== undefined
+  if (!hit) ps.set(key, (prefix = prefixWorked(before, role, b)))
+  return checks.on ? checked('prefix', b, key, hit, prefix!, () => prefixWorked(before, role, b), () => prefix!) : prefix!
 }
 
 // `unbound`, the blocks unboundIn finds, count nothing.

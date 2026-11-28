@@ -41,6 +41,7 @@ import { add, addBare, addResent, spent, type Cost, type Usage } from './cost.ts
 import { localHost, route } from './via.ts'
 import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textRules, toolRulesOf, type Policy } from './policy.ts'
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
+import { checks, contentsFrozen, newRequest } from './memo.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
 import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedSystem, markedTtl, positionsOf, prefixesOf, reachOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, trimmedInTurn, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, unboundIn, type Decision, type Thinking } from './trim.ts'
@@ -274,6 +275,9 @@ type Freeze = { mode?: 'frozen' | 'retry'; gap: number; differs: boolean; unfroz
 function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Canonical, { render, ids, counted }: Wire, params: Record<string, unknown>, now: number, side?: boolean, compaction?: boolean, req: { headers: IncomingHttpHeaders; upstream: string; launch?: LaunchVals } = { headers: {}, upstream: '' }, freeze = false, also: Refusals = {}): Prepared | undefined {
   const msgs: ApiMsg[] | undefined = body.messages
   if (!Array.isArray(msgs) || !msgs.length || !body.tools?.length) return
+  // Requests run at once may forget each other's memos, costing only misses.
+  newRequest()
+  if (checks.on) contentsFrozen(msgs)
   const conv = h?.conventions ?? NO_CONVENTIONS
   const auto = proto.automatic
   const markable = auto && marking(body.model) ? proto.markable : undefined

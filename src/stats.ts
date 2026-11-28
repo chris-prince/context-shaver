@@ -21,6 +21,7 @@
 // that unbound it kept its thinking.
 
 import { hash, isCompactionItem, isNote, kinds as kindsOf, preambleEnd, sections as sectionsOf } from './log.ts'
+import { checked, checks, perRequest } from './memo.ts'
 import { CATEGORIES, firstLine, notesOfBlock } from './notes.ts'
 import { blocks, CLAUDE_CODE, isPrompt, type ApiMsg, type Block, type Conventions } from './items.ts'
 import type { Cost } from './cost.ts'
@@ -153,14 +154,16 @@ export type Stats = {
 // carrying one as an array, and as a string once the breakpoint moves on, so
 // that becomes the string. A message's key. It's kept on the message, as one
 // is keyed many times a request, while its role and content are the ones it
-// was keyed with (skills.ts and defer.ts give a message new content).
-const keyed = new WeakMap<ApiMsg, { role: string; content: unknown; key: string }>()
+// was keyed with (skills.ts and defer.ts give a message new content), for a
+// request only (memo.ts, newRequest).
+let keyed = new WeakMap<ApiMsg, { role: string; content: unknown; key: string }>()
+perRequest.push(() => (keyed = new WeakMap()))
 export function keyOf(m: ApiMsg): string {
   const k = keyed.get(m)
-  if (k && k.role === m.role && k.content === m.content) return k.key
-  const key = keyFor(m)
-  keyed.set(m, { role: m.role, content: m.content, key })
-  return key
+  const hit = k !== undefined && k.role === m.role && k.content === m.content
+  const key = hit ? k.key : keyFor(m)
+  if (!hit) keyed.set(m, { role: m.role, content: m.content, key })
+  return checks.on ? checked('key', m, '', hit, key, () => keyFor(m), () => key) : key
 }
 
 function keyFor(m: ApiMsg): string {

@@ -48,7 +48,10 @@
 // A Codex request is anchored with explicit breakpoints, as the proxy anchors
 // it by default; --no-codex-breakpoints leaves it unanchored, as
 // SHAVER_CODEX_BREAKPOINTS=0 does.
-// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-shaver.ts [--validate] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--no-codex-breakpoints] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
+// --memo-checks runs the memos' checks (memo.ts), with each request's messages'
+// contents frozen, and reports their tallies; it runs about as slowly as
+// with no memos.
+// Usage: [POLICY=<file>] bin/node-wrapper scripts/backtest-shaver.ts [--validate] [--since ISO] [--until ISO] [--first n] [--horizons JSON] [--compact-at tokens] [--no-compaction] [--no-rereads] [--no-codex-breakpoints] [--memo-checks] [--out file.jsonl] [proxy-data/logs/<conversation> ...]
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { blocks, clockOf, heldTo, type ApiMsg, type Block, type Clock } from '../src/items.ts'
@@ -60,6 +63,7 @@ import { forcedTrimOf, loadPolicy, policyNow, textRules, type PartRules, type Po
 import { isCompaction, isSideRequest, keyOf, promptTokens, type Stats, withoutSideRequest } from '../src/stats.ts'
 import { mergedOf, promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
+import { checks, contentsFrozen, newRequest, report } from '../src/memo.ts'
 import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, liveEnd, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, trimmedInTurn, type Markable } from '../src/trim.ts'
 import { RESPONSES } from '../src/responses.ts'
 import { usesOf, wholeIn, type Uses } from './rereads.ts'
@@ -79,6 +83,7 @@ const validate = args.includes('--validate') && !!args.splice(args.indexOf('--va
 // Validating against the decisions logged, only the client's own compactions.
 const compacting = !(args.includes('--no-compaction') && !!args.splice(args.indexOf('--no-compaction'), 1)) && !validate
 const rereading = !(args.includes('--no-rereads') && !!args.splice(args.indexOf('--no-rereads'), 1))
+if (args.includes('--memo-checks') && !!args.splice(args.indexOf('--memo-checks'), 1)) checks.on = true
 const compactAt = opt('--compact-at')
 const codexBreakpoints = !(args.includes('--no-codex-breakpoints') && !!args.splice(args.indexOf('--no-codex-breakpoints'), 1))
 const fromTime = opt('--since') ?? ''
@@ -247,6 +252,7 @@ function rebuild(dir: string): Conv {
   const logged = lines.filter((e) => e.event === 'compaction' && e.advanced && e.savedChars && e.time >= fromTime && e.time < until).length
   const records = state.replace(/\.json$/, '.summaries.json')
   const chain: Summary[] = existsSync(records) ? JSON.parse(readFileSync(records, 'utf8')).chain : []
+  if (checks.on) for (const q of reqs) contentsFrozen(q.msgs), contentsFrozen(q.sent)
   return { reqs, broken, logged, h: h && 'name' in h ? h : undefined, thinking, chain, uses: usesOf(orig) }
 }
 
@@ -277,9 +283,27 @@ function renumbered(chain: readonly Summary[], msgs: readonly ApiMsg[]): Summary
 // Read and write prices relative to input (replay.ts and trim.ts, writeCost).
 const rates = (m: Model, auto: boolean) => ({ read: m.price ? m.price.read / m.price.input : 0.1, write: m.price?.write ? m.price.write / m.price.input : auto ? 1 : 2 })
 
+// Rows run over a conversation together, a request at a time: each request is
+// one for the memos (memo.ts, newRequest), as in the proxy, so the rows share
+// what's worked out of its blocks, and it's forgotten before the next.
+function together(rows: Generator<void, Tally>[]): Tally[] {
+  const out: (Tally | undefined)[] = rows.map(() => undefined)
+  while (out.some((t) => !t)) {
+    newRequest()
+    rows.forEach((g, i) => {
+      if (out[i]) return
+      const r = g.next()
+      if (r.done) out[i] = r.value
+    })
+  }
+  return out as Tally[]
+}
+const run = (...args: Parameters<typeof steps>): Tally => together([steps(...args)])[0]
+
+// One row's run over a conversation, yielding after each request.
 // `asLogged`: each request under the policy it was logged with (every request
 // has one; see `logged`), not POLICY's.
-function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number, q: Req, since: number) => number, trace?: (n: number, q: Req, d?: Logged) => void, asLogged = false): Tally {
+function* steps({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number, q: Req, since: number) => number, trace?: (n: number, q: Req, d?: Logged) => void, asLogged = false): Generator<void, Tally> {
   const conv = h?.conventions ?? NO_CONVENTIONS
   let applied: Clock = { requests: 0, turns: 0 }
   let sentRecords = 0
@@ -300,7 +324,8 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
   // What Claude Code's compaction would keep, folded from the client's
   // messages; none for other harnesses.
   let fold: Keep | undefined
-  reqs.forEach((real, n) => {
+  for (const [n, real] of reqs.entries()) {
+    yield
     if (h?.name === 'claude') fold = folded(fold, real.msgs, undefined, real.version)
     if (compacted && !(real.msgs.length > compacted.from && same(real.msgs[compacted.from - 1], compacted.last))) compacted = undefined
     const q: Req = compacted ? { ...real, msgs: [...compacted.prefix, ...real.msgs.slice(compacted.from)] } : real
@@ -444,7 +469,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     // that one is its own compaction or doesn't go on from this one.
     const c = q.model.compaction
     const next = reqs[n + 1]
-    if (!compacting || at == null || !c || !next || tokens <= at || isCompaction(q.msgs) || isCompaction(next.msgs) || !extend(next.msgs, real.msgs)) return
+    if (!compacting || at == null || !c || !next || tokens <= at || isCompaction(q.msgs) || isCompaction(next.msgs) || !extend(next.msgs, real.msgs)) continue
     const tok = (m: ApiMsg) => JSON.stringify(strip(m)).length * ratio
     const filler = (tokens: number): ApiMsg => ({ role: 'user', content: [{ type: 'text', text: 'x'.repeat(Math.max(0, Math.round(tokens / ratio))) }] })
     const summary = filler(c.summarized ?? c.summary)
@@ -457,7 +482,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
       // last exchange it keeps whole is what the next request adds. With one
       // answer only, nothing is compacted.
       const kept = keptTokens(fold, ratio)
-      if (kept === undefined) return
+      if (kept === undefined) continue
       prefix = [filler((c.summarized ?? c.summary) + kept)]
     } else if (c.kept === 'prompts') {
       // The newest user messages, up to PROMPTS_KEPT tokens, then the summary.
@@ -477,7 +502,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
       for (let size = 0; i > 0 && size + tok(q.msgs[i - 1]) <= c.kept; i--) size += tok(q.msgs[i - 1])
       let from = q.msgs.findIndex((m, j) => j >= i && m.role === 'assistant')
       if (from < 0) from = q.msgs.findLastIndex((m) => m.role === 'assistant')
-      if (from <= 1) return
+      if (from <= 1) continue
       prefix = [summary, ...q.msgs.slice(from).map(strip)]
     }
     // The compaction request reads the prompt as just sent, and writes the
@@ -497,7 +522,7 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     applied = { requests: 0, turns: 0 }
     sentRecords = 0
     sentMerged = 0
-  })
+  }
   return out
 }
 
@@ -569,9 +594,12 @@ for (const [k, dir] of dirs.entries()) {
   const { reqs, broken, logged, h } = got
   const inWindow = reqs.filter((q) => q.time >= fromTime && q.time < until).length
   if (!inWindow) continue
-  const by = HORIZONS.map(([, f]) => run(got, f))
-  // As the proxy ran it: each request's logged policy, at its model's horizon.
-  const was = policiesLogged(got) ? run(got, modelHorizon, undefined, true) : undefined
+  // As the proxy ran it, `was`: each request's logged policy, at its model's
+  // horizon.
+  const asRan = policiesLogged(got)
+  const rows = together([...HORIZONS.map(([, f]) => steps(got, f)), ...(asRan ? [steps(got, modelHorizon, undefined, true)] : [])])
+  const by = rows.slice(0, HORIZONS.length)
+  const was = asRan ? rows[HORIZONS.length] : undefined
   const base = was?.cost ?? by[1].cost
   const head = was ? `${LOGGED} ${(was.cost / 1e6).toFixed(2)}M ${was.trims}${made(was)} | ` : ''
   console.log(`${k + 1}/${dirs.length} ${path.basename(dir)} ${h?.name ?? 'unknown'} ${inWindow} req | ${head}${HORIZONS.map(([label], i) => `${label} ${i === 1 && !was ? `${(by[i].cost / 1e6).toFixed(2)}M` : pctOf(by[i].cost, base)} ${by[i].trims}${made(by[i])}`).join(' | ')}`)
@@ -598,3 +626,4 @@ for (const [name, t] of totals) {
   console.log(row(LOGGED, v.was))
   HORIZONS.forEach(([label], i) => console.log(row(label, v.by[i], v.was.cost)))
 }
+if (checks.on) console.log('\n' + report().join('\n'))
