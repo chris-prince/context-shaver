@@ -949,7 +949,10 @@ them for gpt-6-luna. A 400 to a request with a breakpoint, however it's
 worded, sends the same request again without them (`breakpoints.ts`); if
 that's accepted, the field was what was refused, so a refusal costs one
 request, the first the proxy sends that model, and that model isn't marked
-again until the proxy restarts. If it's refused too, the first refusal goes to the freeze, as
+again until the proxy restarts. A refusal of where a breakpoint went ("must
+be attached to a content block …") is a fault of that request's blocks, not
+of the field, so it sends only that request unmarked, and the model's next
+request is marked as before. If it's refused too, the first refusal goes to the freeze, as
 any other does. An unmarked request reads only an entry within the lookback
 of its end, so a trim reads one only where an earlier request ended before
 its first change and no more than 20 items before its end, and otherwise

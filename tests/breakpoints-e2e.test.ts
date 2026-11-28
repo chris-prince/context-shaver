@@ -18,8 +18,9 @@ const ROOT = path.join(import.meta.dirname, '..')
 type Up = { url: string; seen: any[]; close(): void }
 // How the upstream refuses: `named`, a 400 naming the field to a request that
 // carries it; `unnamed`, the same in words that don't name it; `trimmed`, a
-// 400 to any request with a stubbed output, the field or not.
-type Refusing = 'named' | 'unnamed' | 'trimmed'
+// 400 to any request with a stubbed output, the field or not; `placed`, a 400
+// to a request that carries it, for the block it's on.
+type Refusing = 'named' | 'unnamed' | 'trimmed' | 'placed'
 // An upstream that answers every Responses request with a short message, or
 // refuses as `refusing` says.
 async function upstream(refusing?: Refusing): Promise<Up> {
@@ -33,7 +34,12 @@ async function upstream(refusing?: Refusing): Promise<Up> {
       const whole = raw.split('x'.repeat(4000)).length - 1
       const refuse = refusing === 'trimmed' ? whole < outputs : !!refusing && raw.includes('prompt_cache_breakpoint')
       if (refuse) {
-        const message = refusing === 'named' ? "Unknown parameter: 'input[0].content[0].prompt_cache_breakpoint'." : 'Invalid request.'
+        const message =
+          refusing === 'named'
+            ? "Unknown parameter: 'input[0].content[0].prompt_cache_breakpoint'."
+            : refusing === 'placed'
+              ? 'prompt_cache_breakpoint must be attached to a content block that renders cacheable prompt content.'
+              : 'Invalid request.'
         res.writeHead(400, { 'content-type': 'application/json' })
         return void res.end(JSON.stringify({ error: { message, type: 'invalid_request_error' } }))
       }
@@ -160,6 +166,17 @@ for (const refusing of ['named', 'unnamed'] as const)
     for (const body of seen.slice(1)) assert.deepEqual(marked(body), [])
     for (const trimmed of [seen[51], seen.at(-1)]) assert.equal(stubbed(trimmed), 50)
   })
+
+test('refused for where it is: that request goes again without the breakpoint, and the next is marked as before', async () => {
+  const seen = await conversation(true, 'placed')
+  // Each of the 51 requests refused marked, then resent unmarked as it was.
+  assert.equal(seen.length, 2 * 51)
+  for (let i = 0; i < seen.length; i += 2) {
+    assert.notDeepEqual(marked(seen[i]), [])
+    assert.deepEqual(seen[i + 1], JSON.parse(JSON.stringify(seen[i], (k, v) => (k === 'prompt_cache_breakpoint' ? undefined : v))))
+  }
+  assert.equal(stubbed(seen.at(-1)), 50)
+})
 
 test('refused without the breakpoint too: the freeze takes it, and the model is still marked', async () => {
   const seen = await conversation(true, 'trimmed', true)

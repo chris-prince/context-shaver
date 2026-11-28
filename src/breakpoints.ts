@@ -6,9 +6,15 @@
 // gpt-6-astra and gpt-6-luna; Codex's ChatGPT backend refuses it for
 // gpt-6-luna ("not supported on this model", 2026-11-25). A model whose
 // upstream refuses a marked request, its first, is sent the same request
-// without it, and not marked again until the proxy restarts.
+// without it, and not marked again until the proxy restarts; one refused for
+// where a breakpoint is (MISPLACED) is sent without it, and still marked.
 
 export const on = process.env.SHAVER_CODEX_BREAKPOINTS !== '0'
+
+// How the upstream refuses a breakpoint for the block it's on, not the field
+// ("must be attached to a content block that renders cacheable prompt
+// content", seen on an output of '').
+export const MISPLACED = /must be attached to a content block/i
 
 // Models whose upstream refused the field since the proxy started.
 const refused = new Set<string>()
@@ -35,8 +41,14 @@ export async function fetchMarked(url: string, init: { method?: string; headers:
     await again.body?.cancel()
     return r
   }
-  refused.add(String(b.model))
   const error = (await r.text()).replace(/\s+/g, ' ').slice(0, 200)
+  // A breakpoint refused for the block it's on says nothing of the model:
+  // only this request goes without, and the next is marked as before.
+  if (MISPLACED.test(error)) {
+    console.error(`${new Date().toISOString()} shaver: ${b.model} refused a prompt_cache_breakpoint where it was (${error}); sent without it, and still marked after`)
+    return again
+  }
+  refused.add(String(b.model))
   console.error(`${new Date().toISOString()} shaver: ${b.model} refused prompt_cache_breakpoint (${error}); sent without it, and not sent it again until the proxy restarts`)
   return again
 }
