@@ -913,6 +913,25 @@ conversation, and a trim's uncached tokens averaged 11.6K with it against
 marks them `exact`, and `readThrough` and the entries recorded follow;
 `decide` prices both candidates with theirs.
 
+The system prompt's end is marked as well, on its last part with text
+(`markedSystem`; `responses.ts` puts it on the head item the part came in).
+The lookback finds only an entry at a request's end, so a request that finds
+none in its messages reads nothing, not the system prompt and tools either:
+a trim with no block before its first change that can be marked, as in a
+Codex sub-agent's conversation, which starts with an item that can't be, and
+a sub-agent's first request, whatever sub-agents with the same system prompt
+came before. Such a request writes past the system prompt's end, which leaves
+an entry there, and the next one reads it. Entries are kept by
+`prompt_cache_key` (the `kinds` probe, `head-key`: the same marked prompt
+under another key read nothing): a conversation's requests share one, and so
+do its sub-agents', which Codex sends under their parent's, but a new
+conversation reads nothing an earlier one wrote. In four sol runs
+without it, 4 of the 13 trims of sub-agents' conversations read
+nothing, each rewriting the 29.5K tokens of system prompt and tools, and so
+did the first request of each of the 5 sub-agents whose system prompt and
+tools an earlier one in its run had sent. The cache model starts after the
+system prompt, so it's unchanged.
+
 The first two go on every request, whatever the lookback would have read.
 Replayed on shaved Codex runs from 2026-11-26 with the lookback at 20 items,
 the two cost 8% less than the proxy as it was then (the first breakpoint

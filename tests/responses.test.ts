@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canonical, RESPONSES, withWrites } from '../src/responses.ts'
-import { anchored, positionsOf } from '../src/trim.ts'
+import { anchored, markedSystem, positionsOf } from '../src/trim.ts'
 import { forceDefer } from '../src/defer.ts'
 import { harnessOf, type Harness } from '../src/harness.ts'
 import { blocks, type ApiMsg, type Block } from '../src/items.ts'
@@ -298,6 +298,23 @@ test('a block the core anchored is sent with an explicit breakpoint, its item ot
   // A stubbed output, then marked.
   const stubbed = c.body.messages.map((m) => ({ ...m, content: blocks(m).map((b) => (b.type === 'tool_result' ? { ...b, content: '[stubbed]' } : b)) }))
   assert.deepEqual(render(c, at(stubbed, k))[7], { ...wire.input[7], output: [{ type: 'input_text', text: '[stubbed]', prompt_cache_breakpoint: { mode: 'explicit' } }] })
+})
+
+test('a system block the core marked is sent with an explicit breakpoint on its head part, the instructions with none', () => {
+  const c = canonical({ ...wire, instructions: 'be brief' })
+  const input = (system: unknown) => (c.render({ ...c.body, system }) as typeof wire & { instructions: string })
+  const system = c.body.system as Block[]
+  assert.deepEqual(system.map((b) => b.text), ['be brief', 'You are Codex.', wire.input[2].content![0].text])
+  // The last, the environment context: its part gets the breakpoint, every other item as it came.
+  const out = input(markedSystem(system))
+  assert.deepEqual(out.input[2], { ...wire.input[2], content: [{ ...wire.input[2].content![0], prompt_cache_breakpoint: { mode: 'explicit' } }] })
+  for (const i of [0, 1, 3, 4, 5, 6, 7, 8, 9]) assert.deepEqual(out.input[i], wire.input[i])
+  // A part whose text the core changed as well.
+  const changed = input(markedSystem(system.map((b, i) => (i === 2 ? { ...b, text: 'shorter' } : b))))
+  assert.deepEqual(changed.input[2].content, [{ type: 'input_text', text: 'shorter', prompt_cache_breakpoint: { mode: 'explicit' } }])
+  // The instructions aren't a part: marked, they go as they came.
+  const only = input(system.map((b, i) => (i === 0 ? { ...b, cache_control: { type: 'ephemeral' } } : b)))
+  assert.equal(JSON.stringify(only), JSON.stringify({ ...wire, instructions: 'be brief' }))
 })
 
 test("an explicit breakpoint goes only where Responses takes one: a user message's last block, text or a tool's text output", () => {

@@ -43,7 +43,7 @@ import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textR
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
-import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, prefixesOf, reachOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, trimmedInTurn, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, unboundIn, type Decision, type Thinking } from './trim.ts'
+import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedSystem, markedTtl, positionsOf, prefixesOf, reachOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, trimmedInTurn, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, unboundIn, type Decision, type Thinking } from './trim.ts'
 import { arcsPastEnd, chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
@@ -431,6 +431,9 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   }
   body.messages = anchor(sent)
   if (freed && marks(body.messages) > marks(sent.msgs)) body.system = freed
+  // And one at the system prompt's end, which a request reads that finds no
+  // entry in its messages (trim.ts, markedSystem).
+  if (markable) body.system = markedSystem(body.system)
   // The entries this request writes or reads.
   const pos = positionsOf(body.messages, seed, thinking, counting(model, auto))
   const r = readThrough(pos, live, model.lookback)

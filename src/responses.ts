@@ -208,18 +208,19 @@ export function canonical(wire: Record<string, unknown>): Wire {
     return { head: sum(head), messages: rendered.map(sum), kinds: rendered.map(kindsOf), reasoning, calls }
   }
   // The head and instructions as they came, but for the parts whose text the
-  // core changed; every other item is sent as it came.
+  // core changed or that it marked (the instructions can't be); every other
+  // item is sent as it came.
   const headOf = (c: Canonical): { head: Item[]; instructions: unknown } => {
-    const now = c.system as { text?: string }[] | undefined
+    const now = c.system as Block[] | undefined
     if (!Array.isArray(now) || now.length !== said.length) return { head, instructions: wire.instructions }
     const parts = new Map<Item, Part[]>()
     let instructions = wire.instructions
     now.forEach((b, i) => {
-      if (b.text === said[i]) return
+      if (b.text === said[i] && b.cache_control === undefined) return
       const s = sources[i]
       if (!s) return void (instructions = b.text)
       const ps = parts.get(s.item) ?? [...(s.item.content ?? [])]
-      ps[s.k] = { ...ps[s.k], text: b.text }
+      ps[s.k] = marked(b, b.text === said[i] ? ps[s.k] : { ...ps[s.k], text: String(b.text) })
       parts.set(s.item, ps)
     })
     return { head: head.map((it) => (parts.has(it) ? { ...it, content: parts.get(it) } : it)), instructions }

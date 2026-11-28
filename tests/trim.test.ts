@@ -7,7 +7,7 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, policyNow, seedPolicy, skillRulesNow, textRules, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, reachOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, trimmedInTurn, fullyTrimmed, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, reachOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, trimmedInTurn, fullyTrimmed, markedSystem, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 import { RESPONSES } from '../src/responses.ts'
 
@@ -989,6 +989,17 @@ test("with automatic caching, a trim writes an entry where the turn's next trim 
   const done = trimmedInTurn(whole, p, 0).msgs
   assert.equal(settledEnd(done, done, 's', none, markable, true), undefined)
   assert.equal(settledEnd(done, done, 's', none, markable), pos(done).at(-1)!.prefix)
+})
+
+test('the system prompt is marked on its last block with text', () => {
+  const system = [{ type: 'text', text: 'You are Codex.' }, { type: 'text', text: '<environment_context>' }, { type: 'text', text: ' \n' }]
+  assert.deepEqual(markedSystem(system), [system[0], { ...system[1], cache_control: { type: 'ephemeral' } }, system[2]])
+  // The entries' names don't change with it.
+  assert.equal(seedOf('m', [], markedSystem(system), false), seedOf('m', [], system, false))
+  // One with no text, or not in blocks, is left as it is.
+  assert.deepEqual(markedSystem([system[2]]), [system[2]])
+  assert.equal(markedSystem('You are Codex.'), 'You are Codex.')
+  assert.equal(markedSystem(undefined), undefined)
 })
 
 test('with automatic caching counted in items, a request reads back only that many blocks', () => {

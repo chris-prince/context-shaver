@@ -1,9 +1,10 @@
 // Unless SHAVER_CODEX_BREAKPOINTS=0, a Responses (Codex) request's anchors
 // are sent as explicit breakpoints (OpenAI's prompt_cache_breakpoint, which
-// responses.ts puts on where the core marked a block): up to three on every
-// request (trim.ts, liveEnd). It's been seen to work for gpt-6.1-sol,
-// gpt-6.1-terra, gpt-6-astra and gpt-6-luna; Codex's ChatGPT backend refuses
-// it for gpt-6-luna ("not supported on this model", 2026-11-25). A model whose
+// responses.ts puts on where the core marked a block): up to three in every
+// request's messages and one at its system prompt's end (trim.ts, liveEnd and
+// markedSystem). It's been seen to work for gpt-6.1-sol, gpt-6.1-terra,
+// gpt-6-astra and gpt-6-luna; Codex's ChatGPT backend refuses it for
+// gpt-6-luna ("not supported on this model", 2026-11-25). A model whose
 // upstream refuses a marked request, its first, is sent the same request
 // without it, and not marked again until the proxy restarts.
 

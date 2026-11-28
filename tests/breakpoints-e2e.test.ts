@@ -2,9 +2,9 @@
 // upstream with explicit breakpoints, at its last live entry, where it stops
 // matching its messages settled, and where it stops matching them trimmed as
 // far as the turn's requests take them, so a trim reads the prefix it keeps
-// however far back; with it off, the same requests go with none, trimmed
-// alike; and an upstream that refuses the field gets the same request without
-// it, and no breakpoint after.
+// however far back, and at the end of its head; with it off, the same
+// requests go with none, trimmed alike; and an upstream that refuses the
+// field gets the same request without it, and no breakpoint after.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -197,7 +197,7 @@ async function longTurn(on: boolean) {
   }
 }
 
-test("on, in a long turn: a trim is marked where the turn's next trim starts, which that trim reads", async () => {
+test("on, in a long turn: each request is marked at its head's end, and a trim where the turn's next trim starts, which that trim reads", async () => {
   const seen = await longTurn(true)
   // The last stubbed output: the head's message, the prompt, then a call and an output each.
   const boundary = (body: any) => 1 + 2 * stubbed(body)
@@ -205,18 +205,19 @@ test("on, in a long turn: a trim is marked where the turn's next trim starts, wh
   assert.ok(trims.length >= 2)
   seen.forEach((body, n) => {
     const at = marked(body)
-    assert.ok(at.length <= 3)
-    // The settled boundary, the prompt.
-    assert.equal(at[0], 1)
+    assert.ok(at.length <= 4)
+    // The head's end and the settled boundary, the prompt.
+    assert.deepEqual(at.slice(0, 2), [0, 1])
+    assert.deepEqual(body.input[0].content, [{ type: 'input_text', text: 'You are in /repo.', prompt_cache_breakpoint: { mode: 'explicit' } }])
     // Once trimmed, the last output stubbed, before the next one due.
     if (stubbed(body)) assert.ok(at.includes(boundary(body)))
     // And on a trim, the one the trim before left there, its last live entry.
     const before = trims[trims.indexOf(n) - 1]
-    if (before !== undefined) assert.deepEqual(at, [1, boundary(seen[before]), boundary(body)])
+    if (before !== undefined) assert.deepEqual(at, [0, 1, boundary(seen[before]), boundary(body)])
   })
 })
 
-test('off, in a long turn: the same requests go unmarked', async () => {
+test('off, in a long turn: the same requests go unmarked, the head too', async () => {
   const seen = await longTurn(false)
   assert.ok(stubbed(seen.at(-1)) > 0)
   for (const body of seen) assert.ok(!JSON.stringify(body).includes('prompt_cache_breakpoint'))

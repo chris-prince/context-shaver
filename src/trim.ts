@@ -688,7 +688,8 @@ export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], se
 //   boundary the last trim wrote, and otherwise mostly the last request's
 //   end, which the lookback would find too unless the request adds more than
 //   it reaches.
-// Where two are one block, it's marked once.
+// Where two are one block, it's marked once. The system prompt's end is
+// marked as well (markedSystem).
 export function liveEnd(msgs: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, thinking: Thinking, markable: Markable): string | undefined {
   const a = positionsOf(msgs, seed, thinking)
   const bs = msgs.flatMap((m) => blocks(m).map((bl) => [bl, m] as const))
@@ -715,6 +716,32 @@ export function anchored(msgs: readonly ApiMsg[], end: string | undefined, seed:
     return copy
   }
   return msgs.map((m, i) => (i === at[k][0] ? { ...m, content: blocks(m).map((bl, j) => (j === at[k][1] ? mark(bl) : bl)) } : m))
+}
+
+// The system prompt with an explicit breakpoint on its last block with text,
+// where the protocol can mark one under automatic caching. A request that
+// finds no entry in its messages reads nothing, not the system prompt and
+// tools either, as the lookback finds only an entry at a request's end: a
+// trim with no block before its first change that the protocol can mark (a
+// Codex sub-agent's messages start with an item it can't: responses.ts,
+// markable), and a sub-agent's first request, whatever sub-agents with the
+// same system prompt came before. Such a request writes past this breakpoint,
+// which leaves an entry at the system prompt's end, and the next one reads it
+// (probe-codex-model-details.ts, kinds). Entries are kept by the request's
+// prompt_cache_key (the same probe, head-key: the same marked prompt under
+// another key read nothing), which a conversation's requests share, and with
+// them its sub-agents', which Codex sends under their parent's; a new
+// conversation reads nothing of an earlier one's. In four sol runs
+// without it, 4 of the 13 trims of sub-agents' conversations read
+// nothing, each rewriting the 29.5K tokens of system prompt and tools, and so
+// did the first request of each of the 5 sub-agents whose system prompt and
+// tools an earlier one in its run had sent, 1 to 47 seconds after that one's
+// latest request. The cache model starts after the system prompt (seedOf), so
+// nothing in it changes.
+export function markedSystem(system: unknown): unknown {
+  if (!Array.isArray(system)) return system
+  const k = system.findLastIndex((b) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim() !== '')
+  return system.map((b, i) => (i === k ? { ...b, cache_control: { type: 'ephemeral' } } : b))
 }
 
 // The system prompt with its first breakpoint taken out, freeing a slot for
