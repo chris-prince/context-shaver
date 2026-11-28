@@ -1,6 +1,7 @@
 // SHAVER_CODEX_BREAKPOINTS end to end: with it on, every Codex request goes
-// upstream with explicit breakpoints, at its last live entry and where it
-// stops matching its messages settled, so a trim reads the prefix it keeps
+// upstream with explicit breakpoints, at its last live entry, where it stops
+// matching its messages settled, and where it stops matching them trimmed as
+// far as the turn's requests take them, so a trim reads the prefix it keeps
 // however far back; with it off, the same requests go with none, trimmed
 // alike; and an upstream that refuses the field gets the same request without
 // it, and no breakpoint after.
@@ -49,13 +50,14 @@ async function upstream(refusing?: Refusing): Promise<Up> {
 }
 
 type Proxy = { url: string; child: ChildProcess }
-async function proxy(up: string, on: boolean): Promise<Proxy> {
+const SETTLING = { tool: [{ action: 'stub', after: '0 turns' }] }
+async function proxy(up: string, on: boolean, rules: object = SETTLING): Promise<Proxy> {
   const dir = mkdtempSync(path.join(tmpdir(), 'breakpoints-e2e-'))
   const policy = path.join(dir, 'policy.json')
   writeFileSync(
     policy,
     JSON.stringify({
-      conversation_shaver_rules: { tool: [{ action: 'stub', after: '0 turns' }], user_and_assistant_text: { summary_threshold_tokens: 10_000_000, memoir_threshold_tokens: 10_000_000 } },
+      conversation_shaver_rules: { ...rules, user_and_assistant_text: { summary_threshold_tokens: 10_000_000, memoir_threshold_tokens: 10_000_000 } },
       tool_shaver_rules: { codex: [] },
       skill_shaver_rules: [],
     }),
@@ -174,4 +176,48 @@ test('refused without the breakpoint too: the freeze takes it, and the model is 
     // the output the request before ended with.
     assert.deepEqual(marked(frozen), [0, 98])
   }
+})
+
+// One turn of 50 calls after a head of one developer message, under rules
+// that stub an output 4 requests on and drop its call when the turn is over:
+// while the turn lasts its settled boundary stays at the prompt.
+async function longTurn(on: boolean) {
+  const up = await upstream()
+  const p = await proxy(up.url, on, { tool: [{ action: 'stub', after: '4 requests' }, { action: 'drop', after: '0 turns' }] })
+  try {
+    const turn: object[] = [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'You are in /repo.' }] }, prompt('look around')]
+    for (let i = 0; i < 50; i++) {
+      await send(p, turn)
+      turn.push(call(i), output(i))
+    }
+    return up.seen
+  } finally {
+    p.child.kill()
+    up.close()
+  }
+}
+
+test("on, in a long turn: a trim is marked where the turn's next trim starts, which that trim reads", async () => {
+  const seen = await longTurn(true)
+  // The last stubbed output: the head's message, the prompt, then a call and an output each.
+  const boundary = (body: any) => 1 + 2 * stubbed(body)
+  const trims = seen.map((_, n) => n).filter((n) => n > 0 && stubbed(seen[n]) > stubbed(seen[n - 1]))
+  assert.ok(trims.length >= 2)
+  seen.forEach((body, n) => {
+    const at = marked(body)
+    assert.ok(at.length <= 3)
+    // The settled boundary, the prompt.
+    assert.equal(at[0], 1)
+    // Once trimmed, the last output stubbed, before the next one due.
+    if (stubbed(body)) assert.ok(at.includes(boundary(body)))
+    // And on a trim, the one the trim before left there, its last live entry.
+    const before = trims[trims.indexOf(n) - 1]
+    if (before !== undefined) assert.deepEqual(at, [1, boundary(seen[before]), boundary(body)])
+  })
+})
+
+test('off, in a long turn: the same requests go unmarked', async () => {
+  const seen = await longTurn(false)
+  assert.ok(stubbed(seen.at(-1)) > 0)
+  for (const body of seen) assert.ok(!JSON.stringify(body).includes('prompt_cache_breakpoint'))
 })

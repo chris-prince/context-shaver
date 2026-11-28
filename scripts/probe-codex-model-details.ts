@@ -57,11 +57,35 @@
 //       F-bound  as many other items more, O7 marked: read through O7 if T-write left an entry there
 //       F-both   as many others, O7 and T-ext's end marked: read through T-ext's end
 //
-// Usage: bin/node-wrapper scripts/probe-codex-model-details.ts lookback|ttl|breakpoints|boundaries --model M [options]
+//   kinds: which items can carry a breakpoint, and how many a request can
+//     (responses.ts, markable). The session is breakpoints' and is held the
+//     same way. Each kind's variants send a prompt new from O1 on (changed by
+//     the kind's own tag, so no kind reads another's entries):
+//       X-write  the item marked, after O3: read nothing; it writes past the mark
+//       X-read   the same, O5 changed too: read through the item if its mark made an entry
+//     for X of: out, O3 itself, an output (the control); asst, an assistant
+//     message's output_text, added after O3; dev, a developer message's
+//     input_text, added after O3; reason, the first reasoning item after O3,
+//     marked on the item; call, the first call after O3, marked on the item.
+//     Then three breakpoints in one request (O3, O5, O7), read back one at a
+//     time by changing O8, O6 and O4; and four (O9 too), read by changing O10.
+//     Last the head, the items before the first prompt (responses.ts, isHead),
+//     its last text marked and the first prompt changed, twice over:
+//       head-write  read nothing; it writes past the mark
+//       head-read   read through the head if that left an entry at its end
+//       head-key    the same under another prompt_cache_key: read through the
+//                   head if another conversation's entry can be read
+//     and its largest text that isn't its last (a part within an item, where
+//     an item has several), marked, and the text after it changed:
+//       part-write  read nothing; it writes past the mark
+//       part-read   read through that text if the mark left an entry there
+//
+// Usage: bin/node-wrapper scripts/probe-codex-model-details.ts lookback|ttl|breakpoints|boundaries|kinds --model M [options]
 //   lookback     [--runs 80] [--k 70,55,51,49,45,21,19,10] [--sizes 250,1000] [--pads 0,3]
 //   ttl          [--gaps 1,20,40,70]       minutes
 //   breakpoints  [--runs 100] [--lookback 78]   O1 to O5 must be more than --lookback items from the end
 //   boundaries   [--runs 100] [--lookback 78]   O7 too; --lookback is at least the model's
+//   kinds        [--runs 100] [--lookback 78]   O10 too
 //   --upstream URL   default https://chatgpt.com/backend-api/codex (ChatGPT sign-in)
 //   --codex PATH     default codex, as the user's shell has it (alias, function or PATH)
 //   --wrapper-var NAME --real-codex PATH
@@ -86,8 +110,8 @@ const opt = (name: string, def: string) => {
 const model = opt('model', '')
 const wrapperVar = opt('wrapper-var', '')
 const realCodex = opt('real-codex', '')
-if (!['lookback', 'ttl', 'breakpoints', 'boundaries'].includes(mode) || !model || !wrapperVar !== !realCodex) {
-  console.error('usage: probe-codex-model-details.ts lookback|ttl|breakpoints|boundaries --model M [--runs 80] [--k 70,...] [--sizes 250,1000] [--gaps 1,20,...] [--lookback 78] [--upstream URL] [--codex PATH] [--wrapper-var NAME --real-codex PATH]')
+if (!['lookback', 'ttl', 'breakpoints', 'boundaries', 'kinds'].includes(mode) || !model || !wrapperVar !== !realCodex) {
+  console.error('usage: probe-codex-model-details.ts lookback|ttl|breakpoints|boundaries|kinds --model M [--runs 80] [--k 70,...] [--sizes 250,1000] [--gaps 1,20,...] [--lookback 78] [--upstream URL] [--codex PATH] [--wrapper-var NAME --real-codex PATH]')
   process.exit(2)
 }
 const upstream = opt('upstream', 'https://chatgpt.com/backend-api/codex').replace(/\/$/, '')
@@ -405,7 +429,7 @@ if (mode === 'lookback') {
   else console.log(`\nThe limit counts none of runs, tokens or items alone: the edges agree in none.`)
   console.log(`Answered as ${[...served].map(([m, n]) => `${m} (${n})`).join(', ') || 'nothing'}.`)
   console.log(`Elapsed ${minutes(Date.now() - t0)}.`)
-} else if (mode === 'breakpoints' || mode === 'boundaries') {
+} else if (mode === 'breakpoints' || mode === 'boundaries' || mode === 'kinds') {
   const runs = Number(opt('runs', '100'))
   const lookback = Number(opt('lookback', '78'))
   const cwd = files(250)
@@ -423,7 +447,7 @@ if (mode === 'lookback') {
       const p = T.input.findIndex((it) => it.type === 'message' && it.role === 'user' && it.content?.some((q) => q.text?.startsWith('For N from 11')))
       if (p < 0) stop("the second prompt isn't in the request")
       const o = T.input.flatMap((it, i) => (isOutput(it) && i > p ? [i] : []))
-      const far = mode === 'breakpoints' ? 5 : 7
+      const far = mode === 'breakpoints' ? 5 : mode === 'boundaries' ? 7 : 10
       if (o.length < far || T.input.length - o[far - 1] <= lookback) stop(`too few outputs more than ${lookback} items from the end: give more --runs`)
       const markP = (b: { input: Item[] }) => void (b.input[p].content!.at(-1)!.prompt_cache_breakpoint = MARK)
       const change = (b: { input: Item[] }, i: number) => mark(b.input[i])
@@ -451,7 +475,7 @@ if (mode === 'lookback') {
       }
       const add = (b: { input: Item[] }, tag: string, marked = false) => void b.input.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: `Reply OK. (${tag})`, ...(marked && { prompt_cache_breakpoint: MARK }) }] })
       const many = (b: { input: Item[] }, tag: string) => { for (let i = 0; i < lookback + 5; i++) add(b, `${tag}${i}`) }
-      const [o1, o2, o3, o4, o5, , o7] = o
+      const [o1, o2, o3, o4, o5, o6, o7, o8, o9, o10] = o
       const boundaries: [string, (b: { input: Item[] }) => void][] = [
         ['same', () => {}],
         ['W-write', (b) => (tagged(b, o1, 'w'), asArray(b, o3, true))],
@@ -478,10 +502,58 @@ if (mode === 'lookback') {
         ['split', split],
         ['onSplit', (b) => (split(b), change(b, o1))],
       ]
-      const variants = mode === 'breakpoints' ? breakpoints : boundaries
+      // For kinds: an item added after item i, and the first item after i that `is`.
+      const after = (b: { input: Item[] }, i: number, it: Item) => void b.input.splice(i + 1, 0, it)
+      const next = (i: number, is: (it: Item) => boolean) => T.input.findIndex((it, k) => k > i && is(it))
+      const asst: Item = { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'That step is done; going on to the next one.', prompt_cache_breakpoint: MARK }] }
+      const dev: Item = { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'Keep to one call per step.', prompt_cache_breakpoint: MARK }] }
+      const reasoning = next(o3, (it) => it.type === 'reasoning')
+      const call = next(o3, (it) => !!it.type?.endsWith('_call'))
+      const onItem = (b: { input: Item[] }, i: number) => void ((b.input[i] as Item & { prompt_cache_breakpoint?: unknown }).prompt_cache_breakpoint = MARK)
+      // Each kind's two variants; o5 is changed before an item is added, which moves the ones after it.
+      const kind = (name: string, put: (b: { input: Item[] }) => void): [string, (b: { input: Item[] }) => void][] => [
+        [`${name}-write`, (b) => (tagged(b, o1, name), put(b))],
+        [`${name}-read`, (b) => (tagged(b, o1, name), tagged(b, o5, `${name}2`), put(b))],
+      ]
+      // The head's last text marked, and the first prompt changed.
+      const p0 = T.input.findIndex((it) => it.type === 'message' && it.role === 'user' && it.content?.some((q) => q.text?.startsWith('For N from 1 to')))
+      const h = T.input.findLastIndex((it, k) => k < p0 && it.type === 'message' && it.content?.at(-1)?.type === 'input_text' && !!it.content.at(-1)!.text?.trim())
+      const onHead = (b: { input: Item[] }, tag: string) => {
+        b.input[p0].content!.at(-1)!.text += `\n(changed ${tag})`
+        b.input[h].content!.at(-1)!.prompt_cache_breakpoint = MARK
+      }
+      // The head's texts in order, and the largest that isn't the last.
+      const texts = T.input.slice(0, p0).flatMap((it, i) => (it.type === 'message' ? (it.content ?? []).map((q, k) => ({ i, k, q })) : []).filter(({ q }) => q.type === 'input_text' && !!q.text?.trim()))
+      const big = texts.slice(0, -1).reduce((x, t) => (t.q.text!.length > (x?.q.text!.length ?? 0) ? t : x), undefined as (typeof texts)[number] | undefined)
+      const onPart = (b: { input: Item[] }, tag: string) => {
+        if (!big) return
+        const at = texts.indexOf(big)
+        const { i, k } = texts[at + 1]
+        b.input[i].content![k].text += `\n(changed ${tag})`
+        b.input[big.i].content![big.k].prompt_cache_breakpoint = MARK
+      }
+      const rekeyed = (b: { input: Item[]; prompt_cache_key?: string }) => void (b.prompt_cache_key = `probe-${randomBytes(8).toString('hex')}`)
+      const three = (b: { input: Item[] }, tag: string) => (tagged(b, o1, tag), asArray(b, o3, true), asArray(b, o5, true), asArray(b, o7, true))
+      const kinds: [string, (b: { input: Item[] }) => void][] = [
+        ['same', () => {}],
+        ...kind('out', (b) => asArray(b, o3, true)),
+        ...kind('asst', (b) => after(b, o3, structuredClone(asst))),
+        ...kind('dev', (b) => after(b, o3, structuredClone(dev))),
+        ...(reasoning > o3 && reasoning < o5 ? kind('reason', (b) => onItem(b, reasoning)) : []),
+        ...(call > o3 && call < o5 ? kind('call', (b) => onItem(b, call)) : []),
+        ['3-write', (b) => three(b, 'three')],
+        ['3-read7', (b) => (three(b, 'three'), tagged(b, o8, 'three8'))],
+        ['3-read5', (b) => (three(b, 'three'), tagged(b, o6, 'three6'))],
+        ['3-read3', (b) => (three(b, 'three'), tagged(b, o4, 'three4'))],
+        ['4-write', (b) => (three(b, 'four'), asArray(b, o9, true))],
+        ['4-read9', (b) => (three(b, 'four'), asArray(b, o9, true), tagged(b, o10, 'four10'))],
+        ...(h >= 0 ? ([['head-write', (b) => onHead(b, 'head')], ['head-read', (b) => onHead(b, 'head2')], ['head-key', (b) => (onHead(b, 'head3'), rekeyed(b))], ...(big ? [['part-write', (b: { input: Item[] }) => onPart(b, 'part')], ['part-read', (b: { input: Item[] }) => onPart(b, 'part2')]] : [])] as [string, (b: { input: Item[] }) => void][]) : []),
+      ]
+      const variants = mode === 'breakpoints' ? breakpoints : mode === 'boundaries' ? boundaries : kinds
       const from = (i: number) => `item ${i}, ${T.input.length - i} from the end, ${through(i)} tokens through it`
-      console.log(`session ${id}: ${T.input.length} items; P ${from(p)}; ${(mode === 'breakpoints' ? [1, 2, 3, 4, 5] : [1, 3, 5, 7]).map((n) => `O${n} ${from(o[n - 1])}`).join('; ')}\n`)
-      console.log('variant   status    input   cached   share')
+      if (mode === 'kinds') console.log(`head: ${p0} items before the first prompt, the last marked item ${h} (${T.input[h]?.role}); texts ${texts.map(({ i, k, q }) => `${i}.${k} ${T.input[i].role} ${q.text!.length}`).join(', ')}; the largest not last ${big ? `${big.i}.${big.k}` : 'none'}`)
+      console.log(`session ${id}: ${T.input.length} items; P ${from(p)}; ${(mode === 'breakpoints' ? [1, 2, 3, 4, 5] : mode === 'boundaries' ? [1, 3, 5, 7] : [1, 3, 5, 7, 9]).map((n) => `O${n} ${from(o[n - 1])}`).join('; ')}\n`)
+      console.log('variant       status    input   cached   share')
       for (const [name, f] of variants) {
         const b = structuredClone(T)
         f(b)
@@ -496,7 +568,7 @@ if (mode === 'lookback') {
             } catch {}
         const input = u?.input_tokens ?? 0
         const cached = u?.input_tokens_details?.cached_tokens ?? 0
-        console.log(`${name.padEnd(8)}  ${String(r.status).padStart(6)}   ${String(input).padStart(6)}   ${String(cached).padStart(6)}   ${pct(cached, input).padStart(5)}`)
+        console.log(`${name.padEnd(12)}  ${String(r.status).padStart(6)}   ${String(input).padStart(6)}   ${String(cached).padStart(6)}   ${pct(cached, input).padStart(5)}`)
         if (!u) console.log(`          ${text.slice(0, 400).replaceAll('\n', ' ')}`)
       }
     },

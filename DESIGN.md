@@ -874,16 +874,18 @@ back but not 21; astra then read one 19 back but not 23, and terra 40 but not
 47. So the proxy counts on 20 for all of them (`models.ts`,
 `CODEX_LOOKBACK`), about the least any probe measured, and doesn't depend on
 it where it can mark. Unless `SHAVER_CODEX_BREAKPOINTS=0`
-(`breakpoints.ts`), every request carries up to two explicit breakpoints,
-OpenAI's `prompt_cache_breakpoint` on an `input_text` part, each on the last
-block of a user message (`responses.ts`, `markable`): a prompt's text or a
-tool's output, sent as an array of parts, which is the same prompt as its
-string. The text must have something in it: a breakpoint on an output of `''`
-(a command that printed nothing) is refused, and one refusal ends the model's
-marking until the proxy restarts. An explicit breakpoint reads only the entry at its own end, however
-far back, and a request makes one there only where it writes past it, not
-where it reads through it (`probe-codex-model-details.ts`, `breakpoints` and
-`boundaries`).
+(`breakpoints.ts`), every request carries up to three explicit breakpoints in
+its messages, OpenAI's `prompt_cache_breakpoint` on an `input_text` part,
+each on the last block of a user message (`responses.ts`, `markable`): a
+prompt's text or a tool's output, sent as an array of parts, which is the
+same prompt as its string. The text must have something in it: a breakpoint
+on an output of `''` (a command that printed nothing) is refused, and one
+refusal ends the model's marking until the proxy restarts. An explicit
+breakpoint reads only the entry at its own end, however far back, and a
+request makes one there only where it writes past it, not where it reads
+through it (`probe-codex-model-details.ts`, `breakpoints` and `boundaries`).
+An assistant's text and a call can't carry one (a reasoning item wasn't
+tried), and a request can carry four (the same probe, `kinds`).
 
 The first goes on the last block it can mark whose prefix is a live entry
 (`liveEnd`): where an earlier request ended, or where one wrote past the
@@ -895,13 +897,25 @@ leaves an entry there, and reads through the first breakpoint whatever is
 still cached before its first change. The requests after it read through the
 boundary however many items they have added since, and the next trim, which
 changes nothing before that boundary, reads through it too and writes past
-its own. Where both are the same block, the request carries one.
-`positionsOf` marks them `exact`, and `readThrough` and the entries recorded
-follow; `decide` prices both candidates with theirs.
+its own.
 
-Both go on every request, whatever the lookback would have read. Replayed on
-shaved Codex runs from 2026-11-26 with the lookback at 20 items, both
-breakpoints cost 8% less than the proxy as it was then (the first breakpoint
+The second stays where the turn began while a rule waits for the turn to end,
+as reasoning's does by default, so by itself each trim of a long turn reads
+to the turn's start and rewrites all the turn has kept since. The third goes
+on the last block it can mark before the messages first differ from them
+trimmed as far as more requests of the turn take them (`trimmedInTurn`).
+The turn's next trim changes nothing before it, so a trim's request, which
+writes past it, leaves there the entry the next trim reads. Messages with
+nothing more due in the turn carry no third. Replayed on six shaved sol runs,
+the next trim began at it after 38 of 39 trims of the main
+conversation, and a trim's uncached tokens averaged 11.6K with it against
+19.2K without. Where two are the same block, it's marked once. `positionsOf`
+marks them `exact`, and `readThrough` and the entries recorded follow;
+`decide` prices both candidates with theirs.
+
+The first two go on every request, whatever the lookback would have read.
+Replayed on shaved Codex runs from 2026-11-26 with the lookback at 20 items,
+the two cost 8% less than the proxy as it was then (the first breakpoint
 alone, only where it was thought to read more, counting on 78 items) on sol,
 and 14% less on astra. With the lookback anywhere from 5 to 78 items, sol's
 cost stayed within 2% of that, and what the proxy believed the lookback to be

@@ -60,7 +60,7 @@ import { forcedTrimOf, loadPolicy, policyNow, textRules, type PartRules, type Po
 import { isCompaction, isSideRequest, keyOf, promptTokens, type Stats, withoutSideRequest } from '../src/stats.ts'
 import { mergedOf, promptHash, promptsOf, summarized, validChain, type Summary } from '../src/summary.ts'
 import { messagesOf, objectsOf, receivedOf } from '../src/log.ts'
-import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, liveEnd, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, type Markable } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, fullyTrimmed, liveEnd, markedTtl, positionsOf, readThrough, settledEnd, sizeOf, trimmedInTurn, type Markable } from '../src/trim.ts'
 import { RESPONSES } from '../src/responses.ts'
 import { usesOf, wholeIn, type Uses } from './rereads.ts'
 
@@ -331,8 +331,14 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     }
     sentRecords = records
     sentMerged = merged
-    // The messages settled, once for each set of records applied: with automatic caching every candidate's boundary is found against them.
+    // The messages settled, and trimmed as far as this turn's requests take them, once for each set of records applied: with automatic caching every candidate's boundaries are found against them.
     const settled = new Map<string, ApiMsg[]>()
+    const inTurn = new Map<string, ApiMsg[]>()
+    const turnEndOf = (m: ApiMsg[]) => {
+      const k = `${records} ${merged}`
+      if (!inTurn.has(k)) inTurn.set(k, summarized(trimmedInTurn(q.msgs, rules, clock.turns, conv, thinking), q.msgs, chain.slice(0, records), merged).msgs)
+      return settledEnd(m, inTurn.get(k)!, 's', thinking, q.markable, true)
+    }
     const endOf = (m: ApiMsg[]) => {
       if (q.auto && !q.markable) return undefined
       const k = `${records} ${merged}`
@@ -341,8 +347,8 @@ function run({ reqs, h, thinking, chain: all, uses }: Conv, horizon: (n: number,
     }
     const end = endOf(keep.msgs)
     const anchor = (m: ApiMsg[]) => {
-      // As prepare places them: with automatic caching, two explicit ones, at the last live entry (liveEnd) and where the messages stop matching them settled.
-      if (q.markable) return anchored(anchored(m, liveEnd(m, live, 's', thinking, q.markable), 's', thinking, true), endOf(m), 's', thinking, true)
+      // As prepare places them: with automatic caching, three explicit ones, at the last live entry (liveEnd), where the messages stop matching them settled, and where they stop matching them trimmed as far as this turn's requests take them.
+      if (q.markable) return [liveEnd(m, live, 's', thinking, q.markable), endOf(m), turnEndOf(m)].reduce((x, e) => anchored(x, e, 's', thinking, true), m)
       if (q.auto) return m
       const x = anchored(m, end, 's', thinking)
       return reads(x) >= reads(m) ? x : m

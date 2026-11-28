@@ -7,7 +7,7 @@ import { blocks, clockNow, clockOf, isPrompt, requestsOf, turnsOf, type ApiMsg, 
 import { hash } from '../src/log.ts'
 import { afterOf, forcedTrimOf, loadPolicy, parsePolicy, policyNow, seedPolicy, skillRulesNow, textRules, treatment, upgraded, withList, type PartRules } from '../src/policy.ts'
 import { shaveSkills, type SkillRule } from '../src/skills.ts'
-import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, reachOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
+import { anchored, apply, counting, decide, entriesOf, freedSystem, isStubbed, liveEnd, markedTtl, positionsOf, reachOf, readThrough, seedOf, settledEnd, sizeOf, STUB, stub, stubHeredocs, transitions, trimmedEnd, trimmedInTurn, fullyTrimmed, unmarked, type Applied, wholeSeedOf, writeCost } from '../src/trim.ts'
 import { modelOf } from '../src/models.ts'
 import { RESPONSES } from '../src/responses.ts'
 
@@ -928,6 +928,67 @@ test('with automatic caching, a trim writes an entry at its settled boundary, wh
   const sol = modelOf('gpt-6.1-sol')
   const rewrites = (live: ReadonlySet<string>) => decide(marked(grown, live), marked(stubbedTo(20), live), live, 's', sol, new Map(), true).rewriteChars
   assert.equal(rewrites(without) - rewrites(later), p2.slice(1, 41).reduce((n, p) => n + p.size, 0))
+})
+
+test("with automatic caching, a trim writes an entry where the turn's next trim starts, which that trim reads past its settled boundary", () => {
+  // One turn of 12 requests, each a call with reasoning before it. A call is
+  // stubbed 2 requests on; the reasoning goes when the turn is over.
+  const step = (i: number): ApiMsg[] => [
+    { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: `sig${i}` }, { type: 'tool_use', id: `t${i}`, name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: `${i} ${long}` }] },
+  ]
+  const whole: ApiMsg[] = [{ role: 'user', content: [{ type: 'text', text: 'go' }] }, ...Array.from({ length: 12 }, (_, i) => step(i)).flat()]
+  const p: PartRules = { ...allCalls([{ action: 'stub', eligible_after: '2 requests' }]), reasoning: [{ action: 'drop', eligible_after: '0 turns' }] }
+  const pos = (msgs: readonly ApiMsg[]) => positionsOf(msgs, 's', new Map(), 'items')
+  const none = new Map<string, number>()
+  // The first `n` requests' messages, trimmed as of the first `to` of them.
+  const trimmed = (n: number, to = n) => apply(whole.slice(0, 1 + 2 * n), p, clockOf(whole.slice(0, 1 + 2 * to))).msgs
+  const ends = (msgs: ApiMsg[], n: number) => {
+    const raw = whole.slice(0, 1 + 2 * n)
+    return [settledEnd(msgs, fullyTrimmed(raw, p).msgs, 's', none, markable), settledEnd(msgs, trimmedInTurn(raw, p, 0).msgs, 's', none, markable, true)]
+  }
+  const marked = (msgs: ApiMsg[], n: number, live: ReadonlySet<string>, inTurn = true) =>
+    [liveEnd(msgs, live, 's', none, markable), ...ends(msgs, n).slice(0, inTurn ? 2 : 1)].reduce((x, e) => anchored(x, e, 's', none, true), msgs)
+  const marks = (msgs: ApiMsg[]) => msgs.flatMap((m, k) => (blocks(m).some((b) => b.cache_control) ? [k] : []))
+  // The entries before any trim: one where each of the first 7 requests ended.
+  const live = new Set(Array.from({ length: 7 }, (_, n) => pos(whole.slice(0, 1 + 2 * n)).at(-1)!.prefix))
+  // The first trim, on the 7th request's result, stubs calls 0 to 3. Settled,
+  // the reasoning before call 0 is gone, so that boundary is the prompt; with
+  // the turn still on, the next change is call 4's result, and the last block
+  // before it Responses can mark is call 3's result, stubbed.
+  const first = trimmed(7)
+  const [settled, inTurn] = ends(first, 7)
+  assert.equal(settled, pos(first)[0].prefix)
+  assert.equal(inTurn, pos(first)[12].prefix)
+  const sent = marked(first, 7, live)
+  assert.deepEqual(marks(sent), [0, 8])
+  const p1 = pos(sent)
+  assert.equal(readThrough(p1, live, 20), 0)
+  assert.deepEqual(entriesOf(p1, 0), [p1[0].prefix, p1[12].prefix, p1[21].prefix])
+  // The requests after it, untrimmed further, read through both and write their ends.
+  let after = new Set([...live, ...entriesOf(p1, 0)])
+  for (const n of [8, 9]) {
+    const pb = pos(marked(trimmed(n, 7), n, after))
+    assert.equal(readThrough(pb, after, 20), pb.length - 4)
+    after = new Set([...after, ...entriesOf(pb, pb.length - 4)])
+  }
+  // The second trim, on the 10th, stubs calls 4 to 6, from call 4's result on:
+  // marked at the prompt, its settled boundary still, at call 3's result,
+  // its last live entry, and at call 6's, where the next trim starts, it
+  // reads through call 3's; without that entry, only the prompt.
+  const second = marked(trimmed(10), 10, after)
+  assert.deepEqual(marks(second), [0, 8, 14])
+  assert.equal(readThrough(pos(second), after, 20), 12)
+  const without = new Set([...after].filter((e) => e !== p1[12].prefix))
+  assert.equal(readThrough(pos(marked(trimmed(10), 10, without)), without, 20), 0)
+  // The cost model sees it: the trim rewrites only what follows that entry.
+  const sol = modelOf('gpt-6.1-sol')
+  const rewrites = (live: ReadonlySet<string>, inTurn: boolean) => decide(marked(trimmed(10, 7), 10, live, inTurn), marked(trimmed(10), 10, live, inTurn), live, 's', sol, none, true).rewriteChars
+  assert.equal(rewrites(without, false) - rewrites(after, true), pos(second).slice(1, 13).reduce((n, q) => n + q.size, 0))
+  // Messages with nothing more due in the turn have no such boundary; their settled one is their end.
+  const done = trimmedInTurn(whole, p, 0).msgs
+  assert.equal(settledEnd(done, done, 's', none, markable, true), undefined)
+  assert.equal(settledEnd(done, done, 's', none, markable), pos(done).at(-1)!.prefix)
 })
 
 test('with automatic caching counted in items, a request reads back only that many blocks', () => {

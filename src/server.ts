@@ -43,7 +43,7 @@ import { forcedTrimOf, loadPolicy, parsePolicy, seedPolicy, skillRulesNow, textR
 import { ccVersion, folded, kept, type Keep, type MtimeOf } from './compact-keep.ts'
 import { lifetimeMs, modelOf } from './models.ts'
 import { infoText, journaled, journalIn, othersOf, summariesFrom, summariesIn, type Outcome, type Summaries } from './info.ts'
-import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, prefixesOf, reachOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, unboundIn, type Decision, type Thinking } from './trim.ts'
+import { anchored, apply, counting, entriesOf, freedSystem, decide, liveEnd, markedTtl, positionsOf, prefixesOf, reachOf, readThrough, seedOf, wholeSeedOf, fullyTrimmed, trimmedInTurn, settledEnd, TEXT_TOKENS, JOINED, transitions, trimmedEnd, unboundIn, type Decision, type Thinking } from './trim.ts'
 import { arcsPastEnd, chainBreak, coveredBy, summaryForkOf, instructions, mergedOf, nothingComplete, recordOf, rejectionOf, salvagedOf, startsOf, summarized, turnsOf, validChain, type ForkSkip, type SummaryFork, type Summary, type Turn } from './summary.ts'
 
 // A file's modification time in ms, or undefined where it can't be read.
@@ -367,18 +367,26 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   }
   // One more breakpoint where the messages stop matching them settled
   // (anchored), unless it leaves less read from the cache. With automatic
-  // caching, where the protocol can mark one, two explicit ones on whichever
-  // messages it goes on, the kept and the trimmed alike, whatever the lookback
-  // would read (trim.ts, liveEnd): at their last live entry, and where they
-  // stop matching them settled.
-  // The messages settled are built once for each set of records applied: with
-  // automatic caching every candidate's boundary is found against them.
+  // caching, where the protocol can mark one, up to three explicit ones on
+  // whichever messages it goes on, the kept and the trimmed alike, whatever
+  // the lookback would read (trim.ts, liveEnd): at their last live entry,
+  // where they stop matching them settled, and where they stop matching them
+  // trimmed as far as this turn's requests take them.
+  // The messages settled, and trimmed that far, are built once for each set of
+  // records applied: with automatic caching every candidate's boundaries are
+  // found against them.
   const settled = new Map<string, ApiMsg[]>()
+  const inTurn = new Map<string, ApiMsg[]>()
   const endOf = (base: typeof keep) => {
     if (auto && !markable) return undefined
     const k = `${records} ${merged}`
     if (!settled.has(k)) settled.set(k, summarized(fullyTrimmed(msgs, conversationRules, conv, thinking, joins), msgs, chain.slice(0, records), merged, turns).msgs)
     return settledEnd(base.msgs, settled.get(k)!, seed, thinking, markable)
+  }
+  const turnEndOf = (base: typeof keep) => {
+    const k = `${records} ${merged}`
+    if (!inTurn.has(k)) inTurn.set(k, summarized(trimmedInTurn(msgs, conversationRules, clock.turns, conv, thinking, joins), msgs, chain.slice(0, records), merged, turns).msgs)
+    return settledEnd(base.msgs, inTurn.get(k)!, seed, thinking, markable, true)
   }
   let end = endOf(keep)
   const marks = (v: unknown) => JSON.stringify(v ?? null).split('"cache_control"').length - 1
@@ -390,7 +398,7 @@ function prepare(proto: Protocol, h: Harness | undefined, key: string, body: Can
   }
   const anchor = (base: typeof keep) => {
     const m = base.msgs
-    if (markable) return anchored(anchored(m, liveEnd(m, live, seed, thinking, markable), seed, thinking, true), endOf(base), seed, thinking, true)
+    if (markable) return [liveEnd(m, live, seed, thinking, markable), endOf(base), turnEndOf(base)].reduce((x, e) => anchored(x, e, seed, thinking, true), m)
     if (auto || (spare <= 0 && !freed)) return m
     const x = anchored(m, end, seed, thinking)
     return reads(x) >= reads(m) ? x : m

@@ -118,6 +118,11 @@ export function apply(msgs: readonly ApiMsg[], policy: PartRules, clock: Clock, 
 export const fullyTrimmed = (msgs: readonly ApiMsg[], policy: PartRules, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map(), joins = false) =>
   applyAt(msgs, policy, { requests: Infinity, turns: Infinity }, conv, thinking, joins)
 
+// The messages trimmed as far as more requests of the turn they're in take
+// them: every rule timed in requests due, the turns as `turns` has them.
+export const trimmedInTurn = (msgs: readonly ApiMsg[], policy: PartRules, turns: number, conv: Conventions = CLAUDE_CODE, thinking: Thinking = new Map(), joins = false) =>
+  applyAt(msgs, policy, { requests: Infinity, turns }, conv, thinking, joins)
+
 // Each item's tokens in the messages as they came: its blocks sized by sizeOf
 // (thinking at its recorded tokens), at TEXT_TOKENS a character. A tool call's
 // are its call and results, a skill's its body too, a Read's its text; where
@@ -638,10 +643,12 @@ export function reachOf(pos: readonly Position[], r: number): number {
 // (freedSystem). The caller keeps the request as it came when the prediction
 // says the move reads less. With `markable` (automatic caching, below), it
 // goes on the last block before the difference that the protocol can mark.
+// With `differing`, messages that match `final` throughout have none.
 export type Markable = (b: Block, m: ApiMsg) => boolean
-export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], seed: string, thinking: Thinking, markable?: Markable): string | undefined {
+export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], seed: string, thinking: Thinking, markable?: Markable, differing = false): string | undefined {
   const [a, b] = [positionsOf(msgs, seed, thinking), positionsOf(final, seed, thinking)]
   const first = a.findIndex((p, i) => p.prefix !== b[i]?.prefix)
+  if (first < 0 && differing) return undefined
   const bs = msgs.flatMap((m) => blocks(m).map((bl) => [bl, m] as const))
   let k = (first < 0 ? a.length : first) - 1
   while (k >= 0 && (markable ? !markable(...bs[k]) : isThinking(bs[k][0]))) k--
@@ -652,22 +659,36 @@ export function settledEnd(msgs: readonly ApiMsg[], final: readonly ApiMsg[], se
 // lookback of its end (models.ts), and the lookback differs from one upstream
 // to the next and from week to week: a trim whose first change is further
 // back rewrites everything after the system prompt. Where the protocol can
-// mark a block (protocol.ts, markable), every request carries two explicit
-// breakpoints, so that what it reads doesn't rest on the lookback. An explicit
-// breakpoint reads only the entry at its own end, however far back; a request
-// makes an entry there where it writes past it, not where it reads through
-// it, beside the one at its end; and the lookback from the end works as
-// without it (probe-codex-model-details.ts, breakpoints and boundaries).
+// mark a block (protocol.ts, markable), every request carries up to three
+// explicit breakpoints in its messages, so that what it reads doesn't rest on
+// the lookback. An explicit breakpoint reads only the entry at its own end,
+// however far back; a request makes an entry there where it writes past it,
+// not where it reads through it, beside the one at its end; and the lookback
+// from the end works as without it (probe-codex-model-details.ts,
+// breakpoints, boundaries and kinds).
 //   One is at settledEnd of the messages sent, the kept and the trimmed
 //   alike: a trim's request writes past it, since its first change is at or
 //   before it, and that entry is the one the next trim reads, right before
 //   its own first change. No request need have ended there.
-//   The other is at the last block the protocol can mark whose prefix is a
+//   One is at settledEnd against the messages trimmed as far as more requests
+//   of this turn take them (trimmedInTurn). The settled end is all a trim
+//   reads when no entry is after it, and under a rule that waits for the turn
+//   to end (reasoning's, by default) it stays where the turn began, so each
+//   trim would rewrite all the turn has kept so far. While the turn lasts, the
+//   next trim's first change is at this one instead: a trim's request writes
+//   past it, and the next trim reads that entry. It's the last block the
+//   protocol can mark that the turn's trims leave as it is, and messages with
+//   nothing more due in the turn have none. In six sol runs, replayed, the
+//   next trim began there after 38 of 39 trims of the main
+//   conversation (the other at the settled end, a rule sized in tokens having
+//   come due), and a trim's uncached tokens averaged 11.6K with this
+//   breakpoint against 19.2K without.
+//   The last is at the last block the protocol can mark whose prefix is a
 //   live entry (liveEnd), the furthest the messages can read: on a trim the
 //   boundary the last trim wrote, and otherwise mostly the last request's
 //   end, which the lookback would find too unless the request adds more than
 //   it reaches.
-// Where the two are one block, it's marked once.
+// Where two are one block, it's marked once.
 export function liveEnd(msgs: readonly ApiMsg[], live: ReadonlySet<string>, seed: string, thinking: Thinking, markable: Markable): string | undefined {
   const a = positionsOf(msgs, seed, thinking)
   const bs = msgs.flatMap((m) => blocks(m).map((bl) => [bl, m] as const))
