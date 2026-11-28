@@ -137,14 +137,24 @@ const CLAUDE_WINDOW = 200_000
 const CLAUDE_1M = 1_000_000
 // The model's context, as Claude Code's built-in model table has it: 1M for
 // the models with a native 1M window (and those after them); for the rest
-// 200K, or 1M once the session opts in, by the [1m] suffix, or the context-1m
-// beta header on the models that take it.
+// 200K, or 1M once the session opts in by the context-1m beta header on the
+// models that take it. Before these, a name ending in a separator and a size
+// in thousands or millions has that window: Claude Code's own [1m] and [2m],
+// claude-opus-5-5-2m, a gateway's claude-sonnet-4-5.200k. Names compare as
+// entryOf compares them (models.ts), lowercase with `/`, `.` and `_` as `-`,
+// and `[` and `]` as well. A size of 1M or more is an opt-in that
+// CLAUDE_CODE_DISABLE_1M_CONTEXT turns off, as Claude Code refuses [1m] then.
 const NATIVE_1M = /claude-(opus-(4-[7-9]|[5-9])|sonnet-[5-9]|haiku-[5-9]|fable|mythos)/
 const BETA_1M = /claude-(3-7-sonnet|sonnet-4-[0-6]|sonnet-4(?!-)|opus-4-6)/
+const SIZED = /-(\d+)([km])-*$/
 function contextOf(model: string, beta: string, env: Obj): { context: number; source: string } {
   const m = model.toLowerCase()
+  const off = truthy(env.CLAUDE_CODE_DISABLE_1M_CONTEXT)
+  const [, n, unit] = m.replace(/[/._[\]]/g, '-').match(SIZED) ?? []
+  const sized = Number(n) * (unit === 'm' ? 1e6 : 1e3)
+  if (sized > 0 && !(off && sized >= CLAUDE_1M)) return { context: sized, source: 'model-sized' }
   if (NATIVE_1M.test(m)) return { context: CLAUDE_1M, source: 'model' }
-  const optIn = !truthy(env.CLAUDE_CODE_DISABLE_1M_CONTEXT) && (/\[1m\]$/.test(m) || (BETA_1M.test(m) && beta.includes('context-1m-')))
+  const optIn = !off && BETA_1M.test(m) && beta.includes('context-1m-')
   return optIn ? { context: CLAUDE_1M, source: 'model-1m' } : { context: CLAUDE_WINDOW, source: 'model' }
 }
 

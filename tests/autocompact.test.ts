@@ -40,7 +40,36 @@ test('Claude Code: the window less 20K of output less 13K, on the model own wind
   // 1M on an older model only once the session opts in.
   assert.deepEqual(claude({}, { model: 'claude-sonnet-4-6' }), { at: 167_000, source: 'model', ...g(200_000) })
   assert.deepEqual(claude({}, { model: 'claude-sonnet-4-6', headers: { 'anthropic-beta': 'x,context-1m-2025-08-07' } }), { at: 967_000, source: 'model-1m', ...g(1_000_000) })
-  assert.deepEqual(claude({}, { model: 'claude-opus-4-5[1m]' }), { at: 967_000, source: 'model-1m', ...g(1_000_000) })
+  assert.deepEqual(claude({}, { model: 'claude-opus-4-5[1m]' }), { at: 967_000, source: 'model-sized', ...g(1_000_000) })
+})
+
+test('Claude Code: a name ending in a separator and a size in k or m has that window, before the model own', () => {
+  for (const [model, window] of [
+    ['claude-opus-5-5-2m', 2_000_000],
+    ['claude-fable.2M', 2_000_000],
+    ['gateway/claude-sonnet-4-5_1m', 1_000_000],
+    ['claude-opus-5-5-200k', 200_000],
+    ['claude-haiku-4-5.400K', 400_000],
+  ] as const)
+    assert.deepEqual(claude({}, { model }), { at: window - 33_000, source: 'model-sized', ...g(window) }, model)
+  // No separator, no unit, or a size of 0: the model's own window.
+  for (const [model, window] of [
+    ['claude-fable2m', 1_000_000],
+    ['claude-haiku-4-5-20251001', 200_000],
+    ['claude-haiku-4-5-0k', 200_000],
+  ] as const)
+    assert.deepEqual(claude({}, { model }), { at: window - 33_000, source: 'model', ...g(window) }, model)
+  // Settings still lower it.
+  assert.deepEqual(claude({ '.claude/settings.json': { autoCompactWindow: 200_000 } }, { model: 'claude-opus-5-5-2m' }), { at: 167_000, source: 'settings', ...w(200_000) })
+  // Claude Code's own [1m] and [2m] are sizes too, `[` and `]` being
+  // separators. A size of 1M or more is an opt-in, which
+  // CLAUDE_CODE_DISABLE_1M_CONTEXT turns off; a smaller one it leaves.
+  assert.deepEqual(claude({}, { model: 'claude-haiku-4-5[1m]' }), { at: 967_000, source: 'model-sized', ...g(1_000_000) })
+  assert.deepEqual(claude({}, { model: 'claude-fable-5-2[2m]' }), { at: 1_967_000, source: 'model-sized', ...g(2_000_000) })
+  const off = { launch: { CLAUDE_CODE_DISABLE_1M_CONTEXT: '1' } }
+  assert.deepEqual(claude({}, { model: 'claude-haiku-4-5[1m]', ...off }), { at: 167_000, source: 'model', ...g(200_000) })
+  assert.deepEqual(claude({}, { model: 'claude-fable-5-2[2m]', ...off }), { at: 967_000, source: 'model', ...g(1_000_000) })
+  assert.deepEqual(claude({}, { model: 'claude-haiku-4-5-400k', ...off }), { at: 367_000, source: 'model-sized', ...g(400_000) })
 })
 
 test('Claude Code: settings lower the window, per model or for all', () => {
