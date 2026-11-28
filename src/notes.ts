@@ -25,6 +25,7 @@
 // each starting the text or a line after a blank one. File contents and diffs
 // in notes have numbered lines, so none of theirs reads as a heading.
 
+import { createHash } from 'node:crypto'
 import type { Block } from './items.ts'
 
 export const CATEGORIES = ['latest', 'forever', 'file_note', 'task_output', 'conversation', 'unrecognized'] as const
@@ -120,8 +121,17 @@ const keysOf = (kind: string, text: string) =>
 // <system-reminder> wrapper's opening). Text before the first heading is a
 // note of its own, unrecognized.
 export function notesOf(text: string): Note[] {
+  return spansOf(text).map((s) => noteAt(text, s))
+}
+
+// Where in a note text each of its notes is, as notesOf finds them.
+type Span = { kind: string; category: Category; from: number; to: number; keys: string[] }
+const noteAt = (text: string, s: Span): Note => ({ kind: s.kind, category: s.category, text: text.slice(s.from, s.to), keys: [...s.keys] })
+
+function spansOf(text: string): Span[] {
   const body = text.replace(/^<system-reminder>\s*/, '')
   if (!body.trim()) return []
+  const off = text.length - body.length
   const starts: Array<[number, string, Category]> = []
   for (const [re, kind, category] of HEADS)
     for (const m of body.matchAll(re)) {
@@ -132,8 +142,8 @@ export function notesOf(text: string): Note[] {
   if (starts.length && !body.slice(0, starts[0][0]).trim()) starts[0][0] = 0
   else starts.unshift([0, 'unrecognized', 'unrecognized'])
   return starts.map(([at, kind, category], i) => {
-    const t = body.slice(at, starts[i + 1]?.[0])
-    return { kind, category, text: t, keys: keysOf(kind, t) }
+    const to = starts[i + 1]?.[0] ?? body.length
+    return { kind, category, from: off + at, to: off + to, keys: keysOf(kind, body.slice(at, to)) }
   })
 }
 
@@ -154,8 +164,27 @@ const ITEMS: Record<string, [string, Category]> = {
   additional_tools: ['tools-added', 'forever'],
   agent_message: ['agent-message', 'task_output'],
 }
+// A note text's notes are found again on each pass over a request's messages
+// (trim.ts, notesDue and withoutNotes), each time in a new block, so where
+// they are is kept by the text's hash, for the last FOUND texts. Only spans
+// and keys are kept, each key copied (a regex match holds on to the whole
+// text it came from), so the memo stays small however long the notes. Each
+// call gets notes of its own, as keptNotes (summary.ts) tells two blocks'
+// notes apart by identity.
+const FOUND = 1000
+const found = new Map<string, Span[]>()
 export function notesOfBlock(b: Block): Note[] {
-  if (b.type === 'text') return notesOf(String(b.text))
+  if (b.type === 'text') {
+    const text = String(b.text)
+    const h = createHash('sha1').update(text).digest('base64')
+    let ss = found.get(h)
+    if (!ss) {
+      if (found.size >= FOUND) found.clear()
+      ss = spansOf(text).map((s) => ({ ...s, keys: s.keys.map((k) => JSON.parse(JSON.stringify(k)) as string) }))
+      found.set(h, ss)
+    }
+    return ss.map((s) => noteAt(text, s))
+  }
   const type = b.type === 'item' ? String((b.item as { type?: unknown } | undefined)?.type) : b.type
   const [kind, category] = (b.type === 'item' ? ITEMS[type] : BLOCKS[type]) ?? [type, 'unrecognized']
   return [{ kind, category, text: '', keys: [kind] }]

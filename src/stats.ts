@@ -151,8 +151,19 @@ export type Stats = {
 
 // A message as JSON without breakpoints. Claude Code sends a lone text block
 // carrying one as an array, and as a string once the breakpoint moves on, so
-// that becomes the string. A message's key.
+// that becomes the string. A message's key. It's kept on the message, as one
+// is keyed many times a request, while its role and content are the ones it
+// was keyed with (skills.ts and defer.ts give a message new content).
+const keyed = new WeakMap<ApiMsg, { role: string; content: unknown; key: string }>()
 export function keyOf(m: ApiMsg): string {
+  const k = keyed.get(m)
+  if (k && k.role === m.role && k.content === m.content) return k.key
+  const key = keyFor(m)
+  keyed.set(m, { role: m.role, content: m.content, key })
+  return key
+}
+
+function keyFor(m: ApiMsg): string {
   let c: unknown = m.content
   if (Array.isArray(c)) {
     const bs = c.map(({ cache_control, ...b }: Block) => b)

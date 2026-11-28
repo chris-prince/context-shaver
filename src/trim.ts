@@ -491,7 +491,7 @@ export function unboundIn(msgs: readonly ApiMsg[], thinking: Thinking): Set<Bloc
   for (const m of msgs) {
     if (m.role === 'assistant')
       for (const b of blocks(m)) {
-        const was = b.type === 'thinking' && typeof b.signature === 'string' ? after.get(hash(b.signature)) : undefined
+        const was = b.type === 'thinking' && typeof b.signature === 'string' ? after.get(signatureHash(b as Block & { signature: string })) : undefined
         if (was !== undefined && was !== prefix) out.add(b)
       }
     prefix = prefixOf(prefix, m)
@@ -505,13 +505,46 @@ export function unboundIn(msgs: readonly ApiMsg[], thinking: Thinking): Set<Bloc
 export const prefixOf = (before: string, m: ApiMsg) => hash(before + m.role + JSON.stringify(blocks(m), uncontrolled))
 export const prefixesOf = (msgs: readonly ApiMsg[]) => msgs.reduce(prefixOf, '')
 
+// A request's messages are walked many times over (positionsOf, decide), so
+// each block keeps its JSON's length, a thinking block its signature's hash,
+// and the prefix hashes through it, by the one before each was found from:
+// a block kept by a trim is in the request and in its trimmed copies, under
+// a prefix of each, and holding one would have them undo each other. The
+// last PREFIXES are kept. No block is changed once parsed (a trim makes new
+// ones, and a breakpoint is no part of any), so none goes stale.
+const lengths = new WeakMap<Block, number>()
+const jsonLength = (b: Block) => {
+  let n = lengths.get(b)
+  if (n === undefined) lengths.set(b, (n = JSON.stringify(b, uncontrolled).length))
+  return n
+}
+const signatures = new WeakMap<Block, string>()
+const signatureHash = (b: Block & { signature: string }) => {
+  let h = signatures.get(b)
+  if (h === undefined) signatures.set(b, (h = hash(b.signature)))
+  return h
+}
+const PREFIXES = 4
+const prefixes = new WeakMap<Block, Map<string, string>>()
+const prefixThrough = (before: string, role: string, b: Block) => {
+  let ps = prefixes.get(b)
+  if (!ps) prefixes.set(b, (ps = new Map()))
+  let prefix = ps.get(role + before)
+  if (prefix === undefined) {
+    prefix = hash(before + role + JSON.stringify(b, uncontrolled))
+    if (ps.size >= PREFIXES) ps.delete(ps.keys().next().value!)
+    ps.set(role + before, prefix)
+  }
+  return prefix
+}
+
 // `unbound`, the blocks unboundIn finds, count nothing.
 export function sizeOf(b: Block, thinking: Thinking, unbound?: ReadonlySet<Block>): number {
   if (unbound?.has(b)) return 0
   // A breakpoint is no part of the prompt, as it's no part of the prefix.
-  const n = JSON.stringify(b, uncontrolled).length
+  const n = jsonLength(b)
   if (b.type !== 'thinking' || typeof b.signature !== 'string') return n
-  const tokens = thinking.get(hash(b.signature)) ?? SIGNATURE_TOKENS * b.signature.length
+  const tokens = thinking.get(signatureHash(b as Block & { signature: string })) ?? SIGNATURE_TOKENS * b.signature.length
   return n + Math.round(tokens / TEXT_TOKENS) - b.signature.length
 }
 
@@ -585,7 +618,7 @@ export function positionsOf(msgs: readonly ApiMsg[], seed: string, thinking: Thi
   let prefix = seed
   const pos: Position[] = msgs.flatMap((m) =>
     blocks(m).map((b, i, bs) => {
-      prefix = hash(prefix + m.role + JSON.stringify(b, uncontrolled))
+      prefix = prefixThrough(prefix, m.role, b)
       const breakpoint = b.cache_control !== undefined
       if (automatic) return { prefix, size: sizeOf(b, thinking, unbound), breakpoint, joined: automatic !== 'items' && (m.role !== 'user' || i < bs.length - 1), ...(breakpoint && { exact: true }) }
       const joined = (b.type === 'tool_use' || b.type === 'tool_result') && bs[i - 1]?.type === b.type
