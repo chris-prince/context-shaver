@@ -25,17 +25,8 @@ it. The value as the user had it (`''` where unset) goes in the launch values,
 and each conversation's journal records it as `toolSearchEnv`, logging on or
 off.
 
-The launcher also sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000` where it isn't
-set. Claude Code gives a Claude model that its release doesn't recognize a 200K
-window, unless this is set; a model it recognizes ignores it. Every Claude
-family it ships now is 1M natively, so a new model on an older release (Fable
-5.2 on 2.1.319 or before) gets its real window rather than compacting at 167K,
-and the window the proxy works out from the model's name holds on every
-release.
-
-The proxy needs this, not only Claude Code: the proxy can't see the window
-Claude Code compacts at, so it works the window out itself, and where the two
-differ, with the proxy's larger:
+The proxy can't see the window Claude Code compacts at, so it works the window
+out itself, and where the two differ, with the proxy's larger:
 
 1. `force_trim_before_autocompact` (server.ts) never fires: it waits for the
    prompt to come near the proxy's limit, and Claude Code compacts well before,
@@ -55,8 +46,12 @@ the proxy guesses the window: a name that ends in a separator and a size
 (Claude Code's `[1m]` and `[2m]`, `-2m`, `.200k`) has that window, ahead of the
 model's family, as a size named in the model is most likely its real one;
 `CLAUDE_CODE_DISABLE_1M_CONTEXT` turns off sizes of 1M or more. Claude Code
-gives a sized name it doesn't recognize the launcher's 1M, so the two differ
-there until a release lists it.
+gives a Claude model its release doesn't recognize a 200K window (Fable 5.2 on
+2.1.319 or before), so the two differ there until Claude Code is updated. The
+launcher doesn't set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to close that gap: a
+value set for every unrecognized model would go stale, and on a new model
+smaller than it, Claude Code would compact too late and the API refuse the
+prompt, where 200K only compacts early.
 
 If the proxy can't be started (Node can't be installed, say, or its port is
 taken by something else), `claude-via-shaver` says so, pauses 3 seconds for it

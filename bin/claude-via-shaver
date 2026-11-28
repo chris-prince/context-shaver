@@ -116,12 +116,4 @@ export ANTHROPIC_BASE_URL CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
 # without the proxy; shaver info warns when the search is off, as every tool
 # is then sent in full and shaver can defer none.
 [[ -n ${ENABLE_TOOL_SEARCH:-} ]] || export ENABLE_TOOL_SEARCH=true
-# A Claude model that Claude Code's release doesn't recognize gets a 200K
-# window unless CLAUDE_CODE_MAX_CONTEXT_TOKENS is set; a model it recognizes
-# ignores it (read in 2.1.318 and 2.1.332). Releases up to 2.1.319 don't list
-# Fable 5.2, a 1M model, and so would compact it at 167K. Every Claude family
-# Claude Code ships now is 1M natively, so where unset it is set to 1M; the
-# window the proxy works out from the model's name then holds on every
-# release. A value already set is kept.
-[[ -n ${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-} ]] || export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000
 exec "${real[@]}" "$@"

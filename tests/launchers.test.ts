@@ -174,13 +174,13 @@ test('claude-via-shaver: ENABLE_TOOL_SEARCH is true where unset or empty, and a 
   }
 })
 
-// claude-via-shaver: CLAUDE_CODE_MAX_CONTEXT_TOKENS is 1M where unset, so a
-// model the release doesn't recognize gets the window the proxy expects.
+// claude-via-shaver: CLAUDE_CODE_MAX_CONTEXT_TOKENS is left as the user has
+// it, so a model the release doesn't recognize gets Claude Code's own 200K.
 
-test('claude-via-shaver: CLAUDE_CODE_MAX_CONTEXT_TOKENS is 1M where unset or empty, and a value set is kept', () => {
+test('claude-via-shaver: CLAUDE_CODE_MAX_CONTEXT_TOKENS is left unset where unset, and a value set is kept', () => {
   const root = checkout(['claude-via-shaver', 'node-wrapper'])
-  const claude = script(path.join(root, 'claude/claude'), 'printf "%s\\n" "$CLAUDE_CODE_MAX_CONTEXT_TOKENS"')
-  for (const [given, want] of [[undefined, '1000000'], ['', '1000000'], ['400000', '400000']] as const) {
+  const claude = script(path.join(root, 'claude/claude'), 'printf "<%s>\\n" "${CLAUDE_CODE_MAX_CONTEXT_TOKENS-unset}"')
+  for (const [given, want] of [[undefined, '<unset>'], ['', '<>'], ['400000', '<400000>']] as const) {
     const { status, out } = run(root, 'claude-via-shaver', [], { SHAVER_REAL_CLAUDE_LOCATIONS: claude, ...(given === undefined ? {} : { CLAUDE_CODE_MAX_CONTEXT_TOKENS: given }) })
     assert.equal(status, 0)
     assert.deepEqual(out, [want], `given ${given}`)
