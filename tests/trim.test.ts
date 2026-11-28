@@ -861,6 +861,23 @@ test('with automatic caching, the anchor goes on the last live block before the 
   assert.deepEqual(anchored(msgs, end, 's', new Map()), msgs)
 })
 
+test('with automatic caching, no breakpoint goes on an output with no text, where the request before ended', () => {
+  // The last request ended on a command that printed nothing; the one before it, on a result.
+  const msgs: ApiMsg[] = [
+    ...bpTurn(0).slice(0, 3),
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'e', name: 'exec', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'e', content: '' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'f', name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'f', content: long }] },
+  ]
+  const p = positionsOf(msgs, 's', new Map())
+  const live = new Set(p.slice(0, 5).map((q) => q.prefix))
+  // The live anchor goes back to the result before it, and so does a settled boundary there.
+  assert.equal(liveEnd(msgs, live, 's', new Map(), markable), p[2].prefix)
+  const final = msgs.map((m, k) => (k === 6 ? { ...m, content: [{ type: 'tool_result', tool_use_id: 'f', content: stub(5000) }] } : m))
+  assert.equal(settledEnd(msgs, final, 's', new Map(), markable), p[2].prefix)
+})
+
 test('with automatic caching, a trim writes an entry at its settled boundary, which the next trim reads however far back', () => {
   // 30 turns and the next one's prompt, call and result.
   const whole = [...Array.from({ length: 30 }, (_, i) => bpTurn(i)).flat(), ...bpTurn(30).slice(0, 3)]

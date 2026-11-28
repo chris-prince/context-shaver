@@ -40,6 +40,13 @@ function markedOutput(it: Item): Item {
   return k < 0 ? it : { ...it, output: ps.map((p, i) => (i === k ? { ...p, prompt_cache_breakpoint: BREAKPOINT } : p)) }
 }
 
+// The text a breakpoint on a block would be put on (marked, markedOutput): a
+// prompt's, a string output, or an output's last text part.
+const markedText = (b: Block): string | undefined => {
+  const t = b.type === 'text' ? b.text : b.type !== 'tool_result' ? undefined : Array.isArray(b.content) ? (b.content as Part[]).findLast((p) => p?.type === 'input_text')?.text : b.content
+  return typeof t === 'string' ? t : undefined
+}
+
 const textOf = (it: Item) => (it.content ?? []).map((p) => p.text ?? '').join('')
 const isHead = (it: Item) => it.type === 'additional_tools' || (it.type === 'message' && (it.role === 'developer' || it.role === 'system' || (it.role === 'user' && CODEX_PREAMBLE.some((p) => textOf(it).startsWith(p)))))
 // The side of the conversation an item is on: an answer's, a prompt's or a
@@ -386,8 +393,12 @@ export const RESPONSES: Protocol = {
   // last live entry goes where Codex's requests end, on a user message's last
   // block: a run of outputs ends one request, not each output
   // (probe-codex-model-details.ts breakpoints, 2026-11-19). The one at the
-  // settled boundary goes on such a block too.
-  markable: (b, m) => m.role === 'user' && blocks(m).at(-1) === b && (b.type === 'text' || (b.type === 'tool_result' && (typeof b.content === 'string' || (Array.isArray(b.content) && b.content.some((p) => p?.type === 'input_text'))))),
+  // settled boundary goes on such a block too. The text can't be empty: a
+  // breakpoint on an output of '' is refused ("must be attached to a content
+  // block that renders cacheable prompt content", gpt-6.1-sol, 2026-11-26),
+  // and a refusal ends the model's marking (breakpoints.ts). Text of only
+  // whitespace is left unmarked too, untried.
+  markable: (b, m) => m.role === 'user' && blocks(m).at(-1) === b && (markedText(b) ?? '').trim() !== '',
   defers: true,
   // Run by the backend, which loads the tools it finds itself: Codex answers
   // searches only for the tools it deferred.

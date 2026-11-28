@@ -312,4 +312,14 @@ test("an explicit breakpoint goes only where Responses takes one: a user message
   const [o1, o2]: Block[] = [{ type: 'tool_result', tool_use_id: 'a', content: 'x' }, { type: 'tool_result', tool_use_id: 'b', content: 'y' }]
   const run: ApiMsg = { role: 'user', content: [o1, o2] }
   assert.deepEqual([markable(o1, run), markable(o2, run)], [false, true])
+  // An output with no text to it is refused with a breakpoint: a command that printed nothing.
+  const whole = (content: unknown) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content }] }) as ApiMsg
+  for (const content of ['', ' \n', [{ type: 'input_text', text: 'x' }, { type: 'input_text', text: '' }], [{ type: 'input_text', text: '' }, { type: 'input_image', image_url: 'u' }]]) {
+    const m = whole(content)
+    assert.equal(markable(blocks(m)[0], m), false)
+  }
+  const kept = whole([{ type: 'input_text', text: 'x' }, { type: 'input_image', image_url: 'u' }])
+  assert.equal(markable(blocks(kept)[0], kept), true)
+  const blank: ApiMsg = { role: 'user', content: [{ type: 'text', text: '' }] }
+  assert.equal(markable(blocks(blank)[0], blank), false)
 })

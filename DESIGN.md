@@ -878,7 +878,9 @@ it where it can mark. Unless `SHAVER_CODEX_BREAKPOINTS=0`
 OpenAI's `prompt_cache_breakpoint` on an `input_text` part, each on the last
 block of a user message (`responses.ts`, `markable`): a prompt's text or a
 tool's output, sent as an array of parts, which is the same prompt as its
-string. An explicit breakpoint reads only the entry at its own end, however
+string. The text must have something in it: a breakpoint on an output of `''`
+(a command that printed nothing) is refused, and one refusal ends the model's
+marking until the proxy restarts. An explicit breakpoint reads only the entry at its own end, however
 far back, and a request makes one there only where it writes past it, not
 where it reads through it (`probe-codex-model-details.ts`, `breakpoints` and
 `boundaries`).
